@@ -1,0 +1,71 @@
+name: Deploy Backend-Arbtrader
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Hetzner Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: "178.104.51.125"
+          username: root
+          password: ${{ secrets.SSH_PASSWORD }}
+          timeout: 600s
+          command_timeout: 10m
+          script: |
+            mkdir -p ~/backend-arbtrader
+            cd ~/backend-arbtrader
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Baixar o docker-compose.yml atualizado do repositorio
+            curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml -o docker-compose.yml
+
+            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose pull
+            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose down --remove-orphans
+            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose up -d --remove-orphans
+            docker image prune -f

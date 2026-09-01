@@ -1,0 +1,53 @@
+{
+  "name": "auth-backend",
+  "version": "1.0.0",
+  "description": "Backend de autenticação para o ArbTrade Dashboard",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc && mkdir -p dist/strategy/forex/ctrader/proto && cp -r src/strategy/forex/ctrader/proto/* dist/strategy/forex/ctrader/proto/",
+    "start": "node dist/index.js",
+    "bot:scanner": "ts-node-dev --transpile-only src/strategy/perpetuals/loop-scanner-robot.ts",
+    "bot:funding-arb": "ts-node-dev --transpile-only src/strategy/perpetuals/funding-arb.ts",
+    "bot:executor": "ts-node-dev --transpile-only src/strategy/perpetuals/perp-funding-executor.ts",
+    "bot:close": "ts-node-dev --transpile-only src/strategy/perpetuals/perp-close-executor.ts",
+    "bot:forex-arb": "ts-node-dev --transpile-only src/strategy/forex/forex-arb.ts",
+    "bot:forex-scanner": "ts-node-dev --transpile-only src/strategy/forex/loop-scanner-robot.ts",
+    "bot:all": "concurrently -n API,SCANNER,FUNDARB,FOREXARB,FOREXSCAN -c blue,green,yellow,magenta,cyan \"npm run dev\" \"npm run bot:scanner\" \"npm run bot:funding-arb\" \"npm run bot:forex-arb\" \"npm run bot:forex-scanner\"",
+    "crypto-env": "npx tsx scripts/crypto-env.ts"
+  },
+  "dependencies": {
+    "@polymarket/client": "^0.8.1",
+    "@polymarket/clob-client-v2": "^1.1.0",
+    "@types/ws": "^8.18.1",
+    "axios": "^1.20.0",
+    "bcryptjs": "^3.0.3",
+    "ccxt": "^4.5.75",
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.17.0",
+    "express": "^4.18.2",
+    "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.7.4",
+    "node-ssh": "^13.2.1",
+    "protobufjs": "^7.6.6",
+    "resend": "^6.19.0",
+    "speakeasy": "^2.0.0",
+    "swagger-ui-express": "^5.0.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0",
+    "yamljs": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.19.43",
+    "@types/speakeasy": "^2.0.10",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@types/yamljs": "^0.2.34"
+  }
+}

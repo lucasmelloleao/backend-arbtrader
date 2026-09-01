@@ -1,0 +1,3484 @@
+openapi: 3.0.3
+info:
+  title: ArbTrade API
+  description: |
+    Contrato do backend REST consumido pelo frontend (boilerplate Next.js 16).
+
+    Regras do envelope (toda resposta, sucesso e erro):
+    - `success` (boolean) e `message` (string) são SEMPRE presentes.
+    - `data` carrega o payload específico do endpoint (opcional).
+    - Erros usam status HTTP coerente e `message` em PT-BR (texto seguro p/ UI).
+    - O front NUNCA decodifica o JWT: a identidade vem do cookie de sessão.
+
+    Autenticação:
+    - Login/logout são chamadas browser-direct: o backend emite/limpa os cookies
+      httpOnly `session_token` (access) e `refresh_token` (apenas com rememberMe).
+    - Demais endpoints são chamados server-side (RSC/Server Actions) e o cookie
+      da requisição é encaminhado como header `Cookie` pelo `kyServer`.
+    - Authz é sempre do backend; o front apenas encaminha o cookie.
+  version: 1.0.0
+servers:
+  - url: /api/v1
+    description: Mesmo origin via proxy do Next (dev) ou domínio same-site (prod)
+tags:
+  - name: Auth
+    description: Sessão (login, logout)
+  - name: Perfil
+    description: Perfil do usuário autenticado
+  - name: Exchanges
+    description: Chaves de API de corretoras centralizadas (CEX)
+  - name: Portfolio
+    description: Resumo patrimonial, evolução e posições ao vivo
+  - name: PerpArb
+    description: Estratégias e operações de arbitragem perpétuo vs spot (Funding Arb)
+  - name: ForexArb
+    description: Estratégias, oportunidades e operações de arbitragem Forex (simples e triangular)
+  - name: PredictionArb
+    description: Arbitragem estrutural + market making em prediction markets (Polymarket)
+  - name: Usuarios
+    description: Manutenção administrativa de usuários
+paths:
+  /login:
+    post:
+      tags: [Auth]
+      summary: Autentica o usuário e emite o cookie de sessão
+      description: |
+        Chamada browser-direct. Em sucesso, responde 200 e devolve o cookie
+        httpOnly `session_token` (via Set-Cookie). Quando o usuário tem 2FA
+        habilitado e `twoFactorToken` não é enviado, responde 401 com a mensagem
+        exata `2fa_required` (o front detecta e pede o código).
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login ok, cookie de sessão emitido
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: session_token (httpOnly, SameSite=Lax)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Campos obrigatórios ausentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Credenciais inválidas, 2FA obrigatório ou código inválido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                credenciaisInvalidas:
+                  value:
+                    success: false
+                    message: Credenciais inválidas.
+                doisFatoresObrigatorio:
+                  summary: O front detecta 2FA por esta mensagem exata
+                  value:
+                    success: false
+                    message: 2fa_required
+                codigo2faInvalido:
+                  value:
+                    success: false
+                    message: Código 2FA inválido.
+        "500":
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /logout:
+    post:
+      tags: [Auth]
+      summary: Encerra a sessão e limpa o cookie
+      description: Chamada browser-direct. Limpa o cookie httpOnly de sessão.
+      operationId: logout
+      responses:
+        "200":
+          description: Sessão encerrada
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: session_token limpo (expira no passado)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Sem sessão (opcional — pode ser idempotente e devolver 200)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perfil:
+    get:
+      tags: [Perfil]
+      summary: Perfil do usuário autenticado
+      operationId: getPerfil
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Perfil do usuário
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerfilResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [Perfil]
+      summary: Atualiza o perfil do usuário autenticado
+      operationId: updatePerfil
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerfilUpdateRequest"
+      responses:
+        "200":
+          description: Perfil salvo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Validação (nome vazio, e-mail inválido)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perfil/senha:
+    put:
+      tags: [Perfil]
+      summary: Altera a senha do usuário autenticado
+      operationId: changePassword
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SenhaChangeRequest"
+      responses:
+        "200":
+          description: Senha alterada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Campos obrigatórios ausentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Senha antiga incorreta ou não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perfil/2fa/gerar:
+    post:
+      tags: [Perfil]
+      summary: Gera uma nova chave secreta para 2FA
+      operationId: generate2FA
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Secret do 2FA gerado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorGenerateResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perfil/2fa/ativar:
+    post:
+      tags: [Perfil]
+      summary: Verifica e ativa o 2FA para a conta do usuário
+      operationId: activate2FA
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TwoFactorVerifyRequest"
+      responses:
+        "200":
+          description: 2FA ativado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Código 2FA inválido ou ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perfil/2fa/desativar:
+    post:
+      tags: [Perfil]
+      summary: Desativa o 2FA para a conta do usuário
+      operationId: deactivate2FA
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: 2FA desativado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /exchanges:
+    get:
+      tags: [Exchanges]
+      summary: Lista as chaves de API CEX do usuário
+      description: |
+        Os campos sensíveis (`apiSecret`) NUNCA são devolvidos. O `data` do
+        envelope é um array de conexões.
+      operationId: listExchanges
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de conexões
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeListResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Exchanges]
+      summary: Registra uma chave de API CEX
+      description: |
+        Recebe a chave e o segredo; o backend criptografa o segredo (AES-256-GCM)
+        antes de persistir e não devolve o segredo na resposta.
+      operationId: createExchange
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangeCreateRequest"
+      responses:
+        "201":
+          description: Conexão criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeResponse"
+        "400":
+          description: Campos obrigatórios ausentes ou corretora inválida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [Exchanges]
+      summary: Atualiza uma chave de API CEX
+      description: |
+        Recebe o id da conexão e os campos editáveis. `apiSecret` vazio significa
+        "manter o segredo atual" (o backend nunca devolve o segredo no GET).
+      operationId: updateExchange
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangeUpdateRequest"
+      responses:
+        "200":
+          description: Conexão atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeResponse"
+        "400":
+          description: Campos obrigatórios ausentes ou corretora inválida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Conexão não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Exchanges]
+      summary: Remove uma chave de API CEX pelo id
+      operationId: deleteExchange
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Id da conexão a remover
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Conexão removida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: id ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Conexão não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /polymarket/credentials:
+    post:
+      tags: [Polymarket]
+      summary: Salva as credenciais de automação Polymarket
+      description: |
+        Persiste a relayer API key, o endereço da deposit wallet e as credenciais
+        L2 do CLOB. Os segredos (clobSecret/clobPassphrase) são criptografados.
+      operationId: savePolymarketCredentials
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                relayerApiKey:
+                  type: string
+                  description: UUID da relayer API key (Settings → API Keys)
+                relayerApiKeyAddress:
+                  type: string
+                  description: Endereço signer associado à relayer key
+                depositWallet:
+                  type: string
+                  description: Endereço da deposit wallet (proxy)
+                clobApiKey:
+                  type: string
+                  description: Credencial L2 do CLOB (api key)
+                clobSecret:
+                  type: string
+                  description: Credencial L2 do CLOB (secret — criptografado)
+                clobPassphrase:
+                  type: string
+                  description: Credencial L2 do CLOB (passphrase — criptografado)
+      responses:
+        "200":
+          description: Credenciais salvas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Nenhum campo enviado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /polymarket/balance:
+    get:
+      tags: [Polymarket]
+      summary: Sincroniza o saldo pUSD (EOA e deposit wallet)
+      description: |
+        Consulta on-chain (Polygon) o saldo pUSD da wallet EOA e da deposit
+        wallet e atualiza o campo pusdBalance da ExchangeKey.
+      operationId: syncPolymarketBalance
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Saldo atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      eoaBalance:
+                        type: number
+                      depositWalletBalance:
+                        type: number
+                      depositWallet:
+                        type: string
+                        nullable: true
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /polymarket/transfer:
+    post:
+      tags: [Polymarket]
+      summary: Transfere pUSD da wallet EOA para a deposit wallet
+      description: |
+        Envia a transação on-chain de transferência de pUSD da EOA para a
+        deposit wallet. O gas é pago em MATIC da própria EOA. Sem `amount`,
+        transfere o saldo total.
+      operationId: transferPusdToDepositWallet
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+                  description: Quantidade de pUSD (vazio = saldo total)
+      responses:
+        "200":
+          description: Transferência enviada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      txHash:
+                        type: string
+                      amount:
+                        type: number
+                      depositWalletBalance:
+                        type: number
+        "400":
+          description: Sem pUSD ou sem MATIC na EOA
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /polymarket/deploy-wallet:
+    post:
+      tags: [Polymarket]
+      summary: Faz o deploy da deposit wallet via relayer
+      description: |
+        Envia WALLET-CREATE ao relayer da Polymarket para deployar a deposit
+        wallet (se ainda não existir). Requer a relayer API key salva.
+      operationId: deployDepositWallet
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Deploy enviado (ou wallet já existe)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Relayer key ausente ou falha no relayer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /portfolio/resumo:
+    get:
+      tags: [Portfolio]
+      summary: Resumo patrimonial consolidado das corretoras conectadas
+      description: |
+        Totais de spot/futuros (USDT e USDC) somados entre as corretoras ativas,
+        mais o saldo por corretora. Espelha o `/perp-arb/balances` legado.
+      operationId: getPortfolioResumo
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Resumo patrimonial
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioResumoResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /portfolio/historico:
+    get:
+      tags: [Portfolio]
+      summary: Histórico de evolução patrimonial (snapshots)
+      description: Snapshots ordenados por timestamp para o gráfico de evolução.
+      operationId: getPortfolioHistorico
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de snapshots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioHistoricoResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /portfolio/live:
+    get:
+      tags: [Portfolio]
+      summary: Portfolio ao vivo (moedas spot + posições futuras)
+      description: |
+        Saldo spot por moeda (quantidade + valor USD) e posições futuras abertas
+        (notional, entry/mark, PnL não realizado) de todas as corretoras ativas.
+      operationId: getPortfolioLive
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Portfolio ao vivo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioLiveResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/strategies:
+    get:
+      tags: [PerpArb]
+      summary: Lista as estratégias de arbitragem perpétuo vs spot (Funding Arb)
+      operationId: listStrategies
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de estratégias
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbStrategyListResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [PerpArb]
+      summary: Cria uma nova estratégia de arbitragem
+      operationId: createStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbStrategyCreateRequest"
+      responses:
+        "201":
+          description: Estratégia criada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbStrategyResponse"
+        "400":
+          description: Campos obrigatórios ausentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [PerpArb]
+      summary: Atualiza uma estratégia de arbitragem
+      operationId: updateStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbStrategyUpdateRequest"
+      responses:
+        "200":
+          description: Estratégia atualizada com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbStrategyResponse"
+        "400":
+          description: Campos obrigatórios ausentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Estratégia não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [PerpArb]
+      summary: Remove uma estratégia de arbitragem
+      operationId: deleteStrategy
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: ID da estratégia a ser removida
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Estratégia removida com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: ID ausente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Estratégia não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/trades:
+    get:
+      tags: [PerpArb]
+      summary: Lista o histórico de transações de arbitragem
+      operationId: listTrades
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de trades
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbTradeListResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [PerpArb]
+      summary: Limpa o histórico de transações não executadas
+      operationId: deleteTrades
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Histórico de trades limpo com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/trades/resumo:
+    get:
+      tags: [PerpArb]
+      summary: Resumo estatístico das operações encerradas (contagem, PnL total, APR, rendimento mensal e volumes de entrada/saída)
+      operationId: getTradesSummary
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Resumo estatístico de trades retornado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbTradesSummaryResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /forex-arb/strategies:
+    get:
+      tags: [ForexArb]
+      summary: Lista as estratégias de arbitragem Forex
+      operationId: getForexStrategies
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de estratégias Forex
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ForexArbStrategy"
+        "401":
+          description: Não autenticado
+    post:
+      tags: [ForexArb]
+      summary: Cria uma nova estratégia Forex
+      operationId: createForexStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForexArbStrategyCreateRequest"
+      responses:
+        "201":
+          description: Estratégia Forex criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForexArbStrategy"
+        "401":
+          description: Não autenticado
+    delete:
+      tags: [ForexArb]
+      summary: Remove uma estratégia Forex
+      operationId: deleteForexStrategy
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Estratégia removida
+        "401":
+          description: Não autenticado
+  /forex-arb/trades:
+    get:
+      tags: [ForexArb]
+      summary: Lista o histórico de trades de arbitragem Forex
+      operationId: getForexTrades
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de trades Forex
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ForexArbTrade"
+        "401":
+          description: Não autenticado
+  /forex-arb/opportunities:
+    get:
+      tags: [ForexArb]
+      summary: Lista as oportunidades detectadas de arbitragem Forex
+      operationId: getForexOpportunities
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de oportunidades Forex
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ForexArbTrade"
+        "401":
+          description: Não autenticado
+  /forex-arb/settings:
+    get:
+      tags: [ForexArb]
+      summary: Retorna as configurações de arbitragem Forex
+      operationId: getForexSettings
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Configurações Forex
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForexArbSettings"
+        "401":
+          description: Não autenticado
+    post:
+      tags: [ForexArb]
+      summary: Atualiza as configurações de arbitragem Forex
+      operationId: updateForexSettings
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForexArbSettingsUpdateRequest"
+      responses:
+        "200":
+          description: Configurações salvas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForexArbSettings"
+        "401":
+          description: Não autenticado
+  /forex-arb/ctrader-credentials:
+    put:
+      tags: [ForexArb]
+      summary: Atualiza os tokens OAuth e credenciais cTrader do usuário
+      operationId: updateCtraderCredentials
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: font-false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CtraderCredentialsUpdateRequest"
+      responses:
+        "200":
+          description: Credenciais salvas
+        "401":
+          description: Não autenticado
+  /forex-arb/close:
+    post:
+      tags: [ForexArb]
+      summary: Aciona o fechamento de uma posição Forex aberta
+      operationId: closeForexStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategyId]
+              properties:
+                strategyId:
+                  type: string
+      responses:
+        "200":
+          description: Fechamento acionado
+        "401":
+          description: Não autenticado
+  /forex-arb/logs:
+    get:
+      tags: [ForexArb]
+      summary: Retorna os logs de execução do robô Forex
+      operationId: getForexLogs
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: process
+          in: query
+          required: false
+          schema:
+            type: string
+            default: forex-arb
+          description: "Nome do processo PM2 (ex: forex-arb, forex-scanner)"
+        - name: lines
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "150"
+          description: "Quantidade de linhas de log a retornar"
+      responses:
+        "200":
+          description: Logs do processo retornado com sucesso
+        "401":
+          description: Não autenticado
+  /bot-status:
+    get:
+      tags: [PerpArb]
+      summary: Retorna o status de operação em tempo real (heartbeat) do robô e o estado do scanner
+      operationId: getBotStatus
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Status do robô retornado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatusResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/settings:
+    get:
+      tags: [PerpArb]
+      summary: Retorna as configurações de arbitragem perpétuo vs spot (Funding Arb)
+      operationId: getPerpArbSettings
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Configurações de arbitragem
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbSettingsResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [PerpArb]
+      summary: Atualiza as configurações de arbitragem perpétuo vs spot
+      operationId: updatePerpArbSettings
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbSettingsUpdateRequest"
+      responses:
+        "200":
+          description: Configurações atualizadas com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbSettingsResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/close:
+    post:
+      tags: [PerpArb]
+      summary: Aciona o fechamento de uma estratégia de arbitragem
+      operationId: closeStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbCloseRequest"
+      responses:
+        "200":
+          description: Fechamento acionado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbCloseResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/increase:
+    post:
+      tags: [PerpArb]
+      summary: Aumenta o aporte de uma estratégia ativa
+      operationId: increaseStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbIncreaseRequest"
+      responses:
+        "200":
+          description: Aporte aumentado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbIncreaseResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/void-close:
+    post:
+      tags: [PerpArb]
+      summary: Marca a posição como encerrada administrativamente sem ordens reais
+      operationId: voidCloseStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerpArbVoidCloseRequest"
+      responses:
+        "200":
+          description: Posição marcada como encerrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/logs:
+    get:
+      tags: [PerpArb]
+      summary: Recupera os logs de execução dos robôs diretamente do processo local (PM2)
+      operationId: getLogs
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: process
+          in: query
+          required: false
+          schema:
+            type: string
+            default: scanner
+        - name: lines
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "150"
+      responses:
+        "200":
+          description: Logs de execução do processo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbLogsResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/manual-scan:
+    get:
+      tags: [PerpArb]
+      summary: Executa escaneamento manual de oportunidades spot vs perp
+      operationId: manualScan
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: spotExchange
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: perpExchange
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: exchanges
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resultados do escaneamento manual
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbManualScanResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /perp-arb/audit-exchange:
+    get:
+      tags: [PerpArb]
+      summary: Retorna relatório de auditoria de trades reais cruzados da exchange (Spot + Perpétuo)
+      operationId: auditExchangeTrades
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: exchange
+          in: query
+          required: false
+          schema:
+            type: string
+            default: mexc
+            description: Identificador da corretora (mexc, binance, okx, bybit, gateio)
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+            description: Quantidade de dias retroativos para auditar
+      responses:
+        "200":
+          description: Relatório auditado consolidado por ativo e totais
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerpArbAuditExchangeResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /usuarios:
+    get:
+      tags: [Usuarios]
+      summary: Lista todos os usuários cadastrados (Manutenção)
+      operationId: listUsers
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de usuários
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Usuarios]
+      summary: Cria um novo usuário administrativamente
+      operationId: createUser
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreateRequest"
+      responses:
+        "201":
+          description: Usuário criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMaintenanceResponse"
+        "400":
+          description: E-mail já cadastrado ou campos inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /usuarios/{id}:
+    get:
+      tags: [Usuarios]
+      summary: Retorna detalhes de um usuário específico
+      operationId: getUserById
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do usuário a retornar
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Detalhes do usuário
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMaintenanceResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Usuário não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [Usuarios]
+      summary: Atualiza dados de um usuário existente
+      operationId: updateUser
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do usuário a atualizar
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateRequest"
+      responses:
+        "200":
+          description: Usuário atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMaintenanceResponse"
+        "400":
+          description: E-mail já em uso ou dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Usuário não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Usuarios]
+      summary: Remove um usuário do sistema
+      operationId: deleteUser
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID do usuário a remover
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Usuário removido com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Tentativa de excluir o próprio usuário autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Usuário não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  # ─── PredictionArb ───────────────────────────────────────────────────────────
+  /prediction-arb/strategies:
+    get:
+      tags: [PredictionArb]
+      summary: Lista as estratégias de prediction markets
+      operationId: listPredictionStrategies
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de estratégias
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbStrategyListResponse"
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [PredictionArb]
+      summary: Cria uma nova estratégia de prediction market
+      operationId: createPredictionStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbStrategyCreateRequest"
+      responses:
+        "201":
+          description: Estratégia criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbStrategyResponse"
+        "400":
+          description: slug obrigatório
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Mercado não encontrado na Gamma API
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [PredictionArb]
+      summary: Atualiza uma estratégia de prediction market
+      operationId: updatePredictionStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbStrategyUpdateRequest"
+      responses:
+        "200":
+          description: Estratégia atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbStrategyResponse"
+        "400":
+          description: Campos obrigatórios ausentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [PredictionArb]
+      summary: Remove uma estratégia (somente sem posição aberta)
+      operationId: deletePredictionStrategy
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Estratégia removida
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Estratégia com posição aberta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /prediction-arb/trades:
+    get:
+      tags: [PredictionArb]
+      summary: Lista os trades de prediction markets
+      operationId: listPredictionTrades
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Lista de trades
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbTradeListResponse"
+  /prediction-arb/trades/resumo:
+    get:
+      tags: [PredictionArb]
+      summary: Resumo dos trades de prediction markets
+      operationId: predictionTradesSummary
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Resumo (total fechado, PnL, APR)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbTradesSummaryResponse"
+  /prediction-arb/settings:
+    get:
+      tags: [PredictionArb]
+      summary: Obtém as configurações do robô de prediction markets
+      operationId: getPredictionArbSettings
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Configurações
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbSettingsResponse"
+    post:
+      tags: [PredictionArb]
+      summary: Atualiza as configurações do robô
+      operationId: updatePredictionArbSettings
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbSettingsUpdateRequest"
+      responses:
+        "200":
+          description: Configurações salvas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbSettingsResponse"
+  /prediction-arb/bot-status:
+    get:
+      tags: [PredictionArb]
+      summary: Status online do robô de prediction markets
+      operationId: getPredictionBotStatus
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Status do bot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbBotStatusResponse"
+  /prediction-arb/close:
+    post:
+      tags: [PredictionArb]
+      summary: Aciona o fechamento de uma posição de prediction market
+      operationId: closePredictionStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbCloseRequest"
+      responses:
+        "200":
+          description: Fechamento acionado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+  /prediction-arb/increase:
+    post:
+      tags: [PredictionArb]
+      summary: Aumenta o aporte de uma estratégia
+      operationId: increasePredictionStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbIncreaseRequest"
+      responses:
+        "200":
+          description: Aporte aumentado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+  /prediction-arb/void-close:
+    post:
+      tags: [PredictionArb]
+      summary: Marca posição como encerrada pela corretora (sem PnL)
+      operationId: voidClosePredictionStrategy
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionArbVoidCloseRequest"
+      responses:
+        "200":
+          description: Posição marcada como encerrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+  /prediction-arb/manual-scan:
+    get:
+      tags: [PredictionArb]
+      summary: Executa um scan manual de mercados
+      operationId: manualScanPrediction
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Scan concluído
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionArbManualScanResponse"
+components:
+  securitySchemes:
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: session_token
+      description: Cookie httpOnly de sessão emitido no login
+  schemas:
+    # ── Envelope ──────────────────────────────────────────────────────────────
+    ApiEnvelope:
+      type: object
+      description: Envelope padrão de toda resposta (o front assume `success` e `message` sempre presentes)
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          description: Payload específico do endpoint (opcional)
+        pagination:
+          description: Presente apenas em endpoints paginados
+    SuccessResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message]
+          properties:
+            success:
+              enum: [true]
+            message:
+              type: string
+              example: Operação realizada com sucesso.
+    ErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message]
+          properties:
+            success:
+              enum: [false]
+            message:
+              type: string
+              description: Texto seguro para exibição na UI (PT-BR)
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        twoFactorToken:
+          type: string
+          description: Código TOTP de 6 dígitos, enviado apenas quando o backend sinaliza 2FA
+          example: "123456"
+    LoginResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [user]
+              properties:
+                user:
+                  $ref: "#/components/schemas/UserPublic"
+    UserPublic:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+    # ── Perfil ────────────────────────────────────────────────────────────────
+    PerfilResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/Perfil"
+    Perfil:
+      type: object
+      required: [id, nome, email]
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        telefone:
+          type: string
+          nullable: true
+          description: Opcional no cadastro — pode ser null
+        twoFactorEnabled:
+          type: boolean
+        telegramChatId:
+          type: string
+          nullable: true
+          description: Chat ID do Telegram para notificações das operações
+        telegramBotToken:
+          type: string
+          nullable: true
+          description: >-
+            Token mascarado do bot do Telegram (ex.: ***3456). O backend devolve
+            apenas o sufixo; o valor integral nunca sai da persistência.
+    PerfilUpdateRequest:
+      type: object
+      required: [nome]
+      properties:
+        nome:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+          description: "O e-mail do usuário (bloqueado para alterações)"
+        telegramChatId:
+          type: string
+          nullable: true
+          description: Chat ID do Telegram para notificações
+        telegramBotToken:
+          type: string
+          nullable: true
+          description: >-
+            Token integral do bot do Telegram ao salvar; o backend o armazena e
+            só devolve mascarado no /perfil (GET).
+    # ── Exchanges (CEX) ───────────────────────────────────────────────────────
+    Exchange:
+      type: object
+      required: [id, exchangeId, nome, apiKey, ativa]
+      properties:
+        id:
+          type: string
+          description: Id da conexão
+        exchangeId:
+          type: string
+          description: "Identificador da corretora (registry do front: mexc, binance, okx, bybit, gateio, ctrader, fix, pepperstone, pepperstone-fix, ctrader-fix, dukascopy, hyperliquid)"
+          enum: [mexc, binance, okx, bybit, gateio, ctrader, fix, pepperstone, pepperstone-fix, ctrader-fix, dukascopy, hyperliquid]
+        nome:
+          type: string
+          description: Nome amigável da conexão
+        apiKey:
+          type: string
+          description: Chave pública ou identificador (mascarada na UI; o segredo nunca é devolvido)
+        clientId:
+          type: string
+          description: Client ID para cTrader / Pepperstone Open API
+        accountId:
+          type: string
+          description: Account ID para cTrader / Pepperstone Open API
+        environment:
+          type: string
+          enum: [live, demo]
+          description: Ambiente para cTrader / Pepperstone Open API
+        host:
+          type: string
+          description: Host para FIX API (Pepperstone)
+        senderCompId:
+          type: string
+          description: SenderCompID para FIX API
+        targetCompId:
+          type: string
+          description: TargetCompID para FIX API
+        username:
+          type: string
+          description: Username/Login da conta para FIX API ou Dukascopy
+        quotePort:
+          type: number
+          description: Porta Quote SSL para FIX API
+        tradePort:
+          type: number
+          description: Porta Trade SSL para FIX API
+        jnlpUrl:
+          type: string
+          description: JNLP URL para Dukascopy JForex
+        ativa:
+          type: boolean
+          description: Se a conexão está ativa
+    ExchangeListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Exchange"
+    ExchangeResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/Exchange"
+    ExchangeCreateRequest:
+      type: object
+      required: [exchangeId, nome]
+      properties:
+        exchangeId:
+          type: string
+          description: Identificador da corretora (mexc, binance, okx, bybit, gateio, ctrader, fix, pepperstone, pepperstone-fix, ctrader-fix, dukascopy, hyperliquid)
+          enum: [mexc, binance, okx, bybit, gateio, ctrader, fix, pepperstone, pepperstone-fix, ctrader-fix, dukascopy, hyperliquid]
+        nome:
+          type: string
+          minLength: 1
+        apiKey:
+          type: string
+          description: "Obrigatório para corretoras CEX padrão (MEXC, Binance, OKX, etc.) ou MASTER (Hyperliquid)"
+        apiSecret:
+          type: string
+          description: "Obrigatório para CEX padrão / Hyperliquid AGENT. Criptografado pelo backend (AES-256-GCM)"
+        clientId:
+          type: string
+          description: Client ID para cTrader / Pepperstone Open API
+        clientSecret:
+          type: string
+          description: Client Secret para cTrader / Pepperstone Open API (criptografado)
+        accessToken:
+          type: string
+          description: Access Token OAuth cTrader (criptografado)
+        refreshToken:
+          type: string
+          description: Refresh Token OAuth cTrader (criptografado)
+        accountId:
+          type: string
+          description: Account ID / Número da Conta para cTrader / Pepperstone Open API
+        username:
+          type: string
+          description: Username/Login da conta para cTrader, FIX API ou Dukascopy
+        environment:
+          type: string
+          enum: [live, demo]
+          default: live
+        host:
+          type: string
+          description: Host para FIX API (Pepperstone)
+        quotePort:
+          type: number
+          default: 5211
+        tradePort:
+          type: number
+          default: 5212
+        senderCompId:
+          type: string
+          description: "SenderCompID para FIX API (ex: live.pepperstone.1382148)"
+        username:
+          type: string
+          description: Username/Login da conta para cTrader, FIX API ou Dukascopy
+        password:
+          type: string
+          description: Senha para FIX API ou Dukascopy (criptografada)
+        jnlpUrl:
+          type: string
+          description: JNLP URL para Dukascopy JForex
+    ExchangeUpdateRequest:
+      type: object
+      required: [id, exchangeId, nome]
+      properties:
+        id:
+          type: string
+          description: Id da conexão a atualizar
+        exchangeId:
+          type: string
+          description: Identificador da corretora
+          enum: [mexc, binance, okx, bybit, gateio, ctrader, fix, pepperstone, pepperstone-fix, ctrader-fix, dukascopy, hyperliquid]
+        nome:
+          type: string
+          minLength: 1
+        apiKey:
+          type: string
+        apiSecret:
+          type: string
+          description: "Opcional: vazio mantém o segredo atual; se preenchido, é criptografado (AES-256-GCM)"
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        accountId:
+          type: string
+        environment:
+          type: string
+          enum: [live, demo]
+        host:
+          type: string
+        quotePort:
+          type: number
+        tradePort:
+          type: number
+        senderCompId:
+          type: string
+        targetCompId:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        jnlpUrl:
+          type: string
+    PerpArbStrategy:
+      type: object
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        perpSymbol:
+          type: string
+        spotSymbol:
+          type: string
+        tradeSize:
+          type: number
+        minFundingRatePct:
+          type: number
+        maxSlippagePct:
+          type: number
+        maxDailyLoss:
+          type: number
+        cooldownAfterLossMs:
+          type: number
+        perpExchangeKeyId:
+          type: string
+          nullable: true
+        spotExchangeKeyId:
+          type: string
+          nullable: true
+        exchangeKeyId:
+          type: string
+          nullable: true
+        ativo:
+          type: boolean
+        autoExecute:
+          type: boolean
+        dailyLossAccum:
+          type: number
+        lastLossAt:
+          type: string
+          format: date-time
+          nullable: true
+        currentFundingRate:
+          type: number
+          nullable: true
+        positionOpen:
+          type: boolean
+        positionSize:
+          type: number
+        positionOpenedAt:
+          type: string
+          format: date-time
+          nullable: true
+        fundingCollected:
+          type: number
+        fundingCount:
+          type: number
+        fundingAtOpen:
+          type: number
+          nullable: true
+        autoClose:
+          type: boolean
+        fundingTargetPct:
+          type: number
+        maxHoldHours:
+          type: number
+        exitSpreadPct:
+          type: number
+          description: Spread real de saída (% entre spotBid e perpAsk)
+        exitSpreadUsd:
+          type: number
+          description: Spread real de saída acumulado em USD
+        estimatedLiquidationPrice:
+          type: number
+          nullable: true
+          description: Preço de liquidação estimado para a posição perpétua Short 1x (EntryPrice * 2)
+        lastSpotBid:
+          type: number
+          nullable: true
+        lastSpotAsk:
+          type: number
+          nullable: true
+        lastPerpBid:
+          type: number
+          nullable: true
+        lastPerpAsk:
+          type: number
+          nullable: true
+    PerpArbStrategyListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PerpArbStrategy"
+    PerpArbStrategyResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/PerpArbStrategy"
+    PerpArbStrategyCreateRequest:
+      type: object
+      required: [nome, perpSymbol, spotSymbol, tradeSize]
+      properties:
+        nome:
+          type: string
+          minLength: 1
+        perpSymbol:
+          type: string
+        spotSymbol:
+          type: string
+        tradeSize:
+          type: number
+        minFundingRatePct:
+          type: number
+        maxSlippagePct:
+          type: number
+        maxDailyLoss:
+          type: number
+        cooldownAfterLossMs:
+          type: number
+        perpExchangeKeyId:
+          type: string
+        spotExchangeKeyId:
+          type: string
+        exchangeKeyId:
+          type: string
+        ativo:
+          type: boolean
+    PerpArbStrategyUpdateRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        perpSymbol:
+          type: string
+        spotSymbol:
+          type: string
+        tradeSize:
+          type: number
+        minFundingRatePct:
+          type: number
+        maxSlippagePct:
+          type: number
+        maxDailyLoss:
+          type: number
+        cooldownAfterLossMs:
+          type: number
+        perpExchangeKeyId:
+          type: string
+        spotExchangeKeyId:
+          type: string
+        exchangeKeyId:
+          type: string
+        ativo:
+          type: boolean
+        autoExecute:
+          type: boolean
+        autoClose:
+          type: boolean
+        fundingTargetPct:
+          type: number
+        maxHoldHours:
+          type: number
+        resetCooldown:
+          type: boolean
+    PerpArbTrade:
+      type: object
+      required: [type, status, amount]
+      properties:
+        id:
+          type: string
+        strategyId:
+          type: string
+        strategyName:
+          type: string
+        perpSymbol:
+          type: string
+        spotSymbol:
+          type: string
+        type:
+          type: string
+        spotOrderId:
+          type: string
+          nullable: true
+        perpOrderId:
+          type: string
+          nullable: true
+        spotQuantity:
+          type: number
+          nullable: true
+          description: Quantidade exata negociada em unidades de token no Spot
+        perpQuantity:
+          type: number
+          nullable: true
+          description: Quantidade exata de contratos negociados no Perpétuo
+        spotPrice:
+          type: number
+          description: Preço de entrada no Spot (LONG)
+        spotExitPrice:
+          type: number
+          nullable: true
+          description: Preço de saída no Spot (venda)
+        perpPrice:
+          type: number
+          description: Preço de entrada no Perpétuo (SHORT)
+        perpExitPrice:
+          type: number
+          nullable: true
+          description: Preço de saída no Perpétuo (recompra)
+        spotPnl:
+          type: number
+          nullable: true
+          description: PnL realizado na perna Spot em USD
+        perpPnl:
+          type: number
+          nullable: true
+          description: PnL realizado na perna Perpétua em USD
+        fundingCollected:
+          type: number
+          nullable: true
+          description: Funding rate acumulado/coletado durante a operação
+        fundingRate:
+          type: number
+        fundingPct:
+          type: number
+        amount:
+          type: number
+        status:
+          type: string
+        pnl:
+          type: number
+        fundingCount:
+          type: number
+        reason:
+          type: string
+          nullable: true
+        openedAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    PerpArbTradeListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PerpArbTrade"
+    # ── Portfolio ────────────────────────────────────────────────────────────
+    PortfolioResumoResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/PortfolioResumo"
+    PortfolioResumo:
+      type: object
+      required:
+        [
+          spotUsdt,
+          spotUsdc,
+          spotTotalEquity,
+          futuresUsdt,
+          futuresUsdc,
+          futuresTotalEquity,
+          exchanges,
+        ]
+      properties:
+        spotUsdt:
+          type: number
+        spotUsdc:
+          type: number
+        spotTotalEquity:
+          type: number
+        futuresUsdt:
+          type: number
+        futuresUsdc:
+          type: number
+        futuresTotalEquity:
+          type: number
+        exchanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExchangeBalance"
+    ExchangeBalance:
+      type: object
+      required:
+        [
+          id,
+          name,
+          exchangeId,
+          spotUsdt,
+          spotUsdc,
+          spotTotalEquity,
+          futuresUsdt,
+          futuresUsdc,
+          futuresTotalEquity,
+        ]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        exchangeId:
+          type: string
+        spotUsdt:
+          type: number
+        spotUsdc:
+          type: number
+        spotTotalEquity:
+          type: number
+        futuresUsdt:
+          type: number
+        futuresUsdc:
+          type: number
+        futuresTotalEquity:
+          type: number
+    PortfolioHistoricoResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PortfolioSnapshot"
+    PortfolioSnapshot:
+      type: object
+      required:
+        [
+          timestamp,
+          totalUsdValue,
+          spotTotalUsd,
+          futuresTotalUsd,
+          futuresUnrealizedPnl,
+        ]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        totalUsdValue:
+          type: number
+        spotTotalUsd:
+          type: number
+        futuresTotalUsd:
+          type: number
+        futuresUnrealizedPnl:
+          type: number
+    PortfolioLiveResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/PortfolioLive"
+    ForexLeg:
+      type: object
+      required: [symbol, side]
+      properties:
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        price:
+          type: number
+          nullable: true
+        amount:
+          type: number
+          nullable: true
+        orderId:
+          type: string
+          nullable: true
+    ForexArbStrategy:
+      type: object
+      required: [id, name, tradeSize]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        exchangeId:
+          type: string
+        exchangeKeyId:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [simple, triangular]
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ForexLeg"
+        tradeSize:
+          type: number
+        expectedProfitPct:
+          type: number
+        minProfitPct:
+          type: number
+        maxSlippagePct:
+          type: number
+        autoExecute:
+          type: boolean
+        isAutoCreated:
+          type: boolean
+        active:
+          type: boolean
+        positionOpen:
+          type: boolean
+        positionOpenedAt:
+          type: string
+          format: date-time
+          nullable: true
+        positionSize:
+          type: number
+        status:
+          type: string
+        pnl:
+          type: number
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+    ForexArbStrategyCreateRequest:
+      type: object
+      required: [name, tradeSize]
+      properties:
+        name:
+          type: string
+        exchangeId:
+          type: string
+        exchangeKeyId:
+          type: string
+        type:
+          type: string
+          enum: [simple, triangular]
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ForexLeg"
+        tradeSize:
+          type: number
+        expectedProfitPct:
+          type: number
+        minProfitPct:
+          type: number
+        maxSlippagePct:
+          type: number
+        autoExecute:
+          type: boolean
+    ForexArbTrade:
+      type: object
+      required: [type, status]
+      properties:
+        id:
+          type: string
+        strategyId:
+          type: string
+          nullable: true
+        strategyName:
+          type: string
+          nullable: true
+        exchangeId:
+          type: string
+        type:
+          type: string
+          enum: [opportunity_found, execution, close, error]
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ForexLeg"
+        amount:
+          type: number
+          nullable: true
+        expectedProfitPct:
+          type: number
+          nullable: true
+        realizedPnl:
+          type: number
+        status:
+          type: string
+          enum: [detected, executed, simulated, failed, skipped]
+        reason:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    ForexArbSettings:
+      type: object
+      properties:
+        isScanningEnabled:
+          type: boolean
+        lastScannedAt:
+          type: string
+          format: date-time
+          nullable: true
+        tradeSize:
+          type: number
+        minProfitPct:
+          type: number
+        minVolume24hUSD:
+          type: number
+        maxStrategiesPerScan:
+          type: number
+        scanIntervalMs:
+          type: number
+        maxDailyLoss:
+          type: number
+        maxSlippagePct:
+          type: number
+        autoExecute:
+          type: boolean
+        simpleEnabled:
+          type: boolean
+        triangularEnabled:
+          type: boolean
+        allowedExchanges:
+          type: array
+          items:
+            type: string
+    ForexArbSettingsUpdateRequest:
+      type: object
+      properties:
+        isScanningEnabled:
+          type: boolean
+        tradeSize:
+          type: number
+        minProfitPct:
+          type: number
+        minVolume24hUSD:
+          type: number
+        maxStrategiesPerScan:
+          type: number
+        scanIntervalMs:
+          type: number
+        maxDailyLoss:
+          type: number
+        maxSlippagePct:
+          type: number
+        autoExecute:
+          type: boolean
+        simpleEnabled:
+          type: boolean
+        triangularEnabled:
+          type: boolean
+        allowedExchanges:
+          type: array
+          items:
+            type: string
+    CtraderCredentialsUpdateRequest:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+        accountId:
+          type: string
+        environment:
+          type: string
+          enum: [live, demo]
+    PortfolioLive:
+      type: object
+      required:
+        [spotCoins, positions, spotTotalUsd, futuresUnrealizedPnl, timestamp]
+      properties:
+        spotCoins:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpotCoin"
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FuturesPosition"
+        spotTotalUsd:
+          type: number
+        futuresUnrealizedPnl:
+          type: number
+        timestamp:
+          type: string
+          format: date-time
+    SpotCoin:
+      type: object
+      required: [asset, free, used, total, usdValue, exchange]
+      properties:
+        asset:
+          type: string
+        free:
+          type: number
+        used:
+          type: number
+        total:
+          type: number
+        usdValue:
+          type: number
+        price:
+          type: number
+          nullable: true
+        bidPrice:
+          type: number
+          nullable: true
+          description: Preço de compra (bid) no livro spot (utilizado como preço de saída do Spot LONG)
+        askPrice:
+          type: number
+          nullable: true
+          description: Preço de venda (ask) no livro spot
+        avgCostPrice:
+          type: number
+          nullable: true
+        totalCost:
+          type: number
+        totalQty:
+          type: number
+        investedValue:
+          type: number
+        pnl:
+          type: number
+        pnlPct:
+          type: number
+          nullable: true
+        exchange:
+          type: string
+    FuturesPosition:
+      type: object
+      required: [exchange, symbol, side, contracts, notional, unrealizedPnl]
+      properties:
+        exchange:
+          type: string
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [long, short]
+        contracts:
+          type: number
+        contractSize:
+          type: number
+        qty:
+          type: number
+        notional:
+          type: number
+        entryPrice:
+          type: number
+          nullable: true
+        markPrice:
+          type: number
+          nullable: true
+        bidPrice:
+          type: number
+          nullable: true
+          description: Preço de compra melhor no livro da perna (bid)
+        askPrice:
+          type: number
+          nullable: true
+          description: Preço de venda melhor no livro da perna (ask)
+        liquidationPrice:
+          type: number
+          nullable: true
+        leverage:
+          type: number
+        unrealizedPnl:
+          type: number
+        unrealizedPnlPct:
+          type: number
+        margin:
+          type: number
+    SenhaChangeRequest:
+      type: object
+      required: [senhaAntiga, novaSenha]
+      properties:
+        senhaAntiga:
+          type: string
+        novaSenha:
+          type: string
+          minLength: 6
+    TwoFactorGenerateResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [secret, otpauthUrl]
+              properties:
+                secret:
+                  type: string
+                otpauthUrl:
+                  type: string
+    TwoFactorVerifyRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 6
+          maxLength: 6
+    UserMaintenance:
+      type: object
+      required: [id, nome, email, telefone, createdAt]
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        telefone:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    UserListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserMaintenance"
+    UserMaintenanceResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/UserMaintenance"
+    UserCreateRequest:
+      type: object
+      required: [nome, email, password]
+      properties:
+        nome:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+        telefone:
+          type: string
+    UserUpdateRequest:
+      type: object
+      properties:
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+          description: "Opcional: altera a senha se preenchido"
+        telefone:
+          type: string
+    PerpArbSettingsResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              $ref: "#/components/schemas/PerpArbSettings"
+    PerpArbSettings:
+      type: object
+      properties:
+        isScanningEnabled:
+          type: boolean
+        lastScannedAt:
+          type: string
+          format: date-time
+          nullable: true
+        tradeSize:
+          type: number
+        minFundingRatePct:
+          type: number
+        minVolume24hUSD:
+          type: number
+        maxStrategiesPerScan:
+          type: number
+        maxPerpScan:
+          type: number
+        scanIntervalMs:
+          type: number
+        targetSpotBuyUSD:
+          type: number
+        maxDailyLoss:
+          type: number
+        maxPortfolioCapUSD:
+          type: number
+        maxSlippagePct:
+          type: number
+        minEntrySpreadPct:
+          type: number
+        closeWhileFundingPositive:
+          type: boolean
+        spreadCloseThresholdPct:
+          type: number
+        spreadCloseForcePct:
+          type: number
+        targetProfitPct:
+          type: number
+        profitTrailingDropPct:
+          type: number
+        allowedExchanges:
+          type: array
+          items:
+            type: string
+    PerpArbSettingsUpdateRequest:
+      type: object
+      properties:
+        isScanningEnabled:
+          type: boolean
+        tradeSize:
+          type: number
+        minFundingRatePct:
+          type: number
+        minVolume24hUSD:
+          type: number
+        maxDailyLoss:
+          type: number
+        maxPortfolioCapUSD:
+          type: number
+        maxSlippagePct:
+          type: number
+        closeWhileFundingPositive:
+          type: boolean
+        spreadCloseThresholdPct:
+          type: number
+        spreadCloseForcePct:
+          type: number
+        targetProfitPct:
+          type: number
+        profitTrailingDropPct:
+          type: number
+    PerpArbCloseRequest:
+      type: object
+      properties:
+        strategyId:
+          type: string
+        perpSymbol:
+          type: string
+    PerpArbCloseResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [pnl, status]
+              properties:
+                pnl:
+                  type: number
+                status:
+                  type: string
+    PerpArbIncreaseRequest:
+      type: object
+      required: [strategyId, amount]
+      properties:
+        strategyId:
+          type: string
+        amount:
+          type: number
+    PerpArbIncreaseResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [newPositionSize]
+              properties:
+                newPositionSize:
+                  type: number
+    PerpArbVoidCloseRequest:
+      type: object
+      properties:
+        strategyId:
+          type: string
+        perpSymbol:
+          type: string
+    PerpArbLogsResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [process, linesCount, logs, timestamp]
+              properties:
+                process:
+                  type: string
+                linesCount:
+                  type: number
+                logs:
+                  type: array
+                  items:
+                    type: string
+                timestamp:
+                  type: string
+                  format: date-time
+    PerpArbManualScanResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [symbol, results, errors]
+              properties:
+                symbol:
+                  type: string
+                results:
+                  type: array
+                  items:
+                    type: object
+                errors:
+                  type: number
+    BotStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [isScanningEnabled, isOnline, botName]
+              properties:
+                isScanningEnabled:
+                  type: boolean
+                  description: Indica se o scanner automático de oportunidades está ativado
+                isOnline:
+                  type: boolean
+                  description: Indica se o robô enviou heartbeat nos últimos 3 minutos (operante)
+                lastHeartbeat:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Timestamp da última pulsação do robô
+                botName:
+                  type: string
+                  example: funding-arb
+    PerpArbTradesSummaryResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required:
+                [
+                  operacoesEncerradas,
+                  totalPnl,
+                  aprPct,
+                  monthlyPct,
+                  totalEntradaUsd,
+                  totalSaidaUsd,
+                ]
+              properties:
+                operacoesEncerradas:
+                  type: number
+                  example: 94
+                  description: Quantidade total de operações encerradas
+                totalPnl:
+                  type: number
+                  example: 47.95
+                  description: PnL líquido total acumulado em USD
+                aprPct:
+                  type: number
+                  example: 7.2
+                  description: Taxa de retorno anualizada estipulada (APR % a.a.)
+                monthlyPct:
+                  type: number
+                  example: 0.6
+                  description: Taxa de retorno mensal (% a.m.)
+                totalEntradaUsd:
+                  type: number
+                  example: 9123.54
+                  description: Volume total acumulado de entrada nas operações em USD
+                totalSaidaUsd:
+                  type: number
+                  example: 9171.49
+                  description: Volume total acumulado de saída das operações em USD (Entrada + PnL)
+    PerpArbAuditExchangeResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          required: [success, message, data]
+          properties:
+            data:
+              type: object
+              required: [exchange, periodDays, startDate, endDate, totais, detalhesPorAtivo]
+              properties:
+                exchange:
+                  type: string
+                  example: MEXC
+                periodDays:
+                  type: number
+                  example: 5
+                startDate:
+                  type: string
+                  format: date-time
+                endDate:
+                  type: string
+                  format: date-time
+                totais:
+                  type: object
+                  properties:
+                    totalEntradaSpot:
+                      type: number
+                    totalSaidaSpot:
+                      type: number
+                    totalPnlSpot:
+                      type: number
+                    totalPnlPerp:
+                      type: number
+                    taxasSpot:
+                      type: number
+                    taxasPerp:
+                      type: number
+                    totalTaxasTaker:
+                      type: number
+                    resultadoLiquidoTotal:
+                      type: number
+                detalhesPorAtivo:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      symbol:
+                        type: string
+                      volumeEntradaSpot:
+                        type: number
+                      volumeSaidaSpot:
+                        type: number
+                      pnlBrutoSpot:
+                        type: number
+                      pnlBrutoPerp:
+                        type: number
+                      taxasSpot:
+                        type: number
+                      taxasPerp:
+                        type: number
+                      totalTaxas:
+                        type: number
+                      resultadoLiquidoReal:
+                        type: number
+                      tradesCount:
+                        type: number
+                      emAbertoDesconsiderado:
+                        type: number
+                      trades:
+                        type: array
+                        description: Lista de todas as execuções de ordens individuais (Spot + Perpétuo) da moeda
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            type:
+                              type: string
+                              enum: [SPOT, PERP]
+                            symbol:
+                              type: string
+                            side:
+                              type: string
+                              enum: [BUY, SELL, OPEN_SHORT, CLOSE_SHORT]
+                            time:
+                              type: string
+                              format: date-time
+                            amount:
+                              type: number
+                            price:
+                              type: number
+                            volumeUsd:
+                              type: number
+                            feeCost:
+                              type: number
+                            feeCurrency:
+                              type: number
+                            feeUsd:
+                              type: number
+    # ── PredictionArb ──────────────────────────────────────────────────────────
+    PredictionArbStrategy:
+      type: object
+      description: Estratégia de arbitragem em prediction market (par YES/NO)
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        slug:
+          type: string
+        marketId:
+          type: string
+        conditionId:
+          type: string
+        yesPrice:
+          type: number
+        noPrice:
+          type: number
+        spreadPct:
+          type: number
+          description: Spread de completude 1-(yes+no) em %
+        tradeSize:
+          type: number
+        ativo:
+          type: boolean
+        autoExecute:
+          type: boolean
+        positionOpen:
+          type: boolean
+        positionSize:
+          type: number
+        yesShares:
+          type: number
+        noShares:
+          type: number
+        avgYesPrice:
+          type: number
+        avgNoPrice:
+          type: number
+        targetProfitPct:
+          type: number
+        endDate:
+          type: string
+          format: date-time
+        isAutoCreated:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    PredictionArbStrategyListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PredictionArbStrategy"
+    PredictionArbStrategyResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/PredictionArbStrategy"
+    PredictionArbStrategyCreateRequest:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          description: Slug do mercado na Gamma API
+        tradeSize:
+          type: number
+          default: 100
+        autoExecute:
+          type: boolean
+          default: false
+        exchangeKeyId:
+          type: string
+    PredictionArbStrategyUpdateRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        strategyId:
+          type: string
+        tradeSize:
+          type: number
+        active:
+          type: boolean
+        autoExecute:
+          type: boolean
+        targetProfitPct:
+          type: number
+    PredictionArbTrade:
+      type: object
+      description: Trade de prediction market (abertura/fechamento de par)
+      properties:
+        id:
+          type: string
+        strategyId:
+          type: string
+        openTradeId:
+          type: string
+        marketId:
+          type: string
+        slug:
+          type: string
+        question:
+          type: string
+        type:
+          type: string
+          enum: [open_pair, close_pair, trade, fee, rebalance, voided]
+        status:
+          type: string
+          enum: [detected, executed, simulated, failed, voided]
+        side:
+          type: string
+          enum: [YES, NO]
+        yesPrice:
+          type: number
+        noPrice:
+          type: number
+        yesExitPrice:
+          type: number
+        noExitPrice:
+          type: number
+        amount:
+          type: number
+        yesShares:
+          type: number
+        noShares:
+          type: number
+        pnl:
+          type: number
+        spreadPct:
+          type: number
+        reason:
+          type: string
+        orderIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+    PredictionArbTradeListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PredictionArbTrade"
+    PredictionArbTradesSummaryResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                operacoesEncerradas:
+                  type: number
+                totalPnl:
+                  type: number
+                aprPct:
+                  type: number
+                monthlyPct:
+                  type: number
+                totalEntradaUsd:
+                  type: number
+                totalSaidaUsd:
+                  type: number
+    PredictionArbSettings:
+      type: object
+      description: Configurações globais do robô de prediction markets
+      properties:
+        userId:
+          type: string
+        isScanningEnabled:
+          type: boolean
+          default: false
+        lastScannedAt:
+          type: string
+          format: date-time
+        tradeSize:
+          type: number
+          default: 100
+        minSpreadPct:
+          type: number
+          default: 0.5
+        minVolume24hUSD:
+          type: number
+          default: 10000
+        maxStrategiesPerScan:
+          type: number
+          default: 5
+        maxPortfolioCapUSD:
+          type: number
+          default: 1000
+        maxDailyLoss:
+          type: number
+          default: 10
+        makerOnly:
+          type: boolean
+          default: true
+        makerRebatePct:
+          type: number
+          default: 0
+        maxSlippagePct:
+          type: number
+          default: 0.1
+        closeWhenComplete:
+          type: boolean
+          default: true
+        targetProfitPct:
+          type: number
+          default: 1.0
+        allowedMarkets:
+          type: array
+          items:
+            type: string
+        marketFilter:
+          type: string
+          description: Filtro por termo no slug (ex: btc) — monitora só mercados que contêm o termo e gera slugs updown
+        marketCoins:
+          type: array
+          items:
+            type: string
+          description: Moedas voláteis para monitorar mercados updown (ex: btc, eth, sol, doge, xrp)
+        scanIntervalMs:
+          type: number
+          default: 60000
+    PredictionArbSettingsResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/PredictionArbSettings"
+    PredictionArbSettingsUpdateRequest:
+      type: object
+      properties:
+        isScanningEnabled:
+          type: boolean
+        tradeSize:
+          type: number
+        minSpreadPct:
+          type: number
+        minVolume24hUSD:
+          type: number
+        maxStrategiesPerScan:
+          type: number
+        maxPortfolioCapUSD:
+          type: number
+        maxDailyLoss:
+          type: number
+        makerOnly:
+          type: boolean
+        makerRebatePct:
+          type: number
+        maxSlippagePct:
+          type: number
+        closeWhenComplete:
+          type: boolean
+        targetProfitPct:
+          type: number
+        allowedMarkets:
+          type: array
+          items:
+            type: string
+        marketFilter:
+          type: string
+          description: Filtro por termo no slug (ex: btc)
+        marketCoins:
+          type: array
+          items:
+            type: string
+          description: Moedas voláteis para monitorar mercados updown
+        scanIntervalMs:
+          type: number
+    PredictionArbCloseRequest:
+      type: object
+      required: [strategyId]
+      properties:
+        strategyId:
+          type: string
+        id:
+          type: string
+    PredictionArbIncreaseRequest:
+      type: object
+      required: [strategyId, amount]
+      properties:
+        strategyId:
+          type: string
+        id:
+          type: string
+        amount:
+          type: number
+    PredictionArbVoidCloseRequest:
+      type: object
+      required: [strategyId]
+      properties:
+        strategyId:
+          type: string
+        id:
+          type: string
+    PredictionArbManualScanResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                scanned:
+                  type: number
+                created:
+                  type: number
+                updated:
+                  type: number
+    PredictionArbBotStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                isScanningEnabled:
+                  type: boolean
+                isOnline:
+                  type: boolean
+                lastHeartbeat:
+                  type: string
+                  format: date-time
+                botName:
+                  type: string
