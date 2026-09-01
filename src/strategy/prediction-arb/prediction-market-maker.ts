@@ -9,7 +9,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
-import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getCollateralBalance } from './helpers/clob-client';
+import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk } from './helpers/secure-client';
 import { makerEntryPrices } from './helpers/pricing';
 
@@ -272,25 +272,6 @@ export async function runMarketMaking(
       log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)} @ ${sharesPerQuote}sh). Não cotando lado sub-mínimo.`);
       return { quoted: false, orderIds: [] };
     }
-  }
-
-  // 5.1 Saldo de colateral: consulta o saldo que a CLOB vê e só cota se der
-  //     para o par inteiro (YES + NO). Sem saldo, NÃO cota — evita empilhar
-  //     ordens que nunca preenchem e travar o capital (o bug do par
-  //     desbalanceado / 5 ordens presas).
-  const saldo = await getCollateralBalance(credentials).catch(() => null);
-  const saldoDisponivel = saldo?.balance ?? 0;
-  const custoPar = sharesPerQuote * pairSum;
-  if (saldoDisponivel > 0 && custoPar > saldoDisponivel) {
-    // Se ainda sobra saldo para pelo menos 1 share por lado, reduz o tamanho;
-    // senão não cota (saldo já travado em ordens/posições).
-    const maxSharesPorSaldo = Math.floor(saldoDisponivel / pairSum);
-    if (maxSharesPorSaldo < 1) {
-      log.warn(`⚠️ [${strategy.slug}] Saldo insuficiente para cotar par (custo ~$${custoPar.toFixed(2)} > disponível $${saldoDisponivel.toFixed(2)}). Não cotando.`);
-      return { quoted: false, orderIds: [] };
-    }
-    log.warn(`⚠️ [${strategy.slug}] Saldo limita o tamanho: ${sharesPerQuote} -> ${maxSharesPorSaldo} shares/lado (disponível $${saldoDisponivel.toFixed(2)}).`);
-    sharesPerQuote = maxSharesPorSaldo;
   }
 
   // 6. Cancela ordens antigas antes de re-cotar (evita acúmulo de ordens parciais)
