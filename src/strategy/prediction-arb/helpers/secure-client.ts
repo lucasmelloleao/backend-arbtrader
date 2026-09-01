@@ -92,19 +92,32 @@ export async function placeOrderViaSdk(
     console.warn(`⚠️ [secure-client] updateCollateralBalance antes da ordem falhou: ${e.message}`);
   }
   const client = await getSecureClient(exchangeKeyDoc);
-  const res = await client.placeLimitOrder({
-    tokenId: params.tokenId,
-    price: params.price,
-    size: params.size,
-    side: params.side,
-  });
-  const id = res?.orderId || res?.orderID || res?.id;
-  if (!id) {
-    // Ordens que preenchem na hora (matched) podem não retornar id em alguns casos
-    if (res?.ok === true) return 'matched';
-    throw new Error(`SDK placeLimitOrder: resposta sem id (${JSON.stringify(res).slice(0, 200)})`);
+  try {
+    const res = await client.placeLimitOrder({
+      tokenId: params.tokenId,
+      price: params.price,
+      size: params.size,
+      side: params.side,
+    });
+    const id = res?.orderId || res?.orderID || res?.id;
+    if (!id) {
+      // Ordens que preenchem na hora (matched) podem não retornar id em alguns casos
+      if (res?.ok === true) return 'matched';
+      throw new Error(`SDK placeLimitOrder: resposta sem id (${JSON.stringify(res).slice(0, 200)})`);
+    }
+    return String(id);
+  } catch (e: any) {
+    // Código de restrição do CLOB (ex: post_only_mode — mercado recém-aberto
+    // em modo post-only, só aceita ordens maker). Propaga com o código para
+    // o MM decidir: se post_only, cai para maker (bid) em vez de taker.
+    const code = e?.code || e?.cause?.code || '';
+    if (code === 'post_only_mode' || String(e.message || '').includes('post-only')) {
+      const err = new Error(`post_only_mode: ${e.message}`) as any;
+      err.code = 'post_only_mode';
+      throw err;
+    }
+    throw e;
   }
-  return String(id);
 }
 
 /** Cancela uma ordem via SDK (o cancelamento também passa pelo proxy). */

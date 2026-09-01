@@ -264,12 +264,17 @@ export async function runMarketMaking(
   const TAKER_MARGEM = 0.002; // 0.2% de folga mínima sobre o ask
   const podeTaker = bYes.ask > 0 && bNo.ask > 0 && askSum + TAKER_MARGEM < 1;
 
+  // Preço maker (bid) — usado como fallback quando o mercado está em modo
+  // post-only (recém-aberto) e rejeita ordens taker no ask.
+  const targetSpread = Math.max(Number(strategy.spreadPct || 0.5), 0.2);
+  const baseEntry = makerEntryPrices(bYes.bid, bNo.bid, targetSpread);
+
   let yesPrice: number;
   let noPrice: number;
   let modoTaker = false;
   let attempt = Number(strategy.mmQuoteAttempt ?? 0);
 
-  if (podeTaker) {
+  if (podeTaker && baseEntry) {
     // Entrada taker: preço = ask dos dois lados (efetiva junto)
     yesPrice = bYes.ask;
     noPrice = bNo.ask;
@@ -277,15 +282,14 @@ export async function runMarketMaking(
     attempt = 0; // taker não progride — efetiva direto
     log.info(`⚡ [${strategy.slug}] Entrada taker simultânea: YES ${yesPrice.toFixed(4)} + NO ${noPrice.toFixed(4)} (soma ${(yesPrice + noPrice).toFixed(4)})`);
   } else {
-    // Sem folga no ask: cota maker no bid (fica no book, preenche quando alguém cruzar)
-    const targetSpread = Math.max(Number(strategy.spreadPct || 0.5), 0.2);
-    const baseEntry = makerEntryPrices(bYes.bid, bNo.bid, targetSpread);
+    // Sem folga no ask (ou sem baseEntry): cota maker no bid
     if (!baseEntry) {
       log.warn(`⚠️ [${strategy.slug}] Não foi possível montar par maker (bids ${bYes.bid}/${bNo.bid}).`);
       return { quoted: false, orderIds: [] };
     }
     yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || baseEntry.yes, step, attempt);
     noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || baseEntry.no, step, attempt);
+    modoTaker = false;
   }
   const pairSum = yesPrice + noPrice;
   if (pairSum >= 1) {
@@ -356,6 +360,19 @@ export async function runMarketMaking(
           const id = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price, size });
           return id;
         } catch (e: any) {
+          // Modo post-only (mercado recém-aberto): o CLOB rejeita ordens taker
+          // no ask. Recota no bid (maker), que é permitido em post-only.
+          if (e?.code === 'post_only_mode' && modoTaker && baseEntry) {
+            const precoMaker = lado === 'YES' ? baseEntry.yes : baseEntry.no;
+            log.warn(`⚠️ [${strategy.slug}] Post-only: recotando ${lado} no bid (${precoMaker.toFixed(4)}) em vez de taker.`);
+            try {
+              const id2 = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price: precoMaker, size });
+              return id2;
+            } catch (e2: any) {
+              log.warn(`⚠️ [${strategy.slug}] Ordem ${lado} (SDK) falhou mesmo no maker: ${e2.message}`);
+              return null;
+            }
+          }
           log.warn(`⚠️ [${strategy.slug}] Ordem ${lado} (SDK) falhou: ${e.message}`);
           return null;
         }
