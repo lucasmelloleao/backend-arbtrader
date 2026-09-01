@@ -9,7 +9,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
-import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
+import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getCollateralBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk } from './helpers/secure-client';
 import { makerEntryPrices } from './helpers/pricing';
 
@@ -81,7 +81,7 @@ export async function runMarketMaking(
   const cap = Number(strategy.maxInventoryPairs ?? 10);
   const step = Number(strategy.quoteStep ?? 0.005);
   const tradeSize = Number(strategy.tradeSize ?? 100);
-  const sharesPerQuote = Math.max(1, Math.min(Math.floor(tradeSize), cap)); // ações por lado
+  let sharesPerQuote = Math.max(1, Math.min(Math.floor(tradeSize), cap)); // ações por lado
 
   // 1. Inventário real (fonte da verdade) — via SDK quando disponível
   let positions: any[] = [];
@@ -105,9 +105,13 @@ export async function runMarketMaking(
     positionSize: (yesShares + noShares) / 2,
   });
 
-  // 2. Se ambos os lados têm inventário, o par está montado — registra a
-  //    operação (se ainda não registrada) e segura até vencimento.
-  const hasPair = yesShares >= 1 && noShares >= 1;
+  // 2. Se ambos os lados têm inventário (e balanceado), o par está montado —
+  //    registra a operação e segura até vencimento. Se desbalanceado (diferença
+  //    > 10%), NÃO segura: cai para a lógica de completar/rebalancear abaixo.
+  const imbalance = yesShares > 0 || noShares > 0
+    ? Math.abs(yesShares - noShares) / Math.max(yesShares, noShares)
+    : 0;
+  const hasPair = yesShares >= 1 && noShares >= 1 && imbalance <= 0.1;
   if (hasPair) {
     log.info(`🧺 [${strategy.slug}] Par completo: ${yesShares} YES + ${noShares} NO. Segurando até vencimento.`);
     // Cancela ordens abertas (não quer mais acumular)
@@ -153,33 +157,38 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // 2.5 Lado único exposto: se só UM lado preencheu (ex: YES=10, NO=0), o robô
-  //     fica com risco direcional. Tenta completar o par; se o mercado está
-  //     perto do vencimento, VENDE o lado único para não perder tudo.
+  // 2.5 Inventário desbalanceado: quando um lado tem MUITO mais que o outro
+  //     (ex: YES=15, NO=10), o robô fica com risco direcional. Duas frentes:
+  //     - Se o mercado está perto do vencimento (< 30min), VENDE o excesso do
+  //       lado pesado para não carregar risco até o fim.
+  //     - Se ainda há tempo, cotar SÓ o lado leve (completar o par) e nunca
+  //       o lado pesado — assim o par converge para balanceado.
   const oneSideOnly = (yesShares >= 1) !== (noShares >= 1);
-  if (oneSideOnly) {
+  const desbalanceado = !oneSideOnly && imbalance > 0.1;
+  if (oneSideOnly || desbalanceado) {
     const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const hoursToEnd = endMs > 0 ? (endMs - Date.now()) / 3600000 : Infinity;
-    const exposedShares = yesShares >= 1 ? yesShares : noShares;
-    const exposedSide = yesShares >= 1 ? 'YES' : 'NO';
-    const exposedToken = yesShares >= 1 ? strategy.tokenIdYes : strategy.tokenIdNo;
+    const exposedShares = Math.max(yesShares, noShares);
+    const exposedSide = yesShares >= noShares ? 'YES' : 'NO';
+    const exposedToken = yesShares >= noShares ? strategy.tokenIdYes : strategy.tokenIdNo;
+    const excesso = Math.abs(yesShares - noShares);
 
-    // Se falta < 30min para vencer e o outro lado não preencheu, reverte o lado exposto.
+    // Se falta < 30min para vencer e o par não está completo, reverte o excesso.
     if (hoursToEnd < 0.5) {
-      log.warn(`⚠️ [${strategy.slug}] Lado único exposto (${exposedSide} ${exposedShares}) com vencimento em ${hoursToEnd.toFixed(2)}h. Vendendo para não perder.`);
+      log.warn(`⚠️ [${strategy.slug}] Inventário desbalanceado (${exposedSide} ${exposedShares}, diff ${excesso}) com vencimento em ${hoursToEnd.toFixed(2)}h. Vendendo excesso para não perder.`);
       try {
-        // Vende no bid atual para sair da posição
+        // Vende o excesso no bid atual para reduzir o risco direcional
         const book = await bookPrices(exposedToken);
         if (book.bid > 0 && useSdk) {
-          await placeOrderViaSdk(keyDoc, { tokenId: exposedToken, side: 'SELL', price: book.bid, size: exposedShares });
-          log.info(`✅ [${strategy.slug}] Lado ${exposedSide} vendido (${exposedShares} @ ${book.bid}).`);
+          await placeOrderViaSdk(keyDoc, { tokenId: exposedToken, side: 'SELL', price: book.bid, size: excesso });
+          log.info(`✅ [${strategy.slug}] Excesso ${exposedSide} vendido (${excesso} @ ${book.bid}).`);
         } else if (book.bid > 0) {
-          const sell = await signOrder({ credentials, tokenId: exposedToken, side: 'SELL', price: book.bid, size: exposedShares });
+          const sell = await signOrder({ credentials, tokenId: exposedToken, side: 'SELL', price: book.bid, size: excesso });
           await placeOrder(credentials, sell);
-          log.info(`✅ [${strategy.slug}] Lado ${exposedSide} vendido (${exposedShares} @ ${book.bid}).`);
+          log.info(`✅ [${strategy.slug}] Excesso ${exposedSide} vendido (${excesso} @ ${book.bid}).`);
         }
       } catch (e: any) {
-        log.warn(`⚠️ [${strategy.slug}] Falha ao vender lado exposto: ${e.message}`);
+        log.warn(`⚠️ [${strategy.slug}] Falha ao vender excesso: ${e.message}`);
       }
       // Cancela ordens do outro lado e marca como fechada (sem posição útil)
       for (const oid of strategy.openOrderIds || []) {
@@ -192,8 +201,8 @@ export async function runMarketMaking(
       return { quoted: false, orderIds: [] };
     }
 
-    // Ainda tem tempo: tenta completar o par (cotar o lado faltante com prioridade)
-    log.info(`🎯 [${strategy.slug}] Lado único (${exposedSide} ${exposedShares}). Tentando completar o par...`);
+    // Ainda tem tempo: tenta completar o par (cotar o lado leve com prioridade)
+    log.info(`🎯 [${strategy.slug}] Inventário desbalanceado (YES=${yesShares} NO=${noShares}). Tentando completar o par (foco no lado leve)...`);
   }
 
   // 3. Cap de inventário: se um lado já está perto do cap, não acumula mais do lado certo
@@ -245,6 +254,25 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
+  // 5.1 Saldo de colateral: consulta o saldo que a CLOB vê e só cota se der
+  //     para o par inteiro (YES + NO). Sem saldo, NÃO cota — evita empilhar
+  //     ordens que nunca preenchem e travar o capital (o bug do par
+  //     desbalanceado / 5 ordens presas).
+  const saldo = await getCollateralBalance(credentials).catch(() => null);
+  const saldoDisponivel = saldo?.balance ?? 0;
+  const custoPar = sharesPerQuote * pairSum;
+  if (saldoDisponivel > 0 && custoPar > saldoDisponivel) {
+    // Se ainda sobra saldo para pelo menos 1 share por lado, reduz o tamanho;
+    // senão não cota (saldo já travado em ordens/posições).
+    const maxSharesPorSaldo = Math.floor(saldoDisponivel / pairSum);
+    if (maxSharesPorSaldo < 1) {
+      log.warn(`⚠️ [${strategy.slug}] Saldo insuficiente para cotar par (custo ~$${custoPar.toFixed(2)} > disponível $${saldoDisponivel.toFixed(2)}). Não cotando.`);
+      return { quoted: false, orderIds: [] };
+    }
+    log.warn(`⚠️ [${strategy.slug}] Saldo limita o tamanho: ${sharesPerQuote} -> ${maxSharesPorSaldo} shares/lado (disponível $${saldoDisponivel.toFixed(2)}).`);
+    sharesPerQuote = maxSharesPorSaldo;
+  }
+
   // 6. Cancela ordens antigas antes de re-cotar (evita acúmulo de ordens parciais)
   for (const oid of strategy.openOrderIds || []) {
     if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
@@ -258,26 +286,56 @@ export async function runMarketMaking(
   }
 
   // 7. Coloca as ordens do par (via SDK quando possível — suporta deposit wallet)
+  //    Se o inventário está desbalanceado, cota SÓ o lado leve (para completar
+  //    o par sem aumentar o risco direcional); senão cota os dois lados.
   const orderIds: string[] = [];
   try {
+    const ladoLeve = yesShares > noShares ? 'NO' : (noShares > yesShares ? 'YES' : null);
     if (useSdk) {
-      const [yesId, noId] = await Promise.all([
-        placeOrderViaSdk(keyDoc, { tokenId: strategy.tokenIdYes, side: 'BUY', price: yesPrice, size: sharesPerQuote })
-          .catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem YES (SDK) falhou: ${e.message}`); return null; }),
-        placeOrderViaSdk(keyDoc, { tokenId: strategy.tokenIdNo, side: 'BUY', price: noPrice, size: sharesPerQuote })
-          .catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem NO (SDK) falhou: ${e.message}`); return null; }),
-      ]);
-      if (yesId) orderIds.push(yesId);
-      if (noId) orderIds.push(noId);
+      const colocaLado = async (tokenId: string, price: number, lado: string): Promise<string | null> => {
+        try {
+          const id = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price, size: sharesPerQuote });
+          return id;
+        } catch (e: any) {
+          log.warn(`⚠️ [${strategy.slug}] Ordem ${lado} (SDK) falhou: ${e.message}`);
+          return null;
+        }
+      };
+      if (ladoLeve) {
+        const id = await colocaLado(
+          ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo,
+          ladoLeve === 'YES' ? yesPrice : noPrice,
+          ladoLeve,
+        );
+        if (id) orderIds.push(id);
+      } else {
+        const [yesId, noId] = await Promise.all([
+          colocaLado(strategy.tokenIdYes, yesPrice, 'YES'),
+          colocaLado(strategy.tokenIdNo, noPrice, 'NO'),
+        ]);
+        if (yesId) orderIds.push(yesId);
+        if (noId) orderIds.push(noId);
+      }
     } else {
-      const yesOrder = await signOrder({ credentials, tokenId: strategy.tokenIdYes, side: 'BUY', price: yesPrice, size: sharesPerQuote });
-      const noOrder = await signOrder({ credentials, tokenId: strategy.tokenIdNo, side: 'BUY', price: noPrice, size: sharesPerQuote });
-      const [yesId, noId] = await Promise.all([
-        placeOrder(credentials, yesOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem YES falhou: ${e.message}`); return null; }),
-        placeOrder(credentials, noOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem NO falhou: ${e.message}`); return null; }),
-      ]);
-      if (yesId) orderIds.push(yesId);
-      if (noId) orderIds.push(noId);
+      if (ladoLeve) {
+        const tokenId = ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
+        const price = ladoLeve === 'YES' ? yesPrice : noPrice;
+        const ordem = await signOrder({ credentials, tokenId, side: 'BUY', price, size: sharesPerQuote });
+        const id = await placeOrder(credentials, ordem).catch((e: any) => {
+          log.warn(`⚠️ [${strategy.slug}] Ordem ${ladoLeve} falhou: ${e.message}`);
+          return null;
+        });
+        if (id) orderIds.push(id);
+      } else {
+        const yesOrder = await signOrder({ credentials, tokenId: strategy.tokenIdYes, side: 'BUY', price: yesPrice, size: sharesPerQuote });
+        const noOrder = await signOrder({ credentials, tokenId: strategy.tokenIdNo, side: 'BUY', price: noPrice, size: sharesPerQuote });
+        const [yesId, noId] = await Promise.all([
+          placeOrder(credentials, yesOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem YES falhou: ${e.message}`); return null; }),
+          placeOrder(credentials, noOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem NO falhou: ${e.message}`); return null; }),
+        ]);
+        if (yesId) orderIds.push(yesId);
+        if (noId) orderIds.push(noId);
+      }
     }
 
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
