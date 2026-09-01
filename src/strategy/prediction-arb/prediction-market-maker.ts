@@ -224,6 +224,17 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
+  // 4.0 Mercado quase-resolvido: se um lado já convergiu (bid < 0.10 ou >
+  //     0.90), o "spread" de completude é ilusório — o lado barato não tem
+  //     book nem liquidez para fill, e o lado caro arrisca perda na resolução.
+  //     Não cotar: foi o que causou o par 25+25 comprado a 0.82/0.17.
+  const bidMenor = Math.min(bYes.bid, bNo.bid);
+  const bidMaior = Math.max(bYes.bid, bNo.bid);
+  if (bidMenor < 0.10 || bidMaior > 0.90) {
+    log.warn(`⚠️ [${strategy.slug}] Mercado quase-resolvido (bidYes=${bYes.bid} bidNo=${bNo.bid}). Não cotando (risco direcional).`);
+    return { quoted: false, orderIds: [] };
+  }
+
   // 4.1 Profundidade: só cotar se AMBOS os lados têm book para o tamanho da
   //     ordem. Se um lado não tem profundidade, entrar resultaria em posição
   //     de lado único (risco direcional) — evita a perda vista antes.
@@ -256,20 +267,22 @@ export async function runMarketMaking(
 
   // 5.0 Tamanho mínimo por ordem: a Polymarket exige no mínimo $1 por ordem
   //     (BUY marketable). Se price * shares < $1 num dos lados, a ordem é
-  //     rejeitada — ou aumenta o tamanho ou não cota esse lado.
+  //     rejeitada. Se um lado está tão barato que exigiria inflar o tamanho
+  //     além de 2x o tradeSize (ex: 5 -> 25 shares), NÃO cota — inflar o
+  //     tamanho num lado barato foi o que causou o par 25+25 comprado caro.
   const MIN_ORDER_USD = 1;
   const valorYes = yesPrice * sharesPerQuote;
   const valorNo = noPrice * sharesPerQuote;
   if (valorYes < MIN_ORDER_USD || valorNo < MIN_ORDER_USD) {
-    // Tenta aumentar o tamanho para atingir o mínimo (respeitando cap/saldo)
     const minSharesYes = Math.ceil(MIN_ORDER_USD / yesPrice);
     const minSharesNo = Math.ceil(MIN_ORDER_USD / noPrice);
     const minShares = Math.max(minSharesYes, minSharesNo);
-    if (minShares <= cap && minShares > sharesPerQuote) {
+    const tradeSizeOriginal = Math.max(1, Math.min(Math.floor(Number(strategy.tradeSize ?? 100)), cap));
+    if (minShares <= cap && minShares <= tradeSizeOriginal * 2) {
       log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)}). Ajustando para ${minShares} shares/lado.`);
       sharesPerQuote = minShares;
     } else {
-      log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)} @ ${sharesPerQuote}sh). Não cotando lado sub-mínimo.`);
+      log.warn(`⚠️ [${strategy.slug}] Lado sub-mínimo exigiria inflar demais (${minShares}sh > 2x tradeSize ${tradeSizeOriginal}). Não cotando.`);
       return { quoted: false, orderIds: [] };
     }
   }
