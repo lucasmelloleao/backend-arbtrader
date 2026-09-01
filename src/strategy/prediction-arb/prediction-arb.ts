@@ -60,13 +60,20 @@ async function monitorOpenStrategies(settings: any) {
       const liveAllowed = await isPredictionLiveAllowed();
 
       // Reconcilia posição real no CLOB (pega fills que chegaram depois das
-      // ordens GTC mantidas — ex: ordens pendentes com fill inicial 0).
+      // ordens GTC mantidas). Roda SEMPRE (não só quando shares=0): o banco
+      // pode estar defasado (ex: fill parcial antigo) e a Polymarket preencher
+      // o resto depois — sem reconciliar sempre, o banco fica cego para o
+      // estado real (bug de shares desatualizadas).
       try {
         const key = await resolvePolymarketKey(settings.userId);
-        if (key && strat.yesShares === 0 && strat.noShares === 0) {
-          const creds = resolveClobCredentials(key);
-          await reconcilePosition(strat, creds);
-          log.info(`🔁 [${strat.slug}] Posição reconciliada no CLOB.`);
+        if (key) {
+          const keyDoc = await ExchangeKey.findById(key._id).lean().catch(() => key);
+          const pos = await reconcilePosition(strat, keyDoc);
+          // Atualiza o objeto em memória para o resto do ciclo usar dados frescos
+          strat.yesShares = pos.yesShares;
+          strat.noShares = pos.noShares;
+          strat.positionSize = (pos.yesShares + pos.noShares) / 2;
+          log.info(`🔁 [${strat.slug}] Posição reconciliada no CLOB (YES=${pos.yesShares} NO=${pos.noShares}).`);
         }
       } catch (e: any) {
         log.warn(`⚠️ [${strat.slug}] Falha ao reconciliar posição: ${e.message}`);

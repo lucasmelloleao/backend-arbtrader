@@ -5,6 +5,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
+import { fetchPositionsViaSdk } from './helpers/secure-client';
 import { fetchUserPositions } from './helpers/data-client';
 import { makerEntryPrices, completenessSpreadPct } from './helpers/pricing';
 
@@ -40,10 +41,20 @@ async function bestBids(strategy: any): Promise<{ bidYes: number; bidNo: number;
 }
 
 /** Reconcilia as posições reais no CLOB e atualiza o banco. */
-export async function reconcilePosition(strategy: any, credentials: any): Promise<{ yesShares: number; noShares: number }> {
-  const positions = await fetchPositions(credentials).catch(() => []);
-  const yesPos = positions.find((p: any) => p.asset_id === strategy.tokenIdYes || p.condition_id === strategy.conditionId);
-  const noPos = positions.find((p: any) => p.asset_id === strategy.tokenIdNo || p.condition_id === strategy.conditionId);
+export async function reconcilePosition(strategy: any, keyDoc: any): Promise<{ yesShares: number; noShares: number }> {
+  // Usa a SDK quando disponível (enxerga a deposit wallet EIP-1271); o
+  // fetchPositions cru (GET /positions?user=EOA) NÃO vê as posições da
+  // deposit wallet — fonte da verdade é a SDK.
+  let positions: any[] = [];
+  const useSdk = Boolean(String(keyDoc?.relayerApiKey || process.env.POLYMARKET_RELAYER_KEY || '').trim());
+  if (useSdk) {
+    positions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+  } else {
+    const creds = resolveClobCredentials(keyDoc);
+    positions = await fetchPositions(creds).catch(() => []);
+  }
+  const yesPos = positions.find((p: any) => p.asset_id === strategy.tokenIdYes || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdYes);
+  const noPos = positions.find((p: any) => p.asset_id === strategy.tokenIdNo || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdNo);
 
   const yesShares = Number(yesPos?.size || 0);
   const noShares = Number(noPos?.size || 0);
@@ -56,6 +67,7 @@ export async function reconcilePosition(strategy: any, credentials: any): Promis
     ...(yesAvg > 0 ? { avgYesPrice: yesAvg } : {}),
     ...(noAvg > 0 ? { avgNoPrice: noAvg } : {}),
     positionSize: (yesShares + noShares) / 2,
+    ...(yesShares >= 1 && noShares >= 1 ? { positionOpen: true } : {}),
   });
   return { yesShares, noShares };
 }
@@ -136,6 +148,8 @@ export async function executeStrategy(strategyId: string, opts: { dryRun?: boole
   }
 
   const credentials = resolveClobCredentials(key);
+  // ExchangeKey completa (com relayerApiKey) para a SDK ler posições da deposit wallet
+  const keyDoc = await (mongoose.model('ExchangeKey') as any).findById(key._id).lean().catch(() => key);
   const orderIds: string[] = [];
   try {
     // Coloca ordens maker nos dois lados
@@ -152,7 +166,7 @@ export async function executeStrategy(strategyId: string, opts: { dryRun?: boole
 
     // Aguarda fills e reconcilia posição real (mais tempo = mais chance de fill)
     await new Promise((r) => setTimeout(r, Math.min(ORDER_TIMEOUT_MS, 30_000)));
-    const { yesShares, noShares } = await reconcilePosition(strat, credentials);
+    const { yesShares, noShares } = await reconcilePosition(strat, keyDoc);
     const yesFilled = yesShares >= shares * 0.3;
     const noFilled = noShares >= shares * 0.3;
     const bothFilled = yesFilled && noFilled;
