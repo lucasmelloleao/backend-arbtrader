@@ -6,6 +6,7 @@ import PredictionArbTrade from '../models/PredictionArbTrade';
 import { findMarket } from '../strategy/prediction-arb/prediction-scanner';
 import { completenessSpreadPct } from '../strategy/prediction-arb/helpers/pricing';
 import { fetchMarketBySlug } from '../strategy/prediction-arb/helpers/gamma-client';
+import { fetchBook } from '../strategy/prediction-arb/helpers/clob-client';
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
@@ -13,6 +14,10 @@ const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 // ao enriquecer N estratégias com dados ao vivo.
 const marketInfoCache = new Map<string, { data: any; at: number }>();
 const MARKET_INFO_TTL_MS = 30_000;
+
+// Cache curto dos books (bid/ask) por token (30s)
+const bookCache = new Map<string, { data: { bid: number; ask: number }; at: number }>();
+const BOOK_TTL_MS = 30_000;
 
 async function getMarketInfo(slug: string): Promise<any | null> {
   const cached = marketInfoCache.get(slug);
@@ -26,9 +31,52 @@ async function getMarketInfo(slug: string): Promise<any | null> {
   }
 }
 
+async function getTokenBook(tokenId: string): Promise<{ bid: number; ask: number }> {
+  if (!tokenId) return { bid: 0, ask: 0 };
+  const cached = bookCache.get(tokenId);
+  if (cached && Date.now() - cached.at < BOOK_TTL_MS) return cached.data;
+  try {
+    const book = await fetchBook(tokenId);
+    const data = { bid: book.bids[0]?.[0] || 0, ask: book.asks[0]?.[0] || 0 };
+    bookCache.set(tokenId, { data, at: Date.now() });
+    return data;
+  } catch {
+    return { bid: 0, ask: 0 };
+  }
+}
+
 async function formatStrategy(s: any) {
   // Busca dados ao vivo do mercado (bid/ask/volume/liquidez/variação)
   const info = s.slug ? await getMarketInfo(s.slug) : null;
+
+  // Mark-to-market da posição: valor atual (bid dos dois lados), custo e PnL.
+  // Só para posições com shares reais.
+  const yesShares = Number(s.yesShares || 0);
+  const noShares = Number(s.noShares || 0);
+  const avgYes = Number(s.avgYesPrice || 0);
+  const avgNo = Number(s.avgNoPrice || 0);
+
+  let valorAtual = 0;
+  let custoTotal = 0;
+  let pnlAtual = 0;
+  let retornoVencimento = 0;
+  let lucroGarantido = 0;
+  let bidYesAtual = 0;
+  let bidNoAtual = 0;
+
+  if (yesShares > 0 || noShares > 0) {
+    const [bookYes, bookNo] = await Promise.all([getTokenBook(s.tokenIdYes), getTokenBook(s.tokenIdNo)]);
+    bidYesAtual = bookYes.bid;
+    bidNoAtual = bookNo.bid;
+    valorAtual = yesShares * bidYesAtual + noShares * bidNoAtual;
+    custoTotal = yesShares * avgYes + noShares * avgNo;
+    pnlAtual = valorAtual - custoTotal;
+    // No vencimento o lado vencedor paga $1/share (o par hedgeado garante o
+    // menor dos dois lados × $1, que é o retorno seguro).
+    retornoVencimento = Math.min(yesShares, noShares) * 1;
+    lucroGarantido = retornoVencimento - custoTotal;
+  }
+
   return {
     id: s._id.toString(),
     nome: s.question || s.slug,
@@ -43,10 +91,10 @@ async function formatStrategy(s: any) {
     autoExecute: s.autoExecute,
     positionOpen: s.positionOpen,
     positionSize: s.positionSize,
-    yesShares: s.yesShares,
-    noShares: s.noShares,
-    avgYesPrice: s.avgYesPrice,
-    avgNoPrice: s.avgNoPrice,
+    yesShares,
+    noShares,
+    avgYesPrice: avgYes,
+    avgNoPrice: avgNo,
     targetProfitPct: s.targetProfitPct,
     endDate: s.endDate,
     isAutoCreated: s.isAutoCreated,
@@ -63,6 +111,14 @@ async function formatStrategy(s: any) {
     minutosParaVencer: s.endDate
       ? Math.max(0, Math.floor((new Date(s.endDate).getTime() - Date.now()) / 60000))
       : null,
+    // Mark-to-market da posição
+    bidYesAtual,
+    bidNoAtual,
+    valorAtual: Number(valorAtual.toFixed(4)),
+    custoTotal: Number(custoTotal.toFixed(4)),
+    pnlAtual: Number(pnlAtual.toFixed(4)),
+    retornoVencimento: Number(retornoVencimento.toFixed(4)),
+    lucroGarantido: Number(lucroGarantido.toFixed(4)),
   };
 }
 
