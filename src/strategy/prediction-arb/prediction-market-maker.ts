@@ -254,6 +254,26 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
+  // 5.0 Tamanho mínimo por ordem: a Polymarket exige no mínimo $1 por ordem
+  //     (BUY marketable). Se price * shares < $1 num dos lados, a ordem é
+  //     rejeitada — ou aumenta o tamanho ou não cota esse lado.
+  const MIN_ORDER_USD = 1;
+  const valorYes = yesPrice * sharesPerQuote;
+  const valorNo = noPrice * sharesPerQuote;
+  if (valorYes < MIN_ORDER_USD || valorNo < MIN_ORDER_USD) {
+    // Tenta aumentar o tamanho para atingir o mínimo (respeitando cap/saldo)
+    const minSharesYes = Math.ceil(MIN_ORDER_USD / yesPrice);
+    const minSharesNo = Math.ceil(MIN_ORDER_USD / noPrice);
+    const minShares = Math.max(minSharesYes, minSharesNo);
+    if (minShares <= cap && minShares > sharesPerQuote) {
+      log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)}). Ajustando para ${minShares} shares/lado.`);
+      sharesPerQuote = minShares;
+    } else {
+      log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)} @ ${sharesPerQuote}sh). Não cotando lado sub-mínimo.`);
+      return { quoted: false, orderIds: [] };
+    }
+  }
+
   // 5.1 Saldo de colateral: consulta o saldo que a CLOB vê e só cota se der
   //     para o par inteiro (YES + NO). Sem saldo, NÃO cota — evita empilhar
   //     ordens que nunca preenchem e travar o capital (o bug do par
