@@ -70,7 +70,9 @@ export async function reconcilePosition(strategy: any, keyDoc: any): Promise<{ y
     ...(yesAvg > 0 ? { avgYesPrice: yesAvg } : {}),
     ...(noAvg > 0 ? { avgNoPrice: noAvg } : {}),
     positionSize: (yesShares + noShares) / 2,
-    ...(yesShares >= 1 && noShares >= 1 ? { positionOpen: true } : {}),
+    // Qualquer posição real (um lado OU dois) = estratégia aberta. Antes só
+    // marcava com os dois lados — posição de lado único ficava invisível no front.
+    ...(yesShares >= 1 || noShares >= 1 ? { positionOpen: true } : {}),
   });
   return { yesShares, noShares };
 }
