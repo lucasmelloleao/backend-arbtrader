@@ -224,13 +224,16 @@ async function runCycle() {
 
   // 3. Market making com inventário nas estratégias monitoradas
   //    (sem posição real OU com posição marcada mas inventário zero).
-  //    - Exclui mercados com < 15min para vencer (updown de 15min só tem
-  //      liquidez maker no início do período; perto do fim o book some).
+  //    - Exclui mercados com < 5min para vencer: nos updown de 15min, nos
+  //      minutos finais um lado converge (0.95+) e o book do lado barato
+  //      some (bid=0) — sem chance de fill maker nem ordem >= $1.
+  //    - A janela boa é entre 5 e 13 min restantes: spread de completude
+  //      aberto + book com os dois lados + tempo de fill.
   //    - Rotaciona (updatedAt asc = as menos cotadas primeiro) em vez de
   //      martelar sempre a de maior spread.
   //    - Limitado a 2 por ciclo; a checagem de saldo no runMarketMaking
   //      impede de estourar o capital.
-  const MIN_MINUTOS_PARA_VENCER = 15;
+  const MIN_MINUTOS_PARA_VENCER = 5;
   const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
   const mmTargets = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
