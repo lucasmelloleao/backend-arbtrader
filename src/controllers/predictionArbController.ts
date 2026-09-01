@@ -5,10 +5,30 @@ import PredictionArbStrategy from '../models/PredictionArbStrategy';
 import PredictionArbTrade from '../models/PredictionArbTrade';
 import { findMarket } from '../strategy/prediction-arb/prediction-scanner';
 import { completenessSpreadPct } from '../strategy/prediction-arb/helpers/pricing';
+import { fetchMarketBySlug } from '../strategy/prediction-arb/helpers/gamma-client';
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
-function formatStrategy(s: any) {
+// Cache curto dos mercados da Gamma (30s) para não estourar rate-limit
+// ao enriquecer N estratégias com dados ao vivo.
+const marketInfoCache = new Map<string, { data: any; at: number }>();
+const MARKET_INFO_TTL_MS = 30_000;
+
+async function getMarketInfo(slug: string): Promise<any | null> {
+  const cached = marketInfoCache.get(slug);
+  if (cached && Date.now() - cached.at < MARKET_INFO_TTL_MS) return cached.data;
+  try {
+    const m = await fetchMarketBySlug(slug);
+    marketInfoCache.set(slug, { data: m, at: Date.now() });
+    return m;
+  } catch {
+    return null;
+  }
+}
+
+async function formatStrategy(s: any) {
+  // Busca dados ao vivo do mercado (bid/ask/volume/liquidez/variação)
+  const info = s.slug ? await getMarketInfo(s.slug) : null;
   return {
     id: s._id.toString(),
     nome: s.question || s.slug,
@@ -31,6 +51,18 @@ function formatStrategy(s: any) {
     endDate: s.endDate,
     isAutoCreated: s.isAutoCreated,
     createdAt: s.createdAt,
+    // Campos ao vivo da Polymarket (Gamma API)
+    bestBid: info?.bestBid ?? 0,
+    bestAsk: info?.bestAsk ?? 0,
+    lastTradePrice: info?.lastTradePrice ?? 0,
+    spread: info?.spread ?? 0,
+    volume24hr: info?.volume24hrClob ?? info?.volumeClob ?? 0,
+    liquidity: info?.liquidityClob ?? info?.liquidityNum ?? 0,
+    oneHourPriceChange: info?.oneHourPriceChange ?? 0,
+    openInterest: info?.openInterest ?? 0,
+    minutosParaVencer: s.endDate
+      ? Math.max(0, Math.floor((new Date(s.endDate).getTime() - Date.now()) / 60000))
+      : null,
   };
 }
 
@@ -41,7 +73,8 @@ export async function getPredictionStrategies(req: AuthenticatedRequest, res: Re
 
     const list = await (PredictionArbStrategy as any).find({ userId }).lean();
     if (isDashboard(req)) return res.json(list);
-    return res.json({ success: true, message: 'ok', data: list.map(formatStrategy) });
+    const formatted = await Promise.all(list.map(formatStrategy));
+    return res.json({ success: true, message: 'ok', data: formatted });
   } catch (e: any) {
     console.error('❌ [GET PredictionStrategies] Error:', e.message);
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
@@ -83,7 +116,7 @@ export async function createPredictionStrategy(req: AuthenticatedRequest, res: R
     });
 
     if (isDashboard(req)) return res.status(201).json(strat);
-    return res.status(201).json({ success: true, message: 'Estratégia criada.', data: formatStrategy(strat.toObject()) });
+    return res.status(201).json({ success: true, message: 'Estratégia criada.', data: await formatStrategy(strat.toObject()) });
   } catch (e: any) {
     console.error('❌ [POST PredictionStrategy] Error:', e.message);
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
@@ -115,7 +148,7 @@ export async function updatePredictionStrategy(req: AuthenticatedRequest, res: R
     if (!strat) return res.status(404).json(isDashboard(req) ? { error: 'Estratégia não encontrada' } : { success: false, message: 'Estratégia não encontrada.' });
 
     if (isDashboard(req)) return res.json(strat);
-    return res.json({ success: true, message: 'Estratégia atualizada.', data: formatStrategy(strat) });
+    return res.json({ success: true, message: 'Estratégia atualizada.', data: await formatStrategy(strat) });
   } catch (e: any) {
     console.error('❌ [PUT PredictionStrategy] Error:', e.message);
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });

@@ -33,6 +33,16 @@ export interface GammaMarket {
   closed: boolean;
   umaResolutionStatus?: string;
   outcomes?: string[];
+  // Campos ao vivo (Gamma API) — enriquecimento do frontend
+  bestBid?: number;
+  bestAsk?: number;
+  lastTradePrice?: number;
+  spread?: number;
+  volume24hrClob?: number;
+  volumeClob?: number;
+  liquidityClob?: number;
+  oneHourPriceChange?: number;
+  openInterest?: number;
 }
 
 async function getJson(url: string): Promise<any> {
@@ -74,6 +84,16 @@ function normalizeMarket(m: any): GammaMarket | null {
     closed: m.closed === true,
     umaResolutionStatus: m.umaResolutionStatus,
     outcomes: parseJsonArray(m.outcomes).map(String),
+    // Campos ao vivo
+    bestBid: m.bestBid !== undefined ? Number(m.bestBid) : undefined,
+    bestAsk: m.bestAsk !== undefined ? Number(m.bestAsk) : undefined,
+    lastTradePrice: m.lastTradePrice !== undefined ? Number(m.lastTradePrice) : undefined,
+    spread: m.spread !== undefined ? Number(m.spread) : undefined,
+    volume24hrClob: m.volume24hrClob !== undefined ? Number(m.volume24hrClob) : undefined,
+    volumeClob: m.volumeClob !== undefined ? Number(m.volumeClob) : undefined,
+    liquidityClob: m.liquidityClob !== undefined ? Number(m.liquidityClob) : undefined,
+    oneHourPriceChange: m.oneHourPriceChange !== undefined ? Number(m.oneHourPriceChange) : undefined,
+    openInterest: m.openInterest !== undefined ? Number(m.openInterest) : undefined,
   };
 }
 
