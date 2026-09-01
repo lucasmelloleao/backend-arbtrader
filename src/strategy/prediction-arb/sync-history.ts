@@ -67,10 +67,24 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
       $or: [{ conditionId: cond }, { tokenIdYes: { $in: evs.map((e: any) => e.asset) } }],
     }).lean();
 
-    // Investido = soma dos BUY (usdcSize = $ gasto)
+    // Investido = soma dos BUY (usdcSize = $ gasto), separado por perna (Up/Down)
     const buys = evs.filter((e: any) => e.type === 'TRADE' && e.side === 'BUY');
     const invested = buys.reduce((acc: number, t: any) => acc + Number(t.usdcSize || 0), 0);
-    const boughtShares = buys.reduce((acc: number, t: any) => acc + Number(t.size || 0), 0);
+
+    // Pernas por outcome: Up = YES, Down = NO (o MM pode operar só um lado —
+    // antes assumia noShares = yesShares, mostrando 5+5 quando era só 5 UP).
+    const isYes = (e: any) => String(e.outcome || '').toLowerCase() === 'up' || String(e.outcome || '').toLowerCase() === 'yes';
+    const isNo = (e: any) => String(e.outcome || '').toLowerCase() === 'down' || String(e.outcome || '').toLowerCase() === 'no';
+    const buysYes = buys.filter(isYes);
+    const buysNo = buys.filter(isNo);
+    const yesShares = buysYes.reduce((acc: number, t: any) => acc + Number(t.size || 0), 0);
+    const noShares = buysNo.reduce((acc: number, t: any) => acc + Number(t.size || 0), 0);
+    const avgYesPrice = yesShares > 0
+      ? buysYes.reduce((acc: number, t: any) => acc + Number(t.usdcSize || 0), 0) / yesShares
+      : 0;
+    const avgNoPrice = noShares > 0
+      ? buysNo.reduce((acc: number, t: any) => acc + Number(t.usdcSize || 0), 0) / noShares
+      : 0;
 
     // Realizado = soma dos SELL (usdcSize) + REDEEM (usdcSize)
     const sells = evs.filter((e: any) => e.type === 'TRADE' && e.side === 'SELL');
@@ -101,8 +115,10 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
           question,
           strategyId: strategy?._id,
           marketId: cond, // padroniza (o MM grava o ID numérico da Gamma)
-          yesShares: boughtShares,
-          noShares: boughtShares,
+          yesShares,
+          noShares,
+          ...(avgYesPrice > 0 ? { avgYesPrice } : {}),
+          ...(avgNoPrice > 0 ? { avgNoPrice } : {}),
           amount: invested,
           investedUsd: invested,
           realizedUsd: realized,
@@ -122,8 +138,10 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
         question,
         type: saiu ? 'close_pair' : 'open_pair',
         status: 'executed',
-        yesShares: boughtShares,
-        noShares: boughtShares,
+        yesShares,
+        noShares,
+        ...(avgYesPrice > 0 ? { avgYesPrice } : {}),
+        ...(avgNoPrice > 0 ? { avgNoPrice } : {}),
         amount: invested,
         investedUsd: invested,
         realizedUsd: realized,
