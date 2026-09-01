@@ -1,9 +1,13 @@
 import { Response } from 'express';
 import mongoose from 'mongoose';
+import { ethers } from 'ethers';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import PredictionArbSettings from '../models/PredictionArbSettings';
 import BotStatus from '../models/BotStatus';
+import ExchangeKey from '../models/ExchangeKey';
 import { invalidatePredictionLiveCache } from '../strategy/prediction-arb/prediction-live';
+
+const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
@@ -72,7 +76,29 @@ export async function getPredictionBotStatus(req: AuthenticatedRequest, res: Res
       isOnline = Date.now() - new Date(botStatusDoc.lastHeartbeat).getTime() < 3 * 60 * 1000;
     }
 
-    const data = { isScanningEnabled, allowLiveTrading, isOnline, lastHeartbeat: botStatusDoc?.lastHeartbeat || null, botName: 'prediction-arb' };
+    // Saldo pUSD da deposit wallet (on-chain) — fonte da verdade do capital
+    // disponível para operar. Buscado via RPC da Polygon.
+    let saldoDisponivel = 0;
+    try {
+      const key = await ExchangeKey.findOne({ userId, exchangeId: 'polymarket' }).lean();
+      const dw = String(key?.depositWallet || process.env.POLYMARKET_DEPOSIT_WALLET || '').trim();
+      if (dw) {
+        const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com', 137);
+        const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
+        saldoDisponivel = Number(ethers.formatUnits(await pusd.balanceOf(dw), 6));
+      }
+    } catch (e: any) {
+      console.error('⚠️ [GET PredictionBotStatus] Falha ao buscar saldo on-chain:', e.message);
+    }
+
+    const data = {
+      isScanningEnabled,
+      allowLiveTrading,
+      isOnline,
+      lastHeartbeat: botStatusDoc?.lastHeartbeat || null,
+      botName: 'prediction-arb',
+      saldoDisponivel,
+    };
     if (isDashboard(req)) return res.json(data);
     return res.json({ success: true, message: 'ok', data });
   } catch (e: any) {
