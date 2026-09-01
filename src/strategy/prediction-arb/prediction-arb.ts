@@ -50,9 +50,18 @@ async function heartbeat(userId: any) {
 }
 
 async function monitorOpenStrategies(settings: any) {
+  // Busca TODAS as estratégias que podem ter posição na Polymarket: as marcadas
+  // como abertas, as com ordens ativas (openOrderIds) e as em market making.
+  // O MM grava openOrderIds mas NÃO marca positionOpen — sem incluir essas,
+  // uma posição que preencheu na Polymarket nunca é reconciliada no banco
+  // (bug: compra real invisível no frontend).
   const strats = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
-    positionOpen: true,
+    $or: [
+      { positionOpen: true },
+      { openOrderIds: { $exists: true, $ne: [] } },
+      { mmActive: true },
+    ],
   }).lean();
 
   for (const strat of strats) {
