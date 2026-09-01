@@ -16,6 +16,7 @@ import { rebalanceInventory, runMarketMaking } from './prediction-market-maker';
 import { isPredictionLiveAllowed } from './prediction-live';
 import { resolveClobCredentials } from './helpers/clob-client';
 import { redeemPositionsViaSdk } from './helpers/secure-client';
+import { syncPredictionHistory } from './sync-history';
 import ExchangeKey from '../../models/ExchangeKey';
 
 const log = {
@@ -27,6 +28,9 @@ const log = {
 const isTelegramEnabled = () => !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 const BOT_NAME = 'prediction-arb';
 const DEFAULT_INTERVAL_MS = 60_000;
+
+// Contador de ciclos para o sync periódico do histórico (a cada 4 ciclos ~2min)
+let syncCycleCount = 0;
 
 function getRedisClient(): Redis | null {
   const url = process.env.REDIS_URL;
@@ -264,6 +268,21 @@ async function runCycle() {
 
   // 4. Monitoramento das abertas
   await monitorOpenStrategies(settings);
+
+  // 5. Sincroniza o histórico de operações com a Polymarket (a cada ~2min).
+  //    Cria/atualiza os close_pair com PnL quando a operação fecha (redeem/
+  //    venda) — sem isso o Histórico de Trades do frontend fica sem as
+  //    operações encerradas e sem o lucro/prejuízo.
+  syncCycleCount++;
+  if (syncCycleCount >= 4) {
+    syncCycleCount = 0;
+    try {
+      const r = await syncPredictionHistory(settings.userId);
+      log.info(`🔁 [SYNC] Histórico sincronizado (${r.criados} criados, ${r.atualizados} atualizados).`);
+    } catch (e: any) {
+      log.warn(`⚠️ [SYNC] Falha ao sincronizar histórico: ${e.message}`);
+    }
+  }
 
   // Atualiza lastScannedAt
   await (PredictionArbSettings as any).findByIdAndUpdate(settings._id, { lastScannedAt: new Date() });
