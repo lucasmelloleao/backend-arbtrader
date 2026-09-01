@@ -74,12 +74,30 @@ export async function getClobClient(credentials: ClobCredentials): Promise<ClobC
  * transferido para a deposit wallet mas o update nunca rodou, o CLOB vê o
  * saldo antigo e rejeita ordens com "not enough balance / allowance".
  * Chamar antes de cada ordem garante que o saldo on-chain seja reconhecido.
+ *
+ * Nota: NÃO usa client.updateBalanceAllowance da SDK (clob-client-v2) — ela
+ * assina o requestPath com a query embutida, gerando 401. Aqui o HMAC usa o
+ * requestPath limpo e a query vai só na URL (testado: retorna 200).
  */
 export async function updateCollateralBalance(credentials: ClobCredentials): Promise<BalanceAllowanceResponse | null> {
   try {
-    const client = await getClobClient(credentials);
-    const res = await (client as any).updateBalanceAllowance({ asset_type: 'COLLATERAL' });
-    return res || null;
+    if (!credentials.apiCreds) {
+      credentials.apiCreds = await deriveClobApiKey(credentials);
+    }
+    const signer = toViemLikeSigner(new ethers.Wallet(credentials.privateKey));
+    const endpoint = '/balance-allowance/update';
+    const headers = await (createL2Headers as any)(signer, credentials.apiCreds, {
+      method: 'GET',
+      requestPath: endpoint,
+    });
+    const res = await withTimeout(
+      fetch(`${getClobBase()}${endpoint}?asset_type=COLLATERAL`, { headers }),
+      15_000,
+      null
+    );
+    if (!res) return null;
+    const data = (await res.json().catch(() => ({}))) as Partial<BalanceAllowanceResponse>;
+    return res.ok ? (data as BalanceAllowanceResponse) : null;
   } catch (e: any) {
     log.warn(`⚠️ updateCollateralBalance falhou: ${e.message}`);
     return null;
@@ -89,12 +107,25 @@ export async function updateCollateralBalance(credentials: ClobCredentials): Pro
 /** Consulta o saldo/allowance de colateral que a CLOB vê para a wallet. */
 export async function getCollateralBalance(credentials: ClobCredentials): Promise<{ balance: number; allowances: Record<string, string> } | null> {
   try {
-    const client = await getClobClient(credentials);
-    const res = await (client as any).getBalanceAllowance({ asset_type: 'COLLATERAL' });
-    if (!res) return null;
+    if (!credentials.apiCreds) {
+      credentials.apiCreds = await deriveClobApiKey(credentials);
+    }
+    const signer = toViemLikeSigner(new ethers.Wallet(credentials.privateKey));
+    const endpoint = '/balance-allowance';
+    const headers = await (createL2Headers as any)(signer, credentials.apiCreds, {
+      method: 'GET',
+      requestPath: endpoint,
+    });
+    const res = await withTimeout(
+      fetch(`${getClobBase()}${endpoint}?asset_type=COLLATERAL`, { headers }),
+      15_000,
+      null
+    );
+    if (!res || !res.ok) return null;
+    const data = (await res.json()) as BalanceAllowanceResponse;
     return {
-      balance: Number(res.balance || 0) / 1e6,
-      allowances: res.allowances || {},
+      balance: Number(data?.balance || 0) / 1e6,
+      allowances: data?.allowances || {},
     };
   } catch (e: any) {
     log.warn(`⚠️ getCollateralBalance falhou: ${e.message}`);
