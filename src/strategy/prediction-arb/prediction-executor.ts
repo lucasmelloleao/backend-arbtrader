@@ -5,7 +5,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
-import { fetchPositionsViaSdk } from './helpers/secure-client';
+import { fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { fetchUserPositions } from './helpers/data-client';
 import { makerEntryPrices, completenessSpreadPct } from './helpers/pricing';
 
@@ -42,24 +42,27 @@ async function bestBids(strategy: any): Promise<{ bidYes: number; bidNo: number;
 
 /** Reconcilia as posições reais no CLOB e atualiza o banco. */
 export async function reconcilePosition(strategy: any, keyDoc: any): Promise<{ yesShares: number; noShares: number }> {
-  // Usa a SDK quando disponível (enxerga a deposit wallet EIP-1271); o
-  // fetchPositions cru (GET /positions?user=EOA) NÃO vê as posições da
-  // deposit wallet — fonte da verdade é a SDK.
+  // Usa a Data API da deposit wallet (a SDK listPositions retorna {} para a
+  // deposit wallet EIP-1271 e o fetchPositions cru usa a EOA — nenhum dos
+  // dois vê as posições reais; a Data API é a fonte que funciona).
   let positions: any[] = [];
   const useSdk = Boolean(String(keyDoc?.relayerApiKey || process.env.POLYMARKET_RELAYER_KEY || '').trim());
   if (useSdk) {
-    positions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+    positions = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
+    if (positions.length === 0) {
+      positions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+    }
   } else {
     const creds = resolveClobCredentials(keyDoc);
     positions = await fetchPositions(creds).catch(() => []);
   }
-  const yesPos = positions.find((p: any) => p.asset_id === strategy.tokenIdYes || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdYes);
-  const noPos = positions.find((p: any) => p.asset_id === strategy.tokenIdNo || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdNo);
+  const yesPos = positions.find((p: any) => String(p.asset || '') === strategy.tokenIdYes || p.asset_id === strategy.tokenIdYes || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdYes || p.side === 'Up');
+  const noPos = positions.find((p: any) => String(p.asset || '') === strategy.tokenIdNo || p.asset_id === strategy.tokenIdNo || p.condition_id === strategy.conditionId || String(p.token_id || '') === strategy.tokenIdNo || p.side === 'Down');
 
   const yesShares = Number(yesPos?.size || 0);
   const noShares = Number(noPos?.size || 0);
-  const yesAvg = Number(yesPos?.avg_price || 0);
-  const noAvg = Number(noPos?.avg_price || 0);
+  const yesAvg = Number(yesPos?.avg_price || yesPos?.price || 0);
+  const noAvg = Number(noPos?.avg_price || noPos?.price || 0);
 
   await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
     yesShares,

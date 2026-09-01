@@ -10,7 +10,7 @@ import PredictionArbTrade from '../../models/PredictionArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
-import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk } from './helpers/secure-client';
+import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { makerEntryPrices } from './helpers/pricing';
 
 const log = {
@@ -83,19 +83,28 @@ export async function runMarketMaking(
   const tradeSize = Number(strategy.tradeSize ?? 100);
   let sharesPerQuote = Math.max(1, Math.min(Math.floor(tradeSize), cap)); // ações por lado
 
-  // 1. Inventário real (fonte da verdade) — via SDK quando disponível
+  // 1. Inventário real (fonte da verdade) — via Data API da deposit wallet
+  //    (a SDK listPositions retorna {} para a deposit wallet EIP-1271, então
+  //    não enxerga as posições reais; sem isso o MM nunca detecta o par
+  //    montado nem o desbalanceamento — causa do 15 vs 10).
   let positions: any[] = [];
   if (useSdk) {
-    positions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+    positions = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
+    if (positions.length === 0) {
+      positions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+    }
   } else {
     positions = await fetchPositions(credentials).catch(() => []);
   }
-  const yesPos = positions.find((p: any) => p.asset_id === strategy.tokenIdYes || String(p.token_id || '') === strategy.tokenIdYes);
-  const noPos = positions.find((p: any) => p.asset_id === strategy.tokenIdNo || String(p.token_id || '') === strategy.tokenIdNo);
+  // Data API retorna asset (não asset_id); normaliza para o formato esperado
+  const yesPos = positions.find((p: any) =>
+    String(p.asset || '') === strategy.tokenIdYes || String(p.asset_id || '') === strategy.tokenIdYes || String(p.token_id || '') === strategy.tokenIdYes || p.side === 'Up');
+  const noPos = positions.find((p: any) =>
+    String(p.asset || '') === strategy.tokenIdNo || String(p.asset_id || '') === strategy.tokenIdNo || String(p.token_id || '') === strategy.tokenIdNo || p.side === 'Down');
   const yesShares = Number(yesPos?.size || 0);
   const noShares = Number(noPos?.size || 0);
-  const yesAvg = Number(yesPos?.avg_price || 0);
-  const noAvg = Number(noPos?.avg_price || 0);
+  const yesAvg = Number(yesPos?.avg_price || yesPos?.price || 0);
+  const noAvg = Number(noPos?.avg_price || noPos?.price || 0);
 
   await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
     yesShares,
@@ -320,15 +329,19 @@ export async function runMarketMaking(
   }
 
   // 7. Coloca as ordens do par (via SDK quando possível — suporta deposit wallet)
-  //    Se o inventário está desbalanceado, cota SÓ o lado leve (para completar
-  //    o par sem aumentar o risco direcional); senão cota os dois lados.
+  //    Se o inventário está desbalanceado, cota SÓ o lado leve com o tamanho
+  //    EXATO da diferença (completa o par até balancear — nunca ultrapassa);
+  //    senão cota os dois lados juntos (taker) ou o par maker.
   const orderIds: string[] = [];
   try {
     const ladoLeve = yesShares > noShares ? 'NO' : (noShares > yesShares ? 'YES' : null);
+    // Tamanho para completar o par desbalanceado: diferença exata entre os lados
+    const sharesCompletar = ladoLeve ? Math.abs(yesShares - noShares) : 0;
+    const tamanhoLadoLeve = Math.max(1, Math.min(sharesCompletar, sharesPerQuote));
     if (useSdk) {
-      const colocaLado = async (tokenId: string, price: number, lado: string): Promise<string | null> => {
+      const colocaLado = async (tokenId: string, price: number, lado: string, size: number): Promise<string | null> => {
         try {
-          const id = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price, size: sharesPerQuote });
+          const id = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price, size });
           return id;
         } catch (e: any) {
           log.warn(`⚠️ [${strategy.slug}] Ordem ${lado} (SDK) falhou: ${e.message}`);
@@ -336,16 +349,18 @@ export async function runMarketMaking(
         }
       };
       if (ladoLeve) {
+        log.info(`🎯 [${strategy.slug}] Completando par: comprar ${tamanhoLadoLeve} ${ladoLeve} (diferença ${sharesCompletar}).`);
         const id = await colocaLado(
           ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo,
           ladoLeve === 'YES' ? yesPrice : noPrice,
           ladoLeve,
+          tamanhoLadoLeve,
         );
         if (id) orderIds.push(id);
       } else {
         const [yesId, noId] = await Promise.all([
-          colocaLado(strategy.tokenIdYes, yesPrice, 'YES'),
-          colocaLado(strategy.tokenIdNo, noPrice, 'NO'),
+          colocaLado(strategy.tokenIdYes, yesPrice, 'YES', sharesPerQuote),
+          colocaLado(strategy.tokenIdNo, noPrice, 'NO', sharesPerQuote),
         ]);
         if (yesId) orderIds.push(yesId);
         if (noId) orderIds.push(noId);
@@ -354,7 +369,7 @@ export async function runMarketMaking(
       if (ladoLeve) {
         const tokenId = ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
         const price = ladoLeve === 'YES' ? yesPrice : noPrice;
-        const ordem = await signOrder({ credentials, tokenId, side: 'BUY', price, size: sharesPerQuote });
+        const ordem = await signOrder({ credentials, tokenId, side: 'BUY', price, size: tamanhoLadoLeve });
         const id = await placeOrder(credentials, ordem).catch((e: any) => {
           log.warn(`⚠️ [${strategy.slug}] Ordem ${ladoLeve} falhou: ${e.message}`);
           return null;

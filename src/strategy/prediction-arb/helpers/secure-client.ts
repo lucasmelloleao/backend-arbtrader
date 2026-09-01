@@ -122,6 +122,24 @@ export async function fetchPositionsViaSdk(exchangeKeyDoc: any): Promise<any[]> 
   return Array.isArray(positions) ? positions : [];
 }
 
+/**
+ * Busca posições reais da DEPOSIT WALLET via Data API pública.
+ *
+ * A SDK listPositions retorna {} para a deposit wallet (não enxerga as
+ * posições EIP-1271). A Data API (data-api.polymarket.com/positions?user=DW)
+ * é a fonte da verdade que funciona — retorna size/avg_price por token.
+ */
+export async function fetchPositionsViaDataApi(exchangeKeyDoc: any): Promise<any[]> {
+  const dw = String(exchangeKeyDoc?.depositWallet || DEPOSIT_WALLET || '').trim();
+  if (!dw) return [];
+  const res = await fetch(`https://data-api.polymarket.com/positions?user=${dw}&limit=100`, {
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res || !res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
 /** Faz redeem de posições de mercados resolvidos (recupera o pUSD). */
 export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: string): Promise<void> {
   installProxyIntercept();
