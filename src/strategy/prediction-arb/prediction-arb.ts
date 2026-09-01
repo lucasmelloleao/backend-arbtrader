@@ -223,18 +223,25 @@ async function runCycle() {
   }
 
   // 3. Market making com inventário nas estratégias monitoradas
-  //    (sem posição real OU com posição marcada mas inventário zero)
-  //    Limitado a 1 por ciclo: o saldo é limitado (~$10) e cada par custa ~$2.45
-  //    — cotar várias ao mesmo tempo estoura o saldo (ordens rejeitadas).
+  //    (sem posição real OU com posição marcada mas inventário zero).
+  //    - Exclui mercados com < 15min para vencer (updown de 15min só tem
+  //      liquidez maker no início do período; perto do fim o book some).
+  //    - Rotaciona (updatedAt asc = as menos cotadas primeiro) em vez de
+  //      martelar sempre a de maior spread.
+  //    - Limitado a 2 por ciclo; a checagem de saldo no runMarketMaking
+  //      impede de estourar o capital.
+  const MIN_MINUTOS_PARA_VENCER = 15;
+  const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
   const mmTargets = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
     active: true,
     mmActive: true,
+    endDate: { $gte: limiteVencimento },
     $or: [
       { positionOpen: false },
       { positionOpen: true, yesShares: 0, noShares: 0 },
     ],
-  }).sort({ spreadPct: -1 }).limit(1).lean();
+  }).sort({ updatedAt: 1 }).limit(2).lean();
   for (const strat of mmTargets) {
     try {
       await runMarketMaking(strat, { dryRun: !liveAllowed });
