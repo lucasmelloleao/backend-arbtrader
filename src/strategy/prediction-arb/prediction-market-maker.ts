@@ -44,6 +44,22 @@ async function bookBidDepth(tokenId: string, targetShares: number): Promise<numb
   }
 }
 
+/** Profundidade acumulada no bid em USD (price × size) até atingir `targetUsd`. */
+async function bookBidDepthUsd(tokenId: string, targetUsd: number): Promise<number> {
+  try {
+    const book = await fetchBook(tokenId);
+    let accUsd = 0;
+    for (const [price, size] of book.bids) {
+      if (price <= 0) continue;
+      accUsd += price * size;
+      if (accUsd >= targetUsd) break;
+    }
+    return accUsd;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Cota um lado do par: preço maker (bid) com progressão em direção ao ask.
  */
@@ -247,10 +263,20 @@ export async function runMarketMaking(
   // 4.1 Profundidade: só cotar se AMBOS os lados têm book para o tamanho da
   //     ordem. Se um lado não tem profundidade, entrar resultaria em posição
   //     de lado único (risco direcional) — evita a perda vista antes.
+  //     Além das shares, exige um mínimo em USD (liquidez real): mercados
+  //     finos com bid ilusório (ex: 0.48 sem volume) não preenchem e travam
+  //     o capital — foi o caso das 2 ordens a 0.48 que ficaram no book.
   const depthYes = await bookBidDepth(strategy.tokenIdYes, sharesPerQuote);
   const depthNo = await bookBidDepth(strategy.tokenIdNo, sharesPerQuote);
   if (depthYes < sharesPerQuote || depthNo < sharesPerQuote) {
     log.warn(`⚠️ [${strategy.slug}] Profundidade insuficiente: YES depth=${depthYes.toFixed(1)} NO depth=${depthNo.toFixed(1)} (precisa ${sharesPerQuote}). Não cotando.`);
+    return { quoted: false, orderIds: [] };
+  }
+  const MIN_LIQUIDEZ_USD = 20; // liquidez mínima por lado (bid × size)
+  const liqYes = await bookBidDepthUsd(strategy.tokenIdYes, MIN_LIQUIDEZ_USD);
+  const liqNo = await bookBidDepthUsd(strategy.tokenIdNo, MIN_LIQUIDEZ_USD);
+  if (liqYes < MIN_LIQUIDEZ_USD || liqNo < MIN_LIQUIDEZ_USD) {
+    log.warn(`⚠️ [${strategy.slug}] Liquidez insuficiente no bid: YES $${liqYes.toFixed(2)} NO $${liqNo.toFixed(2)} (mín $${MIN_LIQUIDEZ_USD}). Não cotando.`);
     return { quoted: false, orderIds: [] };
   }
 
