@@ -133,6 +133,30 @@ export async function getCollateralBalance(credentials: ClobCredentials): Promis
   }
 }
 
+// PUSD (colateral da Polymarket) e RPC da Polygon
+const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
+
+/**
+ * Saldo pUSD ON-CHAIN da deposit wallet (via RPC da Polygon).
+ *
+ * É a fonte da verdade do capital disponível para operar — o CLOB valida
+ * as ordens da deposit wallet contra esse saldo. Usado pelo MM para não
+ * cotar quando o custo do par + ordens ativas excede o saldo.
+ */
+export async function getOnchainBalance(depositWallet?: string): Promise<number> {
+  try {
+    const dw = String(depositWallet || DEPOSIT_WALLET || '').trim();
+    if (!dw) return 0;
+    const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com', 137);
+    const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
+    const bal = await pusd.balanceOf(dw);
+    return Number(ethers.formatUnits(bal, 6));
+  } catch (e: any) {
+    log.warn(`⚠️ getOnchainBalance falhou: ${e.message}`);
+    return 0;
+  }
+}
+
 // V2 Exchange contract (Polygon): https://docs.polymarket.com/resources/contracts
 const EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B';
 const NEG_RISK_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59';

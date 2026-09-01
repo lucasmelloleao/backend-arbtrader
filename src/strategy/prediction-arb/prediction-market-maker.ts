@@ -9,7 +9,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
-import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
+import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { makerEntryPrices } from './helpers/pricing';
 
@@ -291,6 +291,18 @@ export async function runMarketMaking(
   if (pairSum >= 1) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, { mmQuoteAttempt: 0 });
+    return { quoted: false, orderIds: [] };
+  }
+
+  // 4.5 Saldo on-chain da deposit wallet: não cotar se o custo do par + ordens
+  //     ativas exceder o saldo disponível. Sem isso, o MM empilha ordens
+  //     maker que travam o capital (ex: $4.95 ativos de $5.38) e as novas
+  //     ordens são rejeitadas pelo CLOB com "not enough balance".
+  const saldoDisponivel = await getOnchainBalance(String(keyDoc?.depositWallet || '')).catch(() => 0);
+  const custoOrdensAtivas = (strategy.openOrderIds || []).length * sharesPerQuote * pairSum;
+  const custoPar = sharesPerQuote * pairSum;
+  if (saldoDisponivel > 0 && custoOrdensAtivas + custoPar > saldoDisponivel) {
+    log.warn(`⚠️ [${strategy.slug}] Saldo insuficiente (custo ${custoOrdensAtivas.toFixed(2)}+${custoPar.toFixed(2)} > disponível $${saldoDisponivel.toFixed(2)}). Não cotando.`);
     return { quoted: false, orderIds: [] };
   }
 
