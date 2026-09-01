@@ -126,7 +126,11 @@ async function monitorOpenStrategies(settings: any) {
         continue;
       }
 
-      if (hoursToEnd <= 1) {
+      // Vencimento próximo: só "segura" se houver posição REAL. Sem shares,
+      // não há o que segurar — a estratégia deve voltar para o MM cotar
+      // (antes segurava estratégia com YES=0 NO=0, travando o ciclo).
+      const temPosicaoReal = (strat.yesShares || 0) >= 1 || (strat.noShares || 0) >= 1;
+      if (hoursToEnd <= 1 && temPosicaoReal) {
         log.info(`⏰ [${strat.slug}] Vencimento próximo (${hoursToEnd.toFixed(1)}h). Segurando par até resolução.`);
         continue;
       }
