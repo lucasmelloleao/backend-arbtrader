@@ -246,18 +246,38 @@ export async function runMarketMaking(
   }
 
   // 5. Preço do par: soma < 1 para garantir lucro no vencimento.
-  //    Usa o makerEntryPrices (soma = 1 - spreadAlvo) e progride em direção ao ask.
-  const targetSpread = Math.max(Number(strategy.spreadPct || 0.5), 0.2);
-  const baseEntry = makerEntryPrices(bYes.bid, bNo.bid, targetSpread);
-  if (!baseEntry) {
-    log.warn(`⚠️ [${strategy.slug}] Não foi possível montar par maker (bids ${bYes.bid}/${bNo.bid}).`);
-    return { quoted: false, orderIds: [] };
-  }
+  //    PRIORIDADE: entrada TAKER simultânea nos dois lados (preço = ask).
+  //    Se askYes + askNo + margem < 1, as duas ordens são colocadas no ask via
+  //    Promise.all — a Polymarket efetiva as duas no mesmo instante e o par
+  //    nasce balanceado (sem fill parcial desigual como o 21 vs 10).
+  //    Se não há folga no ask, NÃO cota (evita o maker GTC desbalanceado).
+  const askSum = bYes.ask + bNo.ask;
+  const TAKER_MARGEM = 0.002; // 0.2% de folga mínima sobre o ask
+  const podeTaker = bYes.ask > 0 && bNo.ask > 0 && askSum + TAKER_MARGEM < 1;
 
-  // Progressão: quantas tentativas já fizemos (via quoteStep count no campo)
-  const attempt = Number(strategy.mmQuoteAttempt ?? 0);
-  const yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || baseEntry.yes, step, attempt);
-  const noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || baseEntry.no, step, attempt);
+  let yesPrice: number;
+  let noPrice: number;
+  let modoTaker = false;
+  let attempt = Number(strategy.mmQuoteAttempt ?? 0);
+
+  if (podeTaker) {
+    // Entrada taker: preço = ask dos dois lados (efetiva junto)
+    yesPrice = bYes.ask;
+    noPrice = bNo.ask;
+    modoTaker = true;
+    attempt = 0; // taker não progride — efetiva direto
+    log.info(`⚡ [${strategy.slug}] Entrada taker simultânea: YES ${yesPrice.toFixed(4)} + NO ${noPrice.toFixed(4)} (soma ${(yesPrice + noPrice).toFixed(4)})`);
+  } else {
+    // Sem folga no ask: cota maker no bid (fica no book, preenche quando alguém cruzar)
+    const targetSpread = Math.max(Number(strategy.spreadPct || 0.5), 0.2);
+    const baseEntry = makerEntryPrices(bYes.bid, bNo.bid, targetSpread);
+    if (!baseEntry) {
+      log.warn(`⚠️ [${strategy.slug}] Não foi possível montar par maker (bids ${bYes.bid}/${bNo.bid}).`);
+      return { quoted: false, orderIds: [] };
+    }
+    yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || baseEntry.yes, step, attempt);
+    noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || baseEntry.no, step, attempt);
+  }
   const pairSum = yesPrice + noPrice;
   if (pairSum >= 1) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);
@@ -294,7 +314,7 @@ export async function runMarketMaking(
   }
 
   if (dryRun) {
-    log.info(`[dry-run] MM ${strategy.slug}: YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)}, tentativa ${attempt})`);
+    log.info(`[dry-run] MM ${strategy.slug} (${modoTaker ? 'TAKER' : 'maker'}): YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)})`);
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, { mmQuoteAttempt: attempt + 1, openOrderIds: [] });
     return { quoted: true, orderIds: [] };
   }
@@ -359,7 +379,7 @@ export async function runMarketMaking(
     });
 
     if (orderIds.length > 0) {
-      log.info(`📣 [${strategy.slug}] Cotações: YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)}, tentativa ${attempt + 1})`);
+      log.info(`📣 [${strategy.slug}] Cotações (${modoTaker ? 'TAKER' : 'maker'}): YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)})`);
     }
 
     // Registra a cotação como trade (tipo mm_quote) para observabilidade
@@ -376,7 +396,7 @@ export async function runMarketMaking(
       yesShares: sharesPerQuote,
       noShares: sharesPerQuote,
       orderIds,
-      reason: `MM tentativa ${attempt + 1}`,
+      reason: modoTaker ? 'Entrada taker simultânea (par balanceado)' : `MM maker tentativa ${attempt + 1}`,
     }).catch(() => {});
   } catch (e: any) {
     log.warn(`⚠️ [${strategy.slug}] Falha ao cotar MM: ${e.message}`);
