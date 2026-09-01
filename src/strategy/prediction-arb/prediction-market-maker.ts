@@ -298,6 +298,19 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
+  // 6. Cancela ordens antigas ANTES de checar saldo/recotar (evita acúmulo de
+  //     ordens parciais e libera o capital travado em ordens GTC que não
+  //     preencheram — sem isso a checagem de saldo trava tudo).
+  for (const oid of strategy.openOrderIds || []) {
+    if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
+    else await cancelOrder(credentials, oid).catch(() => {});
+  }
+  // Após cancelar, limpa o registro local (o passo 7 grava as novas)
+  if ((strategy.openOrderIds || []).length > 0) {
+    await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, { openOrderIds: [] });
+    strategy.openOrderIds = [];
+  }
+
   // 4.5 Saldo on-chain da deposit wallet: não cotar se o custo do par + ordens
   //     ativas exceder o saldo disponível. Sem isso, o MM empilha ordens
   //     maker que travam o capital (ex: $4.95 ativos de $5.38) e as novas
@@ -330,12 +343,6 @@ export async function runMarketMaking(
       log.warn(`⚠️ [${strategy.slug}] Lado sub-mínimo exigiria inflar demais (${minShares}sh > 2x tradeSize ${tradeSizeOriginal}). Não cotando.`);
       return { quoted: false, orderIds: [] };
     }
-  }
-
-  // 6. Cancela ordens antigas antes de re-cotar (evita acúmulo de ordens parciais)
-  for (const oid of strategy.openOrderIds || []) {
-    if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
-    else await cancelOrder(credentials, oid).catch(() => {});
   }
 
   if (dryRun) {
