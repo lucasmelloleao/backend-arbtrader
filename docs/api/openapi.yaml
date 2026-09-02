@@ -3344,6 +3344,10 @@ components:
         maxPortfolioCapUSD:
           type: number
           default: 1000
+        maxOpenPairs:
+          type: number
+          default: 3
+          description: Máximo de pares (posições reais) simultâneos que o robô pode abrir
         maxDailyLoss:
           type: number
           default: 10
@@ -3399,6 +3403,9 @@ components:
           type: number
         maxPortfolioCapUSD:
           type: number
+        maxOpenPairs:
+          type: number
+          description: Máximo de pares (posições reais) simultâneos
         maxDailyLoss:
           type: number
         makerOnly:

@@ -16,6 +16,9 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   minVolume24hUSD: { type: Number, default: 5000 },
   maxStrategiesPerScan: { type: Number, default: 5 },
   maxPortfolioCapUSD: { type: Number, default: 1000 },
+  // Máximo de pares (posições reais) simultâneos — controla quantas posições
+  // o robô pode abrir ao mesmo tempo na Polymarket.
+  maxOpenPairs: { type: Number, default: 3 },
   maxDailyLoss: { type: Number, default: 10 },
   // Só ordens passivas (maker) — evita taker fee
   makerOnly: { type: Boolean, default: true },

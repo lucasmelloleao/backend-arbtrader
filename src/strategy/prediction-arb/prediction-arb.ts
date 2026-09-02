@@ -37,11 +37,17 @@ let syncCycleCount = 0;
 // e encerrar posições existentes antes de começar a operar.
 let liveAnterior = false;
 
-// Máximo de pares (posições reais) simultâneos. Acima disso o robô para de
-// ABRIR posição nova — continua apenas completando hedges parciais e
-// monitorando as abertas (evita estourar o capital da deposit wallet e
-// repetir o caso da DOGE que abriu uma perna e não conseguiu completar).
-const MAX_PARES_ABERTOS = 3;
+// Limite padrão de pares (posições reais) simultâneos quando a settings não
+// define maxOpenPairs. Acima do limite o robô para de ABRIR posição nova —
+// continua apenas completando hedges parciais e monitorando as abertas
+// (evita estourar o capital da deposit wallet).
+const MAX_PARES_ABERTOS_DEFAULT = 3;
+
+/** Lê o limite de pares simultâneos configurado (settings.maxOpenPairs). */
+function maxParesAbertos(settings: any): number {
+  const v = Number(settings?.maxOpenPairs);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : MAX_PARES_ABERTOS_DEFAULT;
+}
 
 /** Conta os pares (posições reais) atualmente abertos na Polymarket. */
 async function contarParesAbertos(userId: any): Promise<number> {
@@ -371,11 +377,14 @@ async function runCycle() {
     : { scanned: 0, created: 0, updated: 0 };
 
   // 2. Auto-execução (fluxo antigo — estratégias SEM mmActive usam ordem única)
-  //    Respeita o limite de pares abertos E o stop diário.
+  //    Respeita o limite de pares abertos configurado (settings.maxOpenPairs)
+  //    E o stop diário. O limite é lido a cada ciclo — mudou no painel, vale
+  //    na passada seguinte.
   const paresAbertos = await contarParesAbertos(settings.userId);
-  const podeAbrirNovo = podeAbrirHoje && paresAbertos < MAX_PARES_ABERTOS;
+  const limitePares = maxParesAbertos(settings);
+  const podeAbrirNovo = podeAbrirHoje && paresAbertos < limitePares;
   if (!podeAbrirNovo && podeAbrirHoje) {
-    log.info(`🔒 [PREDICTION-ARB] Limite de ${MAX_PARES_ABERTOS} pares abertos atingido (${paresAbertos}). Não abrindo posições novas.`);
+    log.info(`🔒 [PREDICTION-ARB] Limite de ${limitePares} pares abertos atingido (${paresAbertos}). Não abrindo posições novas.`);
   }
 
   const candidates = podeAbrirNovo
