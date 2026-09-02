@@ -270,23 +270,21 @@ async function runCycle() {
     }
   }
 
-  // 3. Market making com inventário nas estratégias monitoradas
-  //    (sem posição real OU com posição marcada mas inventário zero).
-  //    - Exclui mercados com < 5min para vencer: nos updown de 15min, nos
-  //      minutos finais um lado converge (0.95+) e o book do lado barato
-  //      some (bid=0) — sem chance de fill maker nem ordem >= $1.
-  //    - Exclui mercados com > 20min para vencer: são períodos FUTUROS
-  //      (o scan cria até 4 períodos à frente) sem valor de referência nem
-  //      book formado — cotar neles é inútil (ordens nunca preenchem).
-  //    - A janela boa é entre 5 e 20 min restantes (período atual de 15min).
-  //    - Rotaciona (updatedAt asc = as menos cotadas primeiro) em vez de
-  //      martelar sempre a de maior spread.
-  //    - Limitado a 2 por ciclo; a checagem de saldo no runMarketMaking
-  //      impede de estourar o capital.
+  // 3. Market making com inventário nas estratégias monitoradas.
+  //    REGRA DOS 5 MIN: vale só para ABRIR posição NOVA (mercado sem posição).
+  //    Estratégia com hedge PARCIAL (um lado preenchido, outro não) PODE
+  //    completar a perna faltante até o fim — deixar sem hedge no vencimento
+  //    é risco direcional (perde tudo se o lado errado vencer).
+  //    - Sem posição: só entra entre 5 e 20 min restantes (janela boa).
+  //    - Com posição parcial (desbalanceada): pode completar o hedge mesmo
+  //      faltando < 5 min.
+  //    - Exclui mercados com > 20min (períodos futuros, sem referência).
   const MIN_MINUTOS_PARA_VENCER = 5;
   const MAX_MINUTOS_PARA_VENCER = 20;
   const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
   const limiteFuturo = new Date(Date.now() + MAX_MINUTOS_PARA_VENCER * 60 * 1000);
+
+  // Grupo A: mercados sem posição real (abrir posição nova) — respeita 5-20min.
   const mmTargets = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
     active: true,
@@ -297,7 +295,26 @@ async function runCycle() {
       { positionOpen: true, yesShares: 0, noShares: 0 },
     ],
   }).sort({ updatedAt: 1 }).limit(2).lean();
-  for (const strat of mmTargets) {
+
+  // Grupo B: mercados com hedge PARCIAL (um lado preenchido) — pode completar
+  // a perna faltante até o fim (exceção à regra dos 5 min).
+  const hedgeParcial = await (PredictionArbStrategy as any).find({
+    userId: settings.userId,
+    active: true,
+    mmActive: true,
+    endDate: { $lte: limiteFuturo },
+    $or: [
+      { positionOpen: true, yesShares: { $gte: 1 }, noShares: 0 },
+      { positionOpen: true, yesShares: 0, noShares: { $gte: 1 } },
+      { positionOpen: true, yesShares: { $gte: 1 }, noShares: { $gte: 1 } },
+    ],
+  }).sort({ updatedAt: 1 }).limit(2).lean();
+
+  const targets = [...mmTargets, ...hedgeParcial].filter(
+    (s, i, arr) => arr.findIndex((x) => String(x._id) === String(s._id)) === i,
+  ).slice(0, 2);
+
+  for (const strat of targets) {
     try {
       await runMarketMaking(strat, { dryRun: !liveAllowed });
     } catch (e: any) {
