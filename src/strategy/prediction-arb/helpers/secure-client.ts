@@ -156,6 +156,43 @@ export async function fetchPositionsViaDataApi(exchangeKeyDoc: any): Promise<any
 /** Faz redeem de posições de mercados resolvidos (recupera o pUSD). */
 export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: string): Promise<void> {
   installProxyIntercept();
-  const client = await getSecureClient(exchangeKeyDoc);
-  await client.redeemPositions({ conditionId });
+  // 1. Tenta o caminho da SDK (funciona quando o mercado ainda está na Gamma).
+  try {
+    const client = await getSecureClient(exchangeKeyDoc);
+    await client.redeemPositions({ conditionId });
+    return;
+  } catch (e: any) {
+    // Se falhou por "No market found" (mercado saiu da listagem), cai para o
+    // redeem DIRETO no contrato NegRisk Adapter — não depende da Gamma.
+    if (!String(e?.message || '').includes('No market found')) {
+      throw e;
+    }
+    console.warn(`⚠️ [redeem] SDK falhou (No market found). Tentando redeem direto no NegRisk Adapter...`);
+  }
+
+  // 2. Redeem direto via NegRisk Adapter (mercados updown são neg-risk).
+  //    devolve o pUSD para a deposit wallet (dona das posições); a EOA paga o gas.
+  const { ethers } = await import('ethers');
+
+  const RPC = process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com';
+  const COLLATERAL = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
+  const NEG_RISK_ADAPTER = '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296';
+
+  let pk = String(exchangeKeyDoc.apiSecret || '');
+  try {
+    const aad = exchangeKeyDoc.userId ? `${exchangeKeyDoc.userId}-polymarket` : '';
+    pk = decryptSecretKey(pk, aad);
+  } catch { /* raw */ }
+  if (!pk.startsWith('0x')) pk = `0x${pk}`;
+
+  const provider = new ethers.JsonRpcProvider(RPC, 137);
+  const wallet = new ethers.Wallet(pk, provider);
+  const negRiskAbi = [
+    'function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)',
+  ];
+  const adapter = new ethers.Contract(NEG_RISK_ADAPTER, negRiskAbi, wallet);
+  const ZERO = '0x0000000000000000000000000000000000000000000000000000000000000000';
+  const tx = await adapter.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
+  await tx.wait();
+  console.warn(`✅ [redeem] Redeem direto no NegRisk Adapter OK (tx ${tx.hash}).`);
 }
