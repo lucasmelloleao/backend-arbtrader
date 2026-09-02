@@ -32,6 +32,10 @@ const PredictionArbStrategySchema = new mongoose.Schema({
   openOrderIds: { type: [String], default: [] },
   maxInventoryPairs: { type: Number, default: 10 },
   quoteStep: { type: Number, default: 0.005 },
+  // Timestamp da última ordem de completar hedge — usado para debounce:
+  // evita que a defasagem da Data API faça o MM comprar repetido em cima de
+  // posição que já preencheu (bola de neve SOL 5→10→15).
+  ultimoHedgeAt: { type: Date, default: null },
   // Controle de risco
   maxDailyLoss: { type: Number, default: 10 },
   dailyLossAccum: { type: Number, default: 0 },

@@ -133,6 +133,35 @@ export async function runMarketMaking(
     positionSize: (yesShares + noShares) / 2,
   });
 
+  // ── HARD CAP DE EXPOSIÇÃO POR MERCADO (Corr. bola de neve) ──────────────
+  // Teto por lado = o aporte alvo (sharesPerQuote) com pequena folga p/
+  // aceitar fill parcial (1.5×). Acima disso o robô NUNCA compra mais nada
+  // neste mercado — só cancela ordens e segura até o vencimento. Isso impede
+  // o caso SOL 5→10→15 (a defasagem da Data API fazia o MM "completar hedge"
+  // comprando em cima de posição que já tinha preenchido).
+  // Obs: par MONTADO balanceado é tratado pelo bloco `hasPair` abaixo (segura
+  // e registra); par montado desbalanceado cai no fluxo de rebalance (vende o
+  // excesso perto do vencimento). Este guard só captura exposição acima do teto.
+  const tetoLado = Math.ceil(sharesPerQuote * 1.5);
+  const estourouCapExposicao = yesShares > tetoLado || noShares > tetoLado;
+  if (estourouCapExposicao) {
+    log.warn(`🧯 [${strategy.slug}] Exposição estourou o teto (${yesShares}/${noShares} > ${tetoLado}/lado). Cancelando ordens e segurando — NÃO compra mais neste mercado.`);
+    for (const oid of strategy.openOrderIds || []) {
+      if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
+      else await cancelOrder(credentials, oid).catch(() => {});
+    }
+    await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+      openOrderIds: [],
+      positionOpen: yesShares >= 1 || noShares >= 1,
+      positionSize: (yesShares + noShares) / 2,
+      yesShares,
+      noShares,
+      ...(yesAvg > 0 ? { avgYesPrice: yesAvg } : {}),
+      ...(noAvg > 0 ? { avgNoPrice: noAvg } : {}),
+    });
+    return { quoted: false, orderIds: [] };
+  }
+
   // 2. Se ambos os lados têm inventário (e balanceado), o par está montado —
   //    registra a operação e segura até vencimento. Se desbalanceado (diferença
   //    > 10%), NÃO segura: cai para a lógica de completar/rebalancear abaixo.
@@ -230,6 +259,20 @@ export async function runMarketMaking(
       await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
         openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
       });
+      return { quoted: false, orderIds: [] };
+    }
+
+    // ── DEBOUNCE DE HEDGE (Corr. bola de neve) ─────────────────────────────
+    // A Data API reflete o fill com atraso (vários segundos). Se o MM mandou
+    // uma ordem de completar hedge há pouco e a API ainda não mostrou o fill,
+    // ele "vê" desbalanceamento fantasma e compra de novo — empilhando posição
+    // (SOL 5→10→15). Só completa de novo depois de 90s (≈3 ciclos), tempo p/ a
+    // API refletir o fill real.
+    const hedgeAnt = strategy.ultimoHedgeAt ? new Date(strategy.ultimoHedgeAt).getTime() : 0;
+    const msDesdeHedge = Date.now() - hedgeAnt;
+    const DEBOUNCE_HEDGE_MS = 90_000;
+    if (hedgeAnt > 0 && msDesdeHedge < DEBOUNCE_HEDGE_MS) {
+      log.info(`⏳ [${strategy.slug}] Hedge recente há ${(msDesdeHedge / 1000).toFixed(0)}s (debounce ${DEBOUNCE_HEDGE_MS / 1000}s). Aguardando Data API refletir o fill antes de reavaliar.`);
       return { quoted: false, orderIds: [] };
     }
 
@@ -623,10 +666,14 @@ export async function runMarketMaking(
     // attempt sobe sempre que a ordem foi aceita no CLOB (mesmo sem fill); o
     // preço avança um step por ciclo até casar ou estourar a trava de soma.
     const proximoAttempt = orderIds.length > 0 ? attempt + 1 : attempt;
+    // Se enviou ordem de completar hedge (lado leve), marca ultimoHedgeAt p/
+    // o debounce do próximo ciclo (a Data API demora a refletir o fill).
+    const enviouHedge = Boolean(ladoLeve) && orderIds.length > 0;
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
       openOrderIds: orderIds,
       mmQuoteAttempt: proximoAttempt,
       mmActive: true,
+      ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
     });
 
     if (orderIds.length > 0) {
