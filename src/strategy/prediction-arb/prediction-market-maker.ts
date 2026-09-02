@@ -423,6 +423,21 @@ export async function runMarketMaking(
         }
       };
       if (ladoLeve) {
+        // Completar o hedge SÓ se for lucrativo: preço médio da perna pesada +
+        // preço da perna leve deve ser < 1.0. Se o mercado se moveu e a soma
+        // ficou >= 1 (ex: DOWN comprado a 0.63 + UP a 0.44 = 1.07), completar
+        // GARANTE prejuízo — melhor segurar o lado único e vender no bid.
+        const precoMedioPesado = ladoLeve === 'NO' ? yesAvg : noAvg;
+        const precoLeve = ladoLeve === 'YES' ? yesPrice : noPrice;
+        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= 1) {
+          log.warn(`⚠️ [${strategy.slug}] Completar hedge sairia no prejuízo (perna pesada média ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${(precoMedioPesado + precoLeve).toFixed(4)} ≥ 1). NÃO completando — segurando lado único.`);
+          // Cancela ordens pendentes do outro lado (evita fill acidental com prejuízo)
+          for (const oid of strategy.openOrderIds || []) {
+            if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
+            else await cancelOrder(credentials, oid).catch(() => {});
+          }
+          return { quoted: false, orderIds: [] };
+        }
         log.info(`🎯 [${strategy.slug}] Completando par: comprar ${tamanhoLadoLeve} ${ladoLeve} (diferença ${sharesCompletar}).`);
         const id = await colocaLado(
           ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo,
