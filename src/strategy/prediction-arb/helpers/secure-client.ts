@@ -157,10 +157,13 @@ export async function fetchPositionsViaDataApi(exchangeKeyDoc: any): Promise<any
 export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: string): Promise<void> {
   installProxyIntercept();
   // 1. Tenta o caminho da SDK (funciona quando o mercado está na Gamma).
-  //    Com RETRY: o "No market found" é muitas vezes timing — o mercado pode
-  //    ter saído brevemente da Gamma logo após o vencimento e voltar em
-  //    segundos. Esperar e tentar de novo resolve o caso mais comum.
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+  //    Com RETRY amplo: o "No market found" é timing — o mercado pode sair da
+  //    Gamma por vários minutos após o vencimento antes de ficar "pronto"
+  //    para o redeem. Até 30 tentativas com 10s de espera (~5min) cobrem a
+  //    demora normal de encerramento e liberação do capital.
+  const MAX_TENTATIVAS = 30;
+  const ESPERA_MS = 10_000;
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
     try {
       const client = await getSecureClient(exchangeKeyDoc);
       await client.redeemPositions({ conditionId });
@@ -168,13 +171,16 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
     } catch (e: any) {
       const msg = String(e?.message || '');
       const ehTiming = msg.includes('No market found') || msg.includes('rate limit') || msg.includes('429');
-      if (!ehTiming || tentativa === 3) {
-        // Não é timing (ou acabaram as tentativas): cai para o redeem direto.
-        if (!ehTiming) throw e;
+      if (!ehTiming) {
+        // Erro não relacionado a timing — não adianta retry infinito, cai direto.
+        throw e;
+      }
+      if (tentativa === MAX_TENTATIVAS) {
+        console.warn(`⚠️ [redeem] SDK falhou após ${MAX_TENTATIVAS} tentativas (${msg.slice(0, 80)}). Tentando redeem direto no contrato...`);
         break;
       }
-      console.warn(`⚠️ [redeem] SDK falhou na tentativa ${tentativa} (${msg.slice(0, 80)}). Aguardando 10s e tentando de novo...`);
-      await new Promise((r) => setTimeout(r, 10_000));
+      console.warn(`⚠️ [redeem] SDK falhou na tentativa ${tentativa}/${MAX_TENTATIVAS} (${msg.slice(0, 80)}). Aguardando ${ESPERA_MS / 1000}s e tentando de novo...`);
+      await new Promise((r) => setTimeout(r, ESPERA_MS));
     }
   }
 
