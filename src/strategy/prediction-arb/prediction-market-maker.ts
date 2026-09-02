@@ -184,10 +184,14 @@ export async function runMarketMaking(
 
   // 2.5 Inventário desbalanceado: quando um lado tem MUITO mais que o outro
   //     (ex: YES=15, NO=10), o robô fica com risco direcional. Duas frentes:
-  //     - Se o mercado está perto do vencimento (< 30min), VENDE o excesso do
-  //       lado pesado para não carregar risco até o fim.
-  //     - Se ainda há tempo, cotar SÓ o lado leve (completar o par) e nunca
-  //       o lado pesado — assim o par converge para balanceado.
+  //     - Se o mercado está MUITO perto do vencimento (< 5min), VENDE o
+  //       excesso do lado pesado para não carregar risco até o fim.
+  //     - Senão, cotar SÓ o lado leve (completar o par) e nunca o lado
+  //       pesado — assim o par converge para balanceado.
+  //     NOTA: antes era < 30min — agressivo demais para mercados de 15min:
+  //       vendia o lado recém-comprado antes do par completar (o caso do
+  //       mercado 8:15, onde o DOWN comprado a 0.50 foi vendido a 0.44
+  //       13s depois, realizando perda desnecessária).
   const oneSideOnly = (yesShares >= 1) !== (noShares >= 1);
   const desbalanceado = !oneSideOnly && imbalance > 0.1;
   if (oneSideOnly || desbalanceado) {
@@ -198,8 +202,8 @@ export async function runMarketMaking(
     const exposedToken = yesShares >= noShares ? strategy.tokenIdYes : strategy.tokenIdNo;
     const excesso = Math.abs(yesShares - noShares);
 
-    // Se falta < 30min para vencer e o par não está completo, reverte o excesso.
-    if (hoursToEnd < 0.5) {
+    // Se falta < 5min para vencer e o par não está completo, reverte o excesso.
+    if (hoursToEnd < 5 / 60) {
       log.warn(`⚠️ [${strategy.slug}] Inventário desbalanceado (${exposedSide} ${exposedShares}, diff ${excesso}) com vencimento em ${hoursToEnd.toFixed(2)}h. Vendendo excesso para não perder.`);
       try {
         // Vende o excesso no bid atual para reduzir o risco direcional
@@ -490,6 +494,13 @@ export async function rebalanceInventory(strategy: any, opts: { dryRun?: boolean
 
   const imbalance = Math.abs(yesShares - noShares) / Math.max(yesShares, noShares);
   if (imbalance < 0.1) return; // tolerância de 10%
+
+  // Só rebalanceia (vende excesso) nos últimos 5min. Antes disso, o MM
+  // completa o par pelo lado leve — vender cedo realizava perda desnecessária
+  // (o caso do mercado 8:15: DOWN comprado a 0.50 vendido a 0.44 em 13s).
+  const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
+  const hoursToEnd = endMs > 0 ? (endMs - Date.now()) / 3600000 : Infinity;
+  if (hoursToEnd >= 5 / 60) return;
 
   const key = await resolvePolymarketKey(strategy.userId);
   if (!key) return;
