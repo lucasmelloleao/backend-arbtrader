@@ -14,7 +14,7 @@ import { executeStrategy, reconcilePosition } from './prediction-executor';
 import { closeStrategy } from './prediction-close';
 import { rebalanceInventory, runMarketMaking } from './prediction-market-maker';
 import { isPredictionLiveAllowed } from './prediction-live';
-import { resolveClobCredentials } from './helpers/clob-client';
+import { resolveClobCredentials, getOnchainBalance } from './helpers/clob-client';
 import { redeemPositionsViaSdk } from './helpers/secure-client';
 import { syncPredictionHistory } from './sync-history';
 import ExchangeKey from '../../models/ExchangeKey';
@@ -35,6 +35,57 @@ let syncCycleCount = 0;
 // Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
 // e encerrar posições existentes antes de começar a operar.
 let liveAnterior = false;
+
+// Máximo de pares (posições reais) simultâneos. Acima disso o robô para de
+// ABRIR posição nova — continua apenas completando hedges parciais e
+// monitorando as abertas (evita estourar o capital da deposit wallet e
+// repetir o caso da DOGE que abriu uma perna e não conseguiu completar).
+const MAX_PARES_ABERTOS = 3;
+
+/** Conta os pares (posições reais) atualmente abertos na Polymarket. */
+async function contarParesAbertos(userId: any): Promise<number> {
+  try {
+    const abertas = await (PredictionArbStrategy as any).find({
+      userId,
+      positionOpen: true,
+      $or: [
+        { yesShares: { $gte: 1 } },
+        { noShares: { $gte: 1 } },
+      ],
+    }).lean();
+    // Uma posição com as DUAS pernas no mesmo mercado conta como 1 par.
+    return abertas.length;
+  } catch (e: any) {
+    log.warn(`⚠️ Falha ao contar pares abertos: ${e.message}`);
+    return 0;
+  }
+}
+
+/**
+ * Capital já comprometido (posições reais + ordens ativas) vs saldo on-chain.
+ * Retorna o saldo livre estimado. Usado para não abrir posição nova quando o
+ * capital não cobre o par inteiro (causa do caso DOGE YES=10 NO=0).
+ */
+async function saldoLivreEstimado(userId: any, key: any): Promise<{ livre: number; saldo: number; comprometido: number }> {
+  const saldo = await getOnchainBalance(String(key?.depositWallet || '')).catch(() => 0);
+  // Soma o custo médio das posições reais (fonte: banco, reconciliado pelo monitor)
+  const abertas = await (PredictionArbStrategy as any).find({
+    userId,
+    $or: [
+      { yesShares: { $gte: 1 } },
+      { noShares: { $gte: 1 } },
+    ],
+  }).lean();
+  let comprometido = 0;
+  for (const s of abertas) {
+    const yes = Number(s.yesShares || 0);
+    const no = Number(s.noShares || 0);
+    const yesCusto = yes * (Number(s.avgYesPrice || s.yesPrice || 0) || 0);
+    const noCusto = no * (Number(s.avgNoPrice || s.noPrice || 0) || 0);
+    comprometido += yesCusto + noCusto;
+  }
+  return { livre: saldo - comprometido, saldo, comprometido };
+}
 
 function getRedisClient(): Redis | null {
   const url = process.env.REDIS_URL;
@@ -141,12 +192,29 @@ async function monitorOpenStrategies(settings: any) {
         continue;
       }
 
-      // Vencimento próximo: só "segura" se houver posição REAL. Sem shares,
-      // não há o que segurar — a estratégia deve voltar para o MM cotar
-      // (antes segurava estratégia com YES=0 NO=0, travando o ciclo).
-      const temPosicaoReal = (strat.yesShares || 0) >= 1 || (strat.noShares || 0) >= 1;
-      if (hoursToEnd <= 1 && temPosicaoReal) {
+      // Vencimento próximo: só "segura" se houver par REAL e BALANCEADO
+      // (os dois lados com shares). Perna única (um lado = 0) NÃO é par:
+      // segurar até a resolução é risco direcional total (perde tudo se o
+      // lado errado vencer). Nesses casos o fluxo cai para o MM completar o
+      // hedge (Grupo B) ou, se inviável, vender o lado único antes do fim.
+      const yesSh = Number(strat.yesShares || 0);
+      const noSh = Number(strat.noShares || 0);
+      const parCompleto = yesSh >= 1 && noSh >= 1;
+      if (hoursToEnd <= 1 && parCompleto) {
         log.info(`⏰ [${strat.slug}] Vencimento próximo (${hoursToEnd.toFixed(1)}h). Segurando par até resolução.`);
+        continue;
+      }
+      // Perna única perto do vencimento: tenta completar o hedge via MM
+      // (o Grupo B do ciclo roda antes do monitor). Se o MM decidir não
+      // completar (custo > 1.1, saldo), ele mesmo cancela ordens e sinaliza.
+      if (hoursToEnd <= 1 && (yesSh >= 1 || noSh >= 1)) {
+        log.warn(`⚠️ [${strat.slug}] Perna única perto do vencimento (YES=${yesSh} NO=${noSh}). Tentando completar hedge antes da resolução...`);
+        try {
+          const live = await isPredictionLiveAllowed();
+          await runMarketMaking(strat, { dryRun: !live });
+        } catch (e: any) {
+          log.warn(`⚠️ [${strat.slug}] Falha ao tentar completar hedge: ${e.message}`);
+        }
         continue;
       }
 
@@ -263,14 +331,24 @@ async function runCycle() {
   });
 
   // 2. Auto-execução (fluxo antigo — estratégias SEM mmActive usam ordem única)
-  const candidates = await (PredictionArbStrategy as any).find({
-    userId: settings.userId,
-    active: true,
-    autoExecute: true,
-    mmActive: { $ne: true },
-    positionOpen: false,
-    spreadPct: { $gte: config.minSpreadPct },
-  }).sort({ spreadPct: -1 }).limit(2).lean();
+  //    Respeita o limite de pares abertos: não abre posição nova se já houver
+  //    MAX_PARES_ABERTOS posições reais consumindo capital.
+  const paresAbertos = await contarParesAbertos(settings.userId);
+  const podeAbrirNovo = paresAbertos < MAX_PARES_ABERTOS;
+  if (!podeAbrirNovo) {
+    log.info(`🔒 [PREDICTION-ARB] Limite de ${MAX_PARES_ABERTOS} pares abertos atingido (${paresAbertos}). Não abrindo posições novas.`);
+  }
+
+  const candidates = podeAbrirNovo
+    ? await (PredictionArbStrategy as any).find({
+        userId: settings.userId,
+        active: true,
+        autoExecute: true,
+        mmActive: { $ne: true },
+        positionOpen: false,
+        spreadPct: { $gte: config.minSpreadPct },
+      }).sort({ spreadPct: -1 }).limit(2).lean()
+    : [];
 
   for (const strat of candidates) {
     try {
@@ -296,16 +374,30 @@ async function runCycle() {
   const limiteFuturo = new Date(Date.now() + MAX_MINUTOS_PARA_VENCER * 60 * 1000);
 
   // Grupo A: mercados sem posição real (abrir posição nova) — respeita 5-20min.
-  const mmTargets = await (PredictionArbStrategy as any).find({
-    userId: settings.userId,
-    active: true,
-    mmActive: true,
-    endDate: { $gte: limiteVencimento, $lte: limiteFuturo },
-    $or: [
-      { positionOpen: false },
-      { positionOpen: true, yesShares: 0, noShares: 0 },
-    ],
-  }).sort({ updatedAt: 1 }).limit(2).lean();
+  //    Só roda se houver vaga no limite de pares abertos E saldo livre para o
+  //    par inteiro (o caso DOGE YES=10 NO=0 aconteceu por falta de orçamento
+  //    global: o MM checava saldo por estratégia e abria várias em paralelo).
+  let mmTargets: any[] = [];
+  if (podeAbrirNovo) {
+    const orcamento = await saldoLivreEstimado(settings.userId, key);
+    // Custo estimado do par novo: tradeSize aplicado nos dois lados (pior caso)
+    const tradeSizeConf = Number(settings.tradeSize ?? 100);
+    const custoParNovo = tradeSizeConf * 2;
+    if (orcamento.livre < custoParNovo) {
+      log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir par novo (livre $${orcamento.livre.toFixed(2)} < custo $${custoParNovo.toFixed(2)} de ${tradeSizeConf}/lado; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
+    } else {
+      mmTargets = await (PredictionArbStrategy as any).find({
+        userId: settings.userId,
+        active: true,
+        mmActive: true,
+        endDate: { $gte: limiteVencimento, $lte: limiteFuturo },
+        $or: [
+          { positionOpen: false },
+          { positionOpen: true, yesShares: 0, noShares: 0 },
+        ],
+      }).sort({ updatedAt: 1 }).limit(2).lean();
+    }
+  }
 
   // Grupo B: mercados com hedge PARCIAL (um lado preenchido) — pode completar
   // a perna faltante até o fim (exceção à regra dos 5 min).
@@ -321,11 +413,18 @@ async function runCycle() {
     ],
   }).sort({ updatedAt: 1 }).limit(2).lean();
 
-  const targets = [...mmTargets, ...hedgeParcial].filter(
+  const targets = [...hedgeParcial, ...mmTargets].filter(
     (s, i, arr) => arr.findIndex((x) => String(x._id) === String(s._id)) === i,
-  ).slice(0, 2);
+  ).slice(0, 3);
 
-  for (const strat of targets) {
+  // Prioriza hedge parcial: se há perna única esperando completar, ele roda
+  // primeiro (e sempre, mesmo no limite de pares — completar não abre par novo).
+  const hedgeIds = new Set(hedgeParcial.map((s: any) => String(s._id)));
+  const alvosPriorizados = [...targets].sort((a: any, b: any) =>
+    Number(hedgeIds.has(String(b._id))) - Number(hedgeIds.has(String(a._id)))
+  );
+
+  for (const strat of alvosPriorizados) {
     try {
       await runMarketMaking(strat, { dryRun: !liveAllowed });
     } catch (e: any) {

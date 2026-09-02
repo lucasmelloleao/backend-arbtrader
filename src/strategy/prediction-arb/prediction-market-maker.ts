@@ -357,6 +357,38 @@ export async function runMarketMaking(
   const custoOrdensAtivas = (strategy.openOrderIds || []).length * sharesPerQuote * pairSum;
   const custoPar = sharesPerQuote * pairSum;
   if (saldoDisponivel > 0 && custoOrdensAtivas + custoPar > saldoDisponivel) {
+    // Se é PERNA ÚNICA (um lado preenchido, outro não) e o capital não cobre
+    // o hedge, segurar até o vencimento é risco direcional total (o caso real
+    // da DOGE YES=10 NO=0). Com o vencimento próximo, o menor prejuízo é
+    // VENDER a perna existente no bid — recupera parte do capital em vez de
+    // arriscar perder tudo na resolução. Só faz isso com vencimento razoável
+    // (o bid ainda tem liquidez); senão, apenas não cota.
+    const endMsSaldo = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
+    const minParaVencer = endMsSaldo > 0 ? (endMsSaldo - Date.now()) / 60000 : Infinity;
+    const pernaUnicaSemSaldo = oneSideOnly && minParaVencer <= 15 && minParaVencer > 0;
+    if (pernaUnicaSemSaldo) {
+      log.warn(`⚠️ [${strategy.slug}] Perna única (${yesShares >= 1 ? 'YES' : 'NO'} ${Math.max(yesShares, noShares)}) sem saldo p/ hedge (${minParaVencer.toFixed(1)}min p/ vencer). Vendendo a perna para não perder tudo.`);
+      try {
+        const pernaToken = yesShares >= 1 ? strategy.tokenIdYes : strategy.tokenIdNo;
+        const pernaQtd = Math.max(yesShares, noShares);
+        const bookPerna = await bookPrices(pernaToken);
+        if (bookPerna.bid > 0) {
+          if (useSdk) {
+            await placeOrderViaSdk(keyDoc, { tokenId: pernaToken, side: 'SELL', price: bookPerna.bid, size: pernaQtd });
+          } else {
+            const sellPerna = await signOrder({ credentials, tokenId: pernaToken, side: 'SELL', price: bookPerna.bid, size: pernaQtd });
+            await placeOrder(credentials, sellPerna);
+          }
+          log.info(`✅ [${strategy.slug}] Perna única vendida (${pernaQtd} @ ${bookPerna.bid}).`);
+          await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+            openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
+          });
+          return { quoted: false, orderIds: [] };
+        }
+      } catch (e: any) {
+        log.warn(`⚠️ [${strategy.slug}] Falha ao vender perna única: ${e.message}`);
+      }
+    }
     log.warn(`⚠️ [${strategy.slug}] Saldo insuficiente (custo ${custoOrdensAtivas.toFixed(2)}+${custoPar.toFixed(2)} > disponível $${saldoDisponivel.toFixed(2)}). Não cotando.`);
     return { quoted: false, orderIds: [] };
   }
@@ -530,7 +562,12 @@ export async function rebalanceInventory(strategy: any, opts: { dryRun?: boolean
 
   const key = await resolvePolymarketKey(strategy.userId);
   if (!key) return;
-  const credentials = resolveClobCredentials(key);
+  // ExchangeKey completa (com relayerApiKey) — a SDK opera com a deposit
+  // wallet (EIP-1271). O caminho antigo (signOrder+placeOrder do CLOB direto)
+  // usava a EOA e falhava com "order owner has to be the owner of the API KEY".
+  const keyDoc = await ExchangeKey.findById(key._id).lean().catch(() => key);
+  const credentials = resolveClobCredentials(keyDoc);
+  const useSdk = Boolean(String(keyDoc?.relayerApiKey || process.env.POLYMARKET_RELAYER_KEY || '').trim());
 
   const heavySide = yesShares > noShares ? 'YES' : 'NO';
   const heavyToken = heavySide === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
@@ -541,7 +578,6 @@ export async function rebalanceInventory(strategy: any, opts: { dryRun?: boolean
     const bid = book.bids[0]?.[0] || 0;
     if (bid <= 0) return;
 
-    const sellOrder = await signOrder({ credentials, tokenId: heavyToken, side: 'SELL', price: bid, size: diff });
     if (dryRun) {
       log.info(`[dry-run] Rebalance ${strategy.slug}: vender ${diff} ${heavySide} @ ${bid.toFixed(4)}`);
       await PredictionArbTrade.create({
@@ -557,8 +593,14 @@ export async function rebalanceInventory(strategy: any, opts: { dryRun?: boolean
       });
       return;
     }
-    await placeOrder(credentials, sellOrder);
-    log.info(`✅ Rebalance ${strategy.slug}: vendeu ${diff} ${heavySide}`);
+    if (useSdk) {
+      await placeOrderViaSdk(keyDoc, { tokenId: heavyToken, side: 'SELL', price: bid, size: diff });
+      log.info(`✅ Rebalance ${strategy.slug}: vendeu ${diff} ${heavySide} via SDK`);
+    } else {
+      const sellOrder = await signOrder({ credentials, tokenId: heavyToken, side: 'SELL', price: bid, size: diff });
+      await placeOrder(credentials, sellOrder);
+      log.info(`✅ Rebalance ${strategy.slug}: vendeu ${diff} ${heavySide}`);
+    }
   } catch (e: any) {
     log.warn(`⚠️ Rebalance ${strategy.slug} falhou: ${e.message}`);
   }
