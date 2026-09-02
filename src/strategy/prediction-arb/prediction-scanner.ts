@@ -200,10 +200,13 @@ export async function fetchUpdownMarkets(filter: string, periodsAhead = 4): Prom
   // Mapeia o filtro para o prefixo do slug updown (btc → btc-updown, eth → eth-updown)
   const prefix = raw.includes('updown') ? raw.replace(/[^a-z0-9]/g, '-') : `${raw.replace(/[^a-z0-9]/g, '-')}-updown`;
   const now = Math.floor(Date.now() / 1000);
-  const nextSlot = Math.ceil(now / 900) * 900; // alinha ao próximo período de 15min
+  // Período VIGENTE (o que está rodando agora): floor alinha para o início do
+  // slot atual de 15min. Antes usava ceil (próximo slot), pulando o mercado
+  // vigente — a aba só mostrava futuros (ex: vence em 69min).
+  const currentSlot = Math.floor(now / 900) * 900;
   const out: GammaMarket[] = [];
   for (let i = 0; i < periodsAhead; i++) {
-    const ts = nextSlot + i * 900;
+    const ts = currentSlot + i * 900;
     const slug = `${prefix}-15m-${ts}`;
     try {
       const m = await fetchMarketBySlug(slug);
