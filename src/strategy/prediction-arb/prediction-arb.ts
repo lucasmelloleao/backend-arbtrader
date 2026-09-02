@@ -244,19 +244,23 @@ async function runCycle() {
   //    - Exclui mercados com < 5min para vencer: nos updown de 15min, nos
   //      minutos finais um lado converge (0.95+) e o book do lado barato
   //      some (bid=0) — sem chance de fill maker nem ordem >= $1.
-  //    - A janela boa é entre 5 e 13 min restantes: spread de completude
-  //      aberto + book com os dois lados + tempo de fill.
+  //    - Exclui mercados com > 20min para vencer: são períodos FUTUROS
+  //      (o scan cria até 4 períodos à frente) sem valor de referência nem
+  //      book formado — cotar neles é inútil (ordens nunca preenchem).
+  //    - A janela boa é entre 5 e 20 min restantes (período atual de 15min).
   //    - Rotaciona (updatedAt asc = as menos cotadas primeiro) em vez de
   //      martelar sempre a de maior spread.
   //    - Limitado a 2 por ciclo; a checagem de saldo no runMarketMaking
   //      impede de estourar o capital.
   const MIN_MINUTOS_PARA_VENCER = 5;
+  const MAX_MINUTOS_PARA_VENCER = 20;
   const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
+  const limiteFuturo = new Date(Date.now() + MAX_MINUTOS_PARA_VENCER * 60 * 1000);
   const mmTargets = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
     active: true,
     mmActive: true,
-    endDate: { $gte: limiteVencimento },
+    endDate: { $gte: limiteVencimento, $lte: limiteFuturo },
     $or: [
       { positionOpen: false },
       { positionOpen: true, yesShares: 0, noShares: 0 },
