@@ -209,27 +209,29 @@ async function runCycle() {
   const liveAllowed = await isPredictionLiveAllowed();
   log.info(`💡 [PREDICTION-ARB] Modo: ${liveAllowed ? 'LIVE (ordens reais)' : 'DRY-RUN (simulação)'}`);
 
-  // Transição DRY-RUN → LIVE (colheita ligada): encerra QUALQUER posição
-  // existente antes de começar a operar — evita acumular posições novas em
-  // cima de posições antigas/desbalanceadas que ficaram de sessões anteriores.
+  // Transição DRY-RUN → LIVE (colheita ligada): DELETA as estratégias que estão
+  // em monitoramento (sem posição real) — começando limpo, sem estratégias
+  // antigas de sessões anteriores. As que têm posição real são mantidas
+  // (o monitor cuida delas até o vencimento).
   if (liveAllowed && !liveAnterior) {
-    log.info('🚦 [PREDICTION-ARB] Colheita ligada. Verificando posições existentes para encerrar...');
+    log.info('🚦 [PREDICTION-ARB] Colheita ligada. Limpando estratégias em monitoramento...');
     try {
-      const abertas = await (PredictionArbStrategy as any).find({
+      const limpar = await (PredictionArbStrategy as any).find({
         userId: settings.userId,
-        positionOpen: true,
+        $or: [
+          { positionOpen: false },
+          { positionOpen: true, yesShares: 0, noShares: 0 },
+        ],
       }).lean();
-      for (const strat of abertas) {
-        log.info(`🛑 [${strat.slug}] Encerrando posição existente antes de operar...`);
-        await closeStrategy(String(strat._id), { dryRun: false, reason: 'Encerramento ao ligar colheita' }).catch((e: any) => {
-          log.error(`❌ Falha ao encerrar [${strat.slug}] ao ligar: ${e.message}`);
-        });
+      if (limpar.length === 0) {
+        log.info('✅ Nenhuma estratégia em monitoramento para limpar.');
       }
-      if (abertas.length === 0) {
-        log.info('✅ Nenhuma posição existente para encerrar.');
+      for (const strat of limpar) {
+        await (PredictionArbStrategy as any).deleteOne({ _id: strat._id });
+        log.info(`🗑️ [${strat.slug}] Estratégia em monitoramento deletada ao ligar colheita.`);
       }
     } catch (e: any) {
-      log.warn(`⚠️ Falha ao verificar posições na transição live: ${e.message}`);
+      log.warn(`⚠️ Falha ao limpar estratégias na transição live: ${e.message}`);
     }
   }
   liveAnterior = liveAllowed;
