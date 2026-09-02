@@ -2,6 +2,13 @@
 // Completeness arbitrage: comprar os dois lados de um mercado binário
 // quando preço(YES) + preço(NO) < 1 garante retorno no vencimento.
 
+// Fees da Polymarket (CLOB): maker ≈ 0% (limit order), taker varia por
+// categoria — crypto/volatilidade cobra ~1% (algumas categorias até 2%).
+// Modelo conservador: 1% taker, 0% maker. Rebate maker configurável nas
+// settings (makerRebatePct) mas por padrão 0.
+export const TAKER_FEE_RATE = 0.01;
+export const MAKER_FEE_RATE = 0.0;
+
 export interface PairPrices {
   yes: number;
   no: number;
@@ -20,6 +27,7 @@ export function completenessSpreadPct(p: PairPrices): number {
 /**
  * Fee estimado da Polymarket para uma ordem (fórmula oficial):
  * fee = feeRate * shares * price * (1 - price)
+ * O fee incide sobre o PRÊMIO (price * (1-price)), não sobre o notional todo.
  */
 export function estimateFee(feeRate: number, shares: number, price: number): number {
   return feeRate * shares * price * (1 - price);

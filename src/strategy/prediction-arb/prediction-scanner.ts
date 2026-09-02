@@ -49,7 +49,7 @@ export async function fetchBookSpread(
       // bids já normalizados (melhor primeiro) pelo fetchBook
       bidYes = book.bids[0]?.[0] || 0;
       askYes = book.asks[0]?.[0] || 0;
-      // Profundidade acumulada no melhor bid
+      // Profundidade acumulada no melhor bid (lado YES)
       let depth = 0;
       for (const [p, size] of book.bids) {
         if (p <= 0) continue;
@@ -64,6 +64,15 @@ export async function fetchBookSpread(
       const book = await fetchBook(m.clobTokenIds[1]);
       bidNo = book.bids[0]?.[0] || 0;
       askNo = book.asks[0]?.[0] || 0;
+      // Corr. 3: profundidade também no lado NO — antes só o YES era checado,
+      // então mercado com book fino de um lado passava como "ok".
+      let depthNo = 0;
+      for (const [p, size] of book.bids) {
+        if (p <= 0) continue;
+        depthNo += p * size;
+        if (depthNo >= minDepthUsd) break;
+      }
+      if (depthNo < minDepthUsd) depthOk = false;
     }
   } catch {}
 
@@ -80,6 +89,8 @@ export interface MarketOpportunity {
   bidYes: number;
   bidNo: number;
   volume: number;
+  /** false se o book do lado YES não tinha profundidade mínima (book fino). */
+  depthOk?: boolean;
 }
 
 /** Filtra e ordena mercados (usa o spread do book quando disponível). */
@@ -101,10 +112,13 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
     return m.clobTokenIds?.length >= 2;
   });
 
-  // Busca o book de cada candidato (com limite para não estourar rate-limit)
+  // Busca o book de cada candidato (com limite para não estourar rate-limit).
+  // A profundidade mínima exigida é proporcional ao tradeSize (4× o par):
+  // mercado com menos liquidez que isso não tem contraparte real para o par.
+  const minDepthUsdScan = Math.max(20, Number(config.tradeSize ?? 5) * 4);
   const evaluated: MarketOpportunity[] = [];
   for (const m of candidates.slice(0, 30)) {
-    const book = await fetchBookSpread(m, config.tradeSize);
+    const book = await fetchBookSpread(m, minDepthUsdScan);
     const gammaYes = toNum(m.outcomePrices?.[0]);
     const gammaNo = toNum(m.outcomePrices?.[1]);
     const yes = book.bidYes || gammaYes;
@@ -118,12 +132,17 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
       bidYes: book.bidYes,
       bidNo: book.bidNo,
       volume: toNum(m.volumeNum),
+      depthOk: book.depthOk,
     });
   }
 
   return evaluated
     .filter((e) => {
       if (e.spreadPct < config.minSpreadPct) return false;
+      // Corr. 3: descarta mercados sem profundidade executável no book —
+      // o spread pode aparecer grande na teoria (Gamma) mas não ter contraparte
+      // real no CLOB (as maiores perdas vieram de book fino com fill parcial).
+      if (e.depthOk === false) return false;
       // Evita mercados de probabilidade extrema (p < 2% ou p > 98%) onde o
       // bid mínimo de 0.01 distorce o spread de completude.
       if (e.yes > 0 && e.no > 0) {

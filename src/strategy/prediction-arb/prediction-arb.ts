@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import Redis from 'ioredis';
 import PredictionArbSettings from '../../models/PredictionArbSettings';
 import PredictionArbStrategy from '../../models/PredictionArbStrategy';
+import PredictionArbTrade from '../../models/PredictionArbTrade';
 import BotStatus from '../../models/BotStatus';
 import { connectToDatabase } from '../../config/db';
 import { sendTelegramAlert } from '../../utils/telegram';
@@ -85,6 +86,38 @@ async function saldoLivreEstimado(userId: any, key: any): Promise<{ livre: numbe
     comprometido += yesCusto + noCusto;
   }
   return { livre: saldo - comprometido, saldo, comprometido };
+}
+
+/**
+ * Stop diário: acumula o PnL realizado do dia (closes com prejuízo/lucro) e,
+ * se a perda do dia ultrapassar settings.maxDailyLoss, para de ABRIR posição
+ * nova até o dia seguinte (UTC). Posições já abertas continuam sendo
+ * monitoradas e resolvidas — o stop é sobre risco novo, não abandona o que
+ * está em andamento.
+ */
+async function stopDiarioAtivo(settings: any): Promise<{ ativo: boolean; perdaDia: number; limite: number }> {
+  try {
+    const limite = Number(settings?.maxDailyLoss ?? 10);
+    if (limite <= 0) return { ativo: false, perdaDia: 0, limite };
+    // Início do dia (UTC)
+    const inicioDia = new Date(); inicioDia.setUTCHours(0, 0, 0, 0);
+    // Soma o PnL dos closes executados de HOJE (pnl negativo = perda)
+    const closesHoje = await (PredictionArbTrade as any).find({
+      userId: settings.userId,
+      type: 'close_pair',
+      status: 'executed',
+      createdAt: { $gte: inicioDia },
+    }).lean();
+    const perdaDia = closesHoje.reduce((acc: number, t: any) => acc + (Number(t.pnl || 0) < 0 ? Number(t.pnl) : 0), 0);
+    const ativo = perdaDia <= -limite;
+    if (ativo) {
+      log.warn(`🛑 [PREDICTION-ARB] STOP DIÁRIO atingido: perda de hoje $${(-perdaDia).toFixed(2)} ≥ limite $${limite.toFixed(2)}. Não abrindo posições novas até amanhã (UTC).`);
+    }
+    return { ativo, perdaDia, limite };
+  } catch (e: any) {
+    log.warn(`⚠️ Falha ao checar stop diário: ${e.message}`);
+    return { ativo: false, perdaDia: 0, limite: Number(settings?.maxDailyLoss ?? 10) };
+  }
 }
 
 function getRedisClient(): Redis | null {
@@ -288,6 +321,11 @@ async function runCycle() {
   const liveAllowed = await isPredictionLiveAllowed();
   log.info(`💡 [PREDICTION-ARB] Modo: ${liveAllowed ? 'LIVE (ordens reais)' : 'DRY-RUN (simulação)'}`);
 
+  // Stop diário: se a perda do dia estourou o limite, não abre posição nova
+  // (mas segue monitorando/resolvendo as que já estão abertas).
+  const stopDiario = await stopDiarioAtivo(settings);
+  const podeAbrirHoje = !stopDiario.ativo;
+
   // Transição DRY-RUN → LIVE (colheita ligada): DELETA as estratégias que estão
   // em monitoramento (sem posição real) — começando limpo, sem estratégias
   // antigas de sessões anteriores. As que têm posição real são mantidas
@@ -315,7 +353,7 @@ async function runCycle() {
   }
   liveAnterior = liveAllowed;
 
-  // 1. Scan
+  // 1. Scan (pulado quando o stop diário está ativo — não criar risco novo)
   const config = {
     minSpreadPct: Number(settings.minSpreadPct ?? 0.5),
     minVolume24hUSD: Number(settings.minVolume24hUSD ?? 10000),
@@ -325,17 +363,18 @@ async function runCycle() {
     marketFilter: settings.marketFilter || '',
     marketCoins: settings.marketCoins || [],
   };
-  const scan = await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
-    log.error(`❌ Erro no scan: ${e.message}`);
-    return { scanned: 0, created: 0, updated: 0 };
-  });
+  const scan = podeAbrirHoje
+    ? await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
+        log.error(`❌ Erro no scan: ${e.message}`);
+        return { scanned: 0, created: 0, updated: 0 };
+      })
+    : { scanned: 0, created: 0, updated: 0 };
 
   // 2. Auto-execução (fluxo antigo — estratégias SEM mmActive usam ordem única)
-  //    Respeita o limite de pares abertos: não abre posição nova se já houver
-  //    MAX_PARES_ABERTOS posições reais consumindo capital.
+  //    Respeita o limite de pares abertos E o stop diário.
   const paresAbertos = await contarParesAbertos(settings.userId);
-  const podeAbrirNovo = paresAbertos < MAX_PARES_ABERTOS;
-  if (!podeAbrirNovo) {
+  const podeAbrirNovo = podeAbrirHoje && paresAbertos < MAX_PARES_ABERTOS;
+  if (!podeAbrirNovo && podeAbrirHoje) {
     log.info(`🔒 [PREDICTION-ARB] Limite de ${MAX_PARES_ABERTOS} pares abertos atingido (${paresAbertos}). Não abrindo posições novas.`);
   }
 

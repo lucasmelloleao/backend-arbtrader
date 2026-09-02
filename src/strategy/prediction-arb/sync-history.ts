@@ -7,6 +7,7 @@ import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { withTimeout } from '../perpetuals/helpers/ccxt-factory';
+import { estimateFee, TAKER_FEE_RATE } from './helpers/pricing';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -92,11 +93,29 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     const realizedSell = sells.reduce((acc: number, t: any) => acc + Number(t.usdcSize || 0), 0);
     const realizedRedeem = redeems.reduce((acc: number, t: any) => acc + Number(t.usdcSize || 0), 0);
     const realized = realizedSell + realizedRedeem;
-    const pnl = realized - invested;
+    // Corr. 1: fee de venda no CLOB (taker) — desconta do PnL. A Data API
+    // reporta o usdcSize do SELL sem a fee; a fee incide sobre o prêmio.
+    const feeVendas = sells.reduce((acc: number, t: any) => {
+      const price = Number(t.price || 0);
+      const size = Number(t.size || 0);
+      return acc + (price > 0 ? estimateFee(TAKER_FEE_RATE, size, price) : 0);
+    }, 0);
+    const pnl = realized - invested - feeVendas;
 
     const firstTs = Math.min(...evs.map((e: any) => e.timestamp));
     const lastTs = Math.max(...evs.map((e: any) => e.timestamp));
     const saiu = realized > 0; // houve venda ou redeem
+
+    // Corr. 4: classifica o TIPO de saída — redeem (mercado resolveu no
+    // vencimento) vs venda antecipada no CLOB. Permite medir onde o PnL é
+    // gerado/perdido (os dados mostram que venda antecipada concentra as
+    // maiores perdas — sem essa distinção o painel não separa os dois).
+    const soRedeem = realizedSell <= 0 && realizedRedeem > 0;
+    const soVenda = realizedSell > 0 && realizedRedeem <= 0;
+    const saidaTipo = soRedeem
+      ? 'redeem-vencimento'
+      : (soVenda ? 'venda-antecipada' : 'mista');
+    const motivoSaida = saiu ? `Sincronizado da Polymarket [saída: ${saidaTipo}]` : 'Sincronizado da Polymarket';
 
     const marketId = String(evs[0]?.asset || cond);
     // Busca o trade existente PELO conditionId (marketId = cond). O strategyId
@@ -125,7 +144,7 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
           pnl: Number(pnl.toFixed(4)),
           type: saiu ? 'close_pair' : 'open_pair',
           status: 'executed',
-          reason: 'Sincronizado da Polymarket',
+          reason: motivoSaida,
         },
       });
       atualizados++;
@@ -146,7 +165,7 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
         investedUsd: invested,
         realizedUsd: realized,
         pnl: Number(pnl.toFixed(4)),
-        reason: 'Sincronizado da Polymarket',
+        reason: motivoSaida,
         createdAt: new Date(firstTs * 1000),
         openedAt: new Date(firstTs * 1000),
       });

@@ -6,7 +6,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk } from './helpers/secure-client';
-import { pairExitPnl } from './helpers/pricing';
+import { pairExitPnl, estimateFee, TAKER_FEE_RATE } from './helpers/pricing';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -51,11 +51,15 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
   const noShares = Number(strat.noShares || openTrade?.noShares || 0);
   const shares = Math.min(yesShares, noShares); // fecha o par completo
 
-  // PnL estimado (vender o par)
+  // PnL estimado (vender o par) — desconta a TAKER fee da venda no CLOB.
+  // A fee da Polymarket incide sobre o prêmio (price × (1-price)), não no
+  // notional. Antes o pairExitPnl era chamado com feeRate=0 → PnL superestimado.
   const entryYes = Number(strat.avgYesPrice || openTrade?.yesPrice || 0);
   const entryNo = Number(strat.avgNoPrice || openTrade?.noPrice || 0);
+  const feeVendaEstimada = (askYes > 0 ? estimateFee(TAKER_FEE_RATE, shares, askYes) : 0)
+    + (askNo > 0 ? estimateFee(TAKER_FEE_RATE, shares, askNo) : 0);
   const pnl = (entryYes > 0 && entryNo > 0 && askYes > 0 && askNo > 0)
-    ? pairExitPnl({ yes: entryYes, no: entryNo }, { yes: askYes, no: askNo }, shares, 0)
+    ? pairExitPnl({ yes: entryYes, no: entryNo }, { yes: askYes, no: askNo }, shares, TAKER_FEE_RATE)
     : 0;
 
   // Corr. 1: nunca vender por gatilho de preço (convergência OU take-profit)
@@ -146,6 +150,23 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
       trade.status = 'executed';
       trade.orderIds = orderIds;
       await trade.save();
+
+      // Registra a fee estimada da venda (observabilidade do custo real).
+      if (feeVendaEstimada > 0) {
+        await PredictionArbTrade.create({
+          userId: strat.userId,
+          strategyId: strat._id,
+          openTradeId: openTrade?._id,
+          marketId: strat.marketId,
+          slug: strat.slug,
+          question: strat.question,
+          type: 'fee',
+          status: 'executed',
+          amount: Number(feeVendaEstimada.toFixed(4)),
+          pnl: Number((-feeVendaEstimada).toFixed(4)),
+          reason: `Taker fee estimada da venda (${TAKER_FEE_RATE * 100}% sobre prêmio)`,
+        }).catch(() => {});
+      }
 
       await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
         positionOpen: false,

@@ -11,7 +11,9 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   tradeSize: { type: Number, default: 100 },
   // Spread mínimo (soma < 1) para entrar, em %
   minSpreadPct: { type: Number, default: 0.3 },
-  minVolume24hUSD: { type: Number, default: 10000 },
+  // Volume mínimo 24h (USD) para o scanner considerar um mercado — piso para
+  // filtrar mercados mortos/finos (as maiores perdas vieram de book fino).
+  minVolume24hUSD: { type: Number, default: 5000 },
   maxStrategiesPerScan: { type: Number, default: 5 },
   maxPortfolioCapUSD: { type: Number, default: 1000 },
   maxDailyLoss: { type: Number, default: 10 },
