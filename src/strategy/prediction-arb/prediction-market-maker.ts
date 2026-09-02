@@ -512,21 +512,58 @@ export async function runMarketMaking(
         }
       };
       if (ladoLeve) {
-        // Completar o hedge SÓ se a soma não ficar absurda: preço médio da
-        // perna pesada + preço da perna leve deve ser < 1.1. Se o mercado se
-        // moveu MUITO e a soma ficou >= 1.1, completar garante prejuízo grande.
-        // Soma entre 1.0 e 1.1: completa mesmo com pequeno prejuízo — se a
-        // perna não abriu no tempo adequado, fechar o hedge (perda máx ~10%)
-        // é melhor que segurar lado único com risco direcional total (pode
-        // perder tudo no vencimento).
+        // Completar o hedge SÓ se a soma média final ficar < 1.0 — completar
+        // com soma >= 1.0 é PREJUÍZO GARANTIDO no vencimento (paga $1 mas
+        // custou >= $1). Caso real: XRP comprou YES@0.407 e completou NO no
+        // ask 0.663 → soma 1.070, perda certa de $0.69. A trava antiga de 1.1
+        // deixava passar 1.07; o correto é nunca completar acima de ~1.0.
+        // Se não der para completar lucrativamente:
+        //   - Perto do vencimento (<= 10min): SEGURA a perna única — vender
+        //     agora realiza perda certa, e segurar dá 50% de o lado certo
+        //     vencer (redeem paga $1, podendo até lucrar).
+        //   - Com tempo ( > 10min): VENDE a perna pesada no bid — encerra o
+        //     risco direcional com perda pequena agora e libera o capital.
         const precoMedioPesado = ladoLeve === 'NO' ? yesAvg : noAvg;
         const precoLeve = ladoLeve === 'YES' ? yesPrice : noPrice;
-        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= 1.1) {
-          log.warn(`⚠️ [${strategy.slug}] Completar hedge sairia caro demais (perna pesada média ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${(precoMedioPesado + precoLeve).toFixed(4)} ≥ 1.1). NÃO completando — segurando lado único.`);
-          // Cancela ordens pendentes do outro lado (evita fill acidental com prejuízo)
+        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= 0.998) {
+          const somaHedge = precoMedioPesado + precoLeve;
+          const endMsGuard = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
+          const minRestante = endMsGuard > 0 ? (endMsGuard - Date.now()) / 60000 : Infinity;
+          const pernaPesadaSide = ladoLeve === 'NO' ? 'YES' : 'NO';
+          const pernaPesadaShares = Math.max(yesShares, noShares);
+          const pernaPesadaToken = pernaPesadaSide === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
+
+          // Cancela ordens pendentes do outro lado (evita fill acidental)
           for (const oid of strategy.openOrderIds || []) {
             if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
             else await cancelOrder(credentials, oid).catch(() => {});
+          }
+
+          if (minRestante <= 10) {
+            log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ 0.998). Vencimento em ${minRestante.toFixed(1)}min — SEGURANDO perna única (${pernaPesadaSide} ${pernaPesadaShares}).`);
+            return { quoted: false, orderIds: [] };
+          }
+
+          // Com tempo sobrando: vende a perna pesada no bid para zerar o risco
+          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ 0.998, vencimento em ${minRestante.toFixed(1)}min). Vendendo perna pesada ${pernaPesadaSide} ${pernaPesadaShares} no bid.`);
+          try {
+            const bookPesada = await bookPrices(pernaPesadaToken);
+            if (bookPesada.bid > 0) {
+              if (useSdk) {
+                await placeOrderViaSdk(keyDoc, { tokenId: pernaPesadaToken, side: 'SELL', price: bookPesada.bid, size: pernaPesadaShares });
+              } else {
+                const sellPesada = await signOrder({ credentials, tokenId: pernaPesadaToken, side: 'SELL', price: bookPesada.bid, size: pernaPesadaShares });
+                await placeOrder(credentials, sellPesada);
+              }
+              log.info(`✅ [${strategy.slug}] Perna pesada ${pernaPesadaSide} vendida (${pernaPesadaShares} @ ${bookPesada.bid}). Posição zerada.`);
+              await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+                openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
+              });
+            } else {
+              log.warn(`⚠️ [${strategy.slug}] Sem bid para vender a perna pesada. Mantendo posição (ciclo tenta de novo).`);
+            }
+          } catch (e: any) {
+            log.warn(`⚠️ [${strategy.slug}] Falha ao vender perna pesada: ${e.message}`);
           }
           return { quoted: false, orderIds: [] };
         }
@@ -548,6 +585,18 @@ export async function runMarketMaking(
       }
     } else {
       if (ladoLeve) {
+        // Mesmo guard de hedge do ramo SDK (caminho sem SDK é legacy, mas a
+        // proteção contra prejuízo garantido vale igual): nunca completar com
+        // soma média >= 1.0.
+        const precoMedioPesadoNSdk = ladoLeve === 'NO' ? yesAvg : noAvg;
+        const precoLeveNSdk = ladoLeve === 'YES' ? yesPrice : noPrice;
+        if (precoMedioPesadoNSdk > 0 && precoMedioPesadoNSdk + precoLeveNSdk >= 0.998) {
+          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesadoNSdk.toFixed(4)} + ${ladoLeve} ${precoLeveNSdk.toFixed(4)} = ${(precoMedioPesadoNSdk + precoLeveNSdk).toFixed(4)} ≥ 0.998). NÃO completando — mantendo perna única.`);
+          for (const oid of strategy.openOrderIds || []) {
+            await cancelOrder(credentials, oid).catch(() => {});
+          }
+          return { quoted: false, orderIds: [] };
+        }
         const tokenId = ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
         const price = ladoLeve === 'YES' ? yesPrice : noPrice;
         const ordem = await signOrder({ credentials, tokenId, side: 'BUY', price, size: tamanhoLadoLeve });
