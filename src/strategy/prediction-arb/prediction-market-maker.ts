@@ -194,13 +194,13 @@ export async function runMarketMaking(
   //       13s depois, realizando perda desnecessária).
   const oneSideOnly = (yesShares >= 1) !== (noShares >= 1);
   const desbalanceado = !oneSideOnly && imbalance > 0.1;
+  const excesso = Math.abs(yesShares - noShares);
   if (oneSideOnly || desbalanceado) {
     const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const hoursToEnd = endMs > 0 ? (endMs - Date.now()) / 3600000 : Infinity;
     const exposedShares = Math.max(yesShares, noShares);
     const exposedSide = yesShares >= noShares ? 'YES' : 'NO';
     const exposedToken = yesShares >= noShares ? strategy.tokenIdYes : strategy.tokenIdNo;
-    const excesso = Math.abs(yesShares - noShares);
 
     // Se falta < 5min para vencer e o par não está completo, reverte o excesso.
     if (hoursToEnd < 5 / 60) {
@@ -234,9 +234,13 @@ export async function runMarketMaking(
     log.info(`🎯 [${strategy.slug}] Inventário desbalanceado (YES=${yesShares} NO=${noShares}). Tentando completar o par (foco no lado leve)...`);
   }
 
-  // 3. Cap de inventário: se um lado já está perto do cap, não acumula mais do lado certo
+  // 3. Cap de inventário: se um lado já está no cap, NÃO acumula mais dele.
+  //    MAS se está desbalanceado (um lado menor que o outro), permite completar
+  //    pelo lado leve — o cap não pode travar o completar do par (era o que
+  //    deixava 15 vs 10: o UP bateu o cap e o MM parou antes de comprar o DOWN).
   const capReached = yesShares >= cap || noShares >= cap;
-  if (capReached) {
+  const desbalanceadoParaCompletar = (oneSideOnly || desbalanceado) && excesso > 0;
+  if (capReached && !desbalanceadoParaCompletar) {
     log.warn(`🧯 [${strategy.slug}] Cap de inventário atingido (YES=${yesShares} NO=${noShares}). Parando cotação.`);
     for (const oid of strategy.openOrderIds || []) {
       await cancelOrder(credentials, oid).catch(() => {});
