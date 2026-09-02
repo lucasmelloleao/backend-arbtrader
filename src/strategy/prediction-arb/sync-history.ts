@@ -99,14 +99,14 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     const saiu = realized > 0; // houve venda ou redeem
 
     const marketId = String(evs[0]?.asset || cond);
-    // Busca o trade existente pelo conditionId (padrão do sync) OU pelo
-    // strategyId (o MM grava com marketId numérico da Gamma, não o cond).
-    // Sem isso, o sync criava um close_pair DUPLICADO do open_pair do MM
-    // (mesmo mercado aparecia 2x no histórico).
-    const existente = await PredictionArbTrade.findOne({
-      userId,
-      $or: [{ marketId: cond }, { strategyId: strategy?._id }],
-    }).lean();
+    // Busca o trade existente PELO conditionId (marketId = cond). O strategyId
+    // SÓ entra no $or se a estratégia existir — com strategyId: null o Mongo
+    // casa com QUALQUER trade sem estratégia (pega o errado: atualizava o
+    // mercado 1788229800 em vez do correto, deixando o close_pair sem criar).
+    const buscaExistente = strategy
+      ? { userId, $or: [{ marketId: cond }, { strategyId: strategy._id }] }
+      : { userId, marketId: cond };
+    const existente = await PredictionArbTrade.findOne(buscaExistente).lean();
 
     if (existente) {
       await PredictionArbTrade.findByIdAndUpdate(existente._id, {
