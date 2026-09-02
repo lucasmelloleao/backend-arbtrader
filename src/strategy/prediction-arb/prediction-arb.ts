@@ -32,6 +32,10 @@ const DEFAULT_INTERVAL_MS = 60_000;
 // Contador de ciclos para o sync periódico do histórico (a cada 4 ciclos ~2min)
 let syncCycleCount = 0;
 
+// Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
+// e encerrar posições existentes antes de começar a operar.
+let liveAnterior = false;
+
 function getRedisClient(): Redis | null {
   const url = process.env.REDIS_URL;
   if (!url) return null;
@@ -204,6 +208,31 @@ async function runCycle() {
 
   const liveAllowed = await isPredictionLiveAllowed();
   log.info(`💡 [PREDICTION-ARB] Modo: ${liveAllowed ? 'LIVE (ordens reais)' : 'DRY-RUN (simulação)'}`);
+
+  // Transição DRY-RUN → LIVE (colheita ligada): encerra QUALQUER posição
+  // existente antes de começar a operar — evita acumular posições novas em
+  // cima de posições antigas/desbalanceadas que ficaram de sessões anteriores.
+  if (liveAllowed && !liveAnterior) {
+    log.info('🚦 [PREDICTION-ARB] Colheita ligada. Verificando posições existentes para encerrar...');
+    try {
+      const abertas = await (PredictionArbStrategy as any).find({
+        userId: settings.userId,
+        positionOpen: true,
+      }).lean();
+      for (const strat of abertas) {
+        log.info(`🛑 [${strat.slug}] Encerrando posição existente antes de operar...`);
+        await closeStrategy(String(strat._id), { dryRun: false, reason: 'Encerramento ao ligar colheita' }).catch((e: any) => {
+          log.error(`❌ Falha ao encerrar [${strat.slug}] ao ligar: ${e.message}`);
+        });
+      }
+      if (abertas.length === 0) {
+        log.info('✅ Nenhuma posição existente para encerrar.');
+      }
+    } catch (e: any) {
+      log.warn(`⚠️ Falha ao verificar posições na transição live: ${e.message}`);
+    }
+  }
+  liveAnterior = liveAllowed;
 
   // 1. Scan
   const config = {
