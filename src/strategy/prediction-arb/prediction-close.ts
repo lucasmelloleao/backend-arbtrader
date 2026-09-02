@@ -58,6 +58,28 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
     ? pairExitPnl({ yes: entryYes, no: entryNo }, { yes: askYes, no: askNo }, shares, 0)
     : 0;
 
+  // Corr. 1: nunca vender por gatilho de preço (convergência OU take-profit)
+  // se o valor realizável no ASK atual ficar ABAIXO do custo. O gatilho do
+  // monitor (sum>=1 / realizedPct) usava o preço do scan (defasado até 30s) —
+  // num mercado fino de 15min o book real pode já ter caído, e vender
+  // "porque convergiu" realizava perda evitável (casos reais: par 5/5 vendido
+  // a $2.11 de $4.95). Com o valor abaixo do custo, é melhor segurar até o
+  // vencimento (redeem paga $1 do lado certo) do que vender barato no book.
+  // Lança erro para o caller (monitor) saber que não houve fechamento — a
+  // posição permanece aberta e o ciclo seguinte tenta de novo ou o redeem
+  // resolve no vencimento.
+  const ehClosePorPreco = /convergiu|Take-profit|take.profit/i.test(String(reason || ''));
+  if (ehClosePorPreco && entryYes > 0 && entryNo > 0 && askYes > 0 && askNo > 0) {
+    const valorRealizavel = shares * (askYes + askNo); // receberia vendendo as duas pernas
+    const custoPago = shares * (entryYes + entryNo);
+    const margemMinima = custoPago * 0.002; // 0.2% — só fecha se não tomar prejuízo
+    if (valorRealizavel < custoPago + margemMinima) {
+      const msg = `${reason} mas book fraco: realizável $${valorRealizavel.toFixed(2)} < custo $${custoPago.toFixed(2)} (asks ${askYes}/${askNo}). Segurando até vencimento.`;
+      log.warn(`⚠️ [${strat.slug}] ${msg}`);
+      throw new Error(msg);
+    }
+  }
+
   const trade: any = await PredictionArbTrade.create({
     userId: strat.userId,
     strategyId: strat._id,

@@ -9,12 +9,12 @@ const PredictionArbTradeSchema = new mongoose.Schema({
   question: { type: String },
   type: {
     type: String,
-    enum: ['open_pair', 'close_pair', 'trade', 'fee', 'rebalance', 'voided'],
+    enum: ['open_pair', 'close_pair', 'trade', 'fee', 'rebalance', 'voided', 'mm_quote'],
     required: true,
   },
   status: {
     type: String,
-    enum: ['detected', 'executed', 'simulated', 'failed', 'voided'],
+    enum: ['detected', 'executed', 'simulated', 'failed', 'voided', 'open'],
     default: 'detected',
   },
   side: { type: String, enum: ['YES', 'NO'], default: null },

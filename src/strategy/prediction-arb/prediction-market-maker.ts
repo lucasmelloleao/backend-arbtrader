@@ -28,22 +28,6 @@ async function bookPrices(tokenId: string): Promise<{ bid: number; ask: number }
   }
 }
 
-/** Profundidade acumulada no bid até atingir `targetShares` (em shares). */
-async function bookBidDepth(tokenId: string, targetShares: number): Promise<number> {
-  try {
-    const book = await fetchBook(tokenId);
-    let acc = 0;
-    for (const [price, size] of book.bids) {
-      if (price <= 0) continue;
-      acc += size;
-      if (acc >= targetShares) break;
-    }
-    return acc;
-  } catch {
-    return 0;
-  }
-}
-
 /** Profundidade acumulada no bid em USD (price × size) até atingir `targetUsd`. */
 async function bookBidDepthUsd(tokenId: string, targetUsd: number): Promise<number> {
   try {
@@ -60,15 +44,34 @@ async function bookBidDepthUsd(tokenId: string, targetUsd: number): Promise<numb
   }
 }
 
+/** Profundidade acumulada no ASK em USD (price × size) — contraparte p/ compra taker. */
+async function bookAskDepthUsd(tokenId: string, targetUsd: number): Promise<number> {
+  try {
+    const book = await fetchBook(tokenId);
+    let accUsd = 0;
+    for (const [price, size] of book.asks) {
+      if (price <= 0) continue;
+      accUsd += price * size;
+      if (accUsd >= targetUsd) break;
+    }
+    return accUsd;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Cota um lado do par: preço maker (bid) com progressão em direção ao ask.
+ * attempt 0 = bid puro; a cada tentativa sobe um step.
+ * Se não há ask de referência (book de um lado só), AVANÇA mesmo assim por
+ * step — antes travava no bid fixo e a ordem maker nunca progredia nem casava
+ * (caso real da DOGE que cotou YES@0.50 por ciclos sem fill). O teto seguro
+ * é aplicado pelo chamador (soma do par < 1 / regra do hedge ≤ 1.1).
  */
 export function progressiveQuotePrice(bid: number, ask: number, step: number, attempt: number): number {
   if (bid <= 0) return 0;
-  if (ask <= 0) return bid;
-  // attempt 0 = bid puro; a cada tentativa sobe um step em direção ao ask
-  const maxAdd = Math.max(0, ask - bid);
-  return Math.min(ask, bid + step * attempt);
+  if (ask > 0) return Math.min(ask, bid + step * attempt);
+  return bid + step * attempt;
 }
 
 /**
@@ -272,23 +275,35 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // 4.1 Profundidade: só cotar se AMBOS os lados têm book para o tamanho da
-  //     ordem. Se um lado não tem profundidade, entrar resultaria em posição
-  //     de lado único (risco direcional) — evita a perda vista antes.
-  //     Além das shares, exige um mínimo em USD (liquidez real): mercados
-  //     finos com bid ilusório (ex: 0.48 sem volume) não preenchem e travam
-  //     o capital — foi o caso das 2 ordens a 0.48 que ficaram no book.
-  const depthYes = await bookBidDepth(strategy.tokenIdYes, sharesPerQuote);
-  const depthNo = await bookBidDepth(strategy.tokenIdNo, sharesPerQuote);
-  if (depthYes < sharesPerQuote || depthNo < sharesPerQuote) {
-    log.warn(`⚠️ [${strategy.slug}] Profundidade insuficiente: YES depth=${depthYes.toFixed(1)} NO depth=${depthNo.toFixed(1)} (precisa ${sharesPerQuote}). Não cotando.`);
-    return { quoted: false, orderIds: [] };
-  }
-  const MIN_LIQUIDEZ_USD = 20; // liquidez mínima por lado (bid × size)
-  const liqYes = await bookBidDepthUsd(strategy.tokenIdYes, MIN_LIQUIDEZ_USD);
-  const liqNo = await bookBidDepthUsd(strategy.tokenIdNo, MIN_LIQUIDEZ_USD);
-  if (liqYes < MIN_LIQUIDEZ_USD || liqNo < MIN_LIQUIDEZ_USD) {
-    log.warn(`⚠️ [${strategy.slug}] Liquidez insuficiente no bid: YES $${liqYes.toFixed(2)} NO $${liqNo.toFixed(2)} (mín $${MIN_LIQUIDEZ_USD}). Não cotando.`);
+  // 4.1 Profundidade: só cotar se o(s) lado(s) a COMPRAR têm book para o
+  //     tamanho da ordem. No modo lado leve (completar hedge) só o lado leve
+  //     é comprado — exigir profundidade do lado pesado (que já está no
+  //     inventário) bloqueava o completar do par em mercado fino.
+  //     Compra no ASK (taker) exige profundidade no ask; maker no bid, no bid.
+  //     Além disso, exige um mínimo em USD (liquidez real): mercados finos
+  //     com bid ilusório (ex: 0.48 sem volume) não preenchem e travam o
+  //     capital — foi o caso das 2 ordens a 0.48 que ficaram no book.
+  const MIN_LIQUIDEZ_USD = 20; // liquidez mínima por lado (bid/ask × size)
+  const temLadoLeveProf = yesShares !== noShares;
+  const ladoLeveProf = temLadoLeveProf ? (yesShares > noShares ? 'NO' : 'YES') : null;
+
+  const checaProfundidade = async (lado: 'YES' | 'NO' | null): Promise<boolean> => {
+    const tokens = lado ? [lado === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo] : [strategy.tokenIdYes, strategy.tokenIdNo];
+    for (const tok of tokens) {
+      const liqBid = await bookBidDepthUsd(tok, MIN_LIQUIDEZ_USD);
+      const liqAsk = await bookAskDepthUsd(tok, MIN_LIQUIDEZ_USD);
+      const liqMax = Math.max(liqBid, liqAsk);
+      if (liqMax < MIN_LIQUIDEZ_USD) {
+        log.warn(`⚠️ [${strategy.slug}] Liquidez insuficiente (bid $${liqBid.toFixed(2)} / ask $${liqAsk.toFixed(2)}, mín $${MIN_LIQUIDEZ_USD}). Não cotando.`);
+        return false;
+      }
+    }
+    return true;
+  };
+  if (temLadoLeveProf) {
+    // Completando hedge: só o lado leve precisa de liquidez (bid OU ask)
+    if (!(await checaProfundidade(ladoLeveProf))) return { quoted: false, orderIds: [] };
+  } else if (!(await checaProfundidade(null))) {
     return { quoted: false, orderIds: [] };
   }
 
@@ -312,7 +327,31 @@ export async function runMarketMaking(
   let modoTaker = false;
   let attempt = Number(strategy.mmQuoteAttempt ?? 0);
 
-  if (podeTaker && baseEntry) {
+  // Corr. 2: completar hedge (lado leve) SEMPRE tenta no ask (taker) primeiro —
+  // se o par está desbalanceado, o importante é casar a perna faltante rápido
+  // (esperar maker no bid é o que deixava YES@0.50 preso sem fill). A regra
+  // do ≤1.1 (passo 7) ainda protege contra completar com prejuízo absurdo.
+  const temLadoLeve = yesShares !== noShares;
+  if (temLadoLeve) {
+    const leveLado = yesShares > noShares ? 'NO' : 'YES';
+    const leveBid = leveLado === 'YES' ? bYes.bid : bNo.bid;
+    const leveAsk = leveLado === 'YES' ? bYes.ask : bNo.ask;
+    // Tenta taker no ask se houver ask; senão maker progressivo no bid
+    if (leveAsk > 0) {
+      yesPrice = leveLado === 'YES' ? leveAsk : bYes.bid; // lado pesado nem é cotado
+      noPrice = leveLado === 'NO' ? leveAsk : bNo.bid;
+      modoTaker = true;
+      log.info(`⚡ [${strategy.slug}] Completando hedge: ${leveLado} taker no ask ${leveAsk.toFixed(4)} (foco lado leve).`);
+    } else if (leveBid > 0) {
+      yesPrice = leveLado === 'YES' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bYes.bid;
+      noPrice = leveLado === 'NO' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bNo.bid;
+      modoTaker = false;
+      log.info(`📌 [${strategy.slug}] Completando hedge: ${leveLado} maker progressivo (bid ${leveBid.toFixed(4)} + ${step * attempt})`);
+    } else {
+      log.warn(`⚠️ [${strategy.slug}] Sem book para completar hedge (${leveLado}).`);
+      return { quoted: false, orderIds: [] };
+    }
+  } else if (podeTaker && baseEntry) {
     // Entrada taker: preço = ask dos dois lados (efetiva junto)
     yesPrice = bYes.ask;
     noPrice = bNo.ask;
@@ -320,22 +359,22 @@ export async function runMarketMaking(
     attempt = 0; // taker não progride — efetiva direto
     log.info(`⚡ [${strategy.slug}] Entrada taker simultânea: YES ${yesPrice.toFixed(4)} + NO ${noPrice.toFixed(4)} (soma ${(yesPrice + noPrice).toFixed(4)})`);
   } else {
-    // Sem folga no ask (ou sem baseEntry): cota maker no bid
+    // Sem folga no ask (ou sem baseEntry): cota maker no bid com progressão —
+    // a cada ciclo sem fill o preço sobe um step em direção a casar (Corr. 3).
     if (!baseEntry) {
       log.warn(`⚠️ [${strategy.slug}] Não foi possível montar par maker (bids ${bYes.bid}/${bNo.bid}).`);
       return { quoted: false, orderIds: [] };
     }
-    yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || baseEntry.yes, step, attempt);
-    noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || baseEntry.no, step, attempt);
+    yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || 0, step, attempt);
+    noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || 0, step, attempt);
     modoTaker = false;
   }
   const pairSum = yesPrice + noPrice;
-  if (pairSum >= 1) {
+  if (pairSum >= 1 && !temLadoLeve) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, { mmQuoteAttempt: 0 });
     return { quoted: false, orderIds: [] };
   }
-
   // 6. Cancela ordens antigas ANTES de checar saldo/recotar (evita acúmulo de
   //     ordens parciais e libera o capital travado em ordens GTC que não
   //     preencheram — sem isso a checagem de saldo trava tudo).
@@ -354,8 +393,18 @@ export async function runMarketMaking(
   //     maker que travam o capital (ex: $4.95 ativos de $5.38) e as novas
   //     ordens são rejeitadas pelo CLOB com "not enough balance".
   const saldoDisponivel = await getOnchainBalance(String(keyDoc?.depositWallet || '')).catch(() => 0);
+  // Custo REAL da rodada: no modo lado leve (completar hedge) só a perna leve
+  // é comprada (tamanho = diferença exata); senão, o par inteiro.
+  const ladoLeveCalc = yesShares > noShares ? 'NO' : (noShares > yesShares ? 'YES' : null);
+  const sharesCompletarCalc = ladoLeveCalc ? Math.abs(yesShares - noShares) : 0;
+  const tamanhoRealCalc = ladoLeveCalc
+    ? Math.max(1, Math.min(sharesCompletarCalc, sharesPerQuote))
+    : sharesPerQuote;
+  const custoPernaLeve = ladoLeveCalc
+    ? tamanhoRealCalc * (ladoLeveCalc === 'YES' ? yesPrice : noPrice)
+    : 0;
   const custoOrdensAtivas = (strategy.openOrderIds || []).length * sharesPerQuote * pairSum;
-  const custoPar = sharesPerQuote * pairSum;
+  const custoPar = ladoLeveCalc ? custoPernaLeve : sharesPerQuote * pairSum;
   if (saldoDisponivel > 0 && custoOrdensAtivas + custoPar > saldoDisponivel) {
     // Se é PERNA ÚNICA (um lado preenchido, outro não) e o capital não cobre
     // o hedge, segurar até o vencimento é risco direcional total (o caso real
@@ -401,18 +450,26 @@ export async function runMarketMaking(
   const MIN_ORDER_USD = 1;
   const valorYes = yesPrice * sharesPerQuote;
   const valorNo = noPrice * sharesPerQuote;
-  if (valorYes < MIN_ORDER_USD || valorNo < MIN_ORDER_USD) {
-    const minSharesYes = Math.ceil(MIN_ORDER_USD / yesPrice);
-    const minSharesNo = Math.ceil(MIN_ORDER_USD / noPrice);
-    const minShares = Math.max(minSharesYes, minSharesNo);
+  // No modo lado leve só o lado leve é comprado — a checagem de mínimo aplica
+  // só nele (o lado pesado já está no inventário, não será comprado de novo).
+  const verificarMinimo = (valor: number, preco: number): boolean => {
+    if (valor >= MIN_ORDER_USD) return true;
+    const minShares = Math.ceil(MIN_ORDER_USD / preco);
     const tradeSizeOriginal = Math.max(1, Math.min(Math.floor(Number(strategy.tradeSize ?? 100)), cap));
     if (minShares <= cap && minShares <= tradeSizeOriginal * 2) {
-      log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (YES $${valorYes.toFixed(2)} NO $${valorNo.toFixed(2)}). Ajustando para ${minShares} shares/lado.`);
+      log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (valor $${valor.toFixed(2)}). Ajustando para ${minShares} shares.`);
       sharesPerQuote = minShares;
-    } else {
-      log.warn(`⚠️ [${strategy.slug}] Lado sub-mínimo exigiria inflar demais (${minShares}sh > 2x tradeSize ${tradeSizeOriginal}). Não cotando.`);
-      return { quoted: false, orderIds: [] };
+      return true;
     }
+    log.warn(`⚠️ [${strategy.slug}] Lado sub-mínimo exigiria inflar demais (${minShares}sh > 2x tradeSize ${tradeSizeOriginal}). Não cotando.`);
+    return false;
+  };
+  if (ladoLeveCalc) {
+    const valorLeve = ladoLeveCalc === 'YES' ? valorYes : valorNo;
+    const precoLeve = ladoLeveCalc === 'YES' ? yesPrice : noPrice;
+    if (!verificarMinimo(valorLeve, precoLeve)) return { quoted: false, orderIds: [] };
+  } else if (!verificarMinimo(valorYes, yesPrice) || !verificarMinimo(valorNo, noPrice)) {
+    return { quoted: false, orderIds: [] };
   }
 
   if (dryRun) {
@@ -427,10 +484,10 @@ export async function runMarketMaking(
   //    senão cota os dois lados juntos (taker) ou o par maker.
   const orderIds: string[] = [];
   try {
-    const ladoLeve = yesShares > noShares ? 'NO' : (noShares > yesShares ? 'YES' : null);
-    // Tamanho para completar o par desbalanceado: diferença exata entre os lados
-    const sharesCompletar = ladoLeve ? Math.abs(yesShares - noShares) : 0;
-    const tamanhoLadoLeve = Math.max(1, Math.min(sharesCompletar, sharesPerQuote));
+    // Usa o lado leve já calculado na checagem de saldo (mesma definição)
+    const ladoLeve = ladoLeveCalc;
+    const sharesCompletar = ladoLeve ? sharesCompletarCalc : 0;
+    const tamanhoLadoLeve = ladoLeve ? tamanhoRealCalc : sharesPerQuote;
     if (useSdk) {
       const colocaLado = async (tokenId: string, price: number, lado: string, size: number): Promise<string | null> => {
         try {
@@ -511,17 +568,25 @@ export async function runMarketMaking(
       }
     }
 
+    // Corr. 3: PROGRIDE o preço a cada ciclo enquanto a ordem não casar —
+    // antes resetava para 0 quando uma das pernas falhava/ficava no book,
+    // então a cotação nunca avançava (YES@0.50 preso para sempre). Agora o
+    // attempt sobe sempre que a ordem foi aceita no CLOB (mesmo sem fill); o
+    // preço avança um step por ciclo até casar ou estourar a trava de soma.
+    const proximoAttempt = orderIds.length > 0 ? attempt + 1 : attempt;
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
       openOrderIds: orderIds,
-      mmQuoteAttempt: orderIds.length === 2 ? attempt + 1 : 0, // só progride se ambas as ordens foram aceitas
+      mmQuoteAttempt: proximoAttempt,
       mmActive: true,
     });
 
     if (orderIds.length > 0) {
-      log.info(`📣 [${strategy.slug}] Cotações (${modoTaker ? 'TAKER' : 'maker'}): YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)})`);
+      log.info(`📣 [${strategy.slug}] Cotações (${modoTaker ? 'TAKER' : 'maker'}): YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)}) | attempt=${proximoAttempt}`);
     }
 
-    // Registra a cotação como trade (tipo mm_quote) para observabilidade
+    // Registra a cotação como trade (tipo mm_quote) para observabilidade.
+    // O schema foi corrigido para aceitar type=mm_quote e status=open; o log
+    // de erro substitui o catch mudo (antes o enum inválido falhava invisível).
     await PredictionArbTrade.create({
       userId: strategy.userId,
       strategyId: strategy._id,
@@ -531,12 +596,14 @@ export async function runMarketMaking(
       status: 'open',
       yesPrice,
       noPrice,
-      amount: sharesPerQuote * pairSum,
-      yesShares: sharesPerQuote,
-      noShares: sharesPerQuote,
+      amount: ladoLeve ? tamanhoLadoLeve * (ladoLeve === 'YES' ? yesPrice : noPrice) : sharesPerQuote * pairSum,
+      yesShares: ladoLeve === 'YES' ? tamanhoLadoLeve : (ladoLeve ? 0 : sharesPerQuote),
+      noShares: ladoLeve === 'NO' ? tamanhoLadoLeve : (ladoLeve ? 0 : sharesPerQuote),
       orderIds,
-      reason: modoTaker ? 'Entrada taker simultânea (par balanceado)' : `MM maker tentativa ${attempt + 1}`,
-    }).catch(() => {});
+      reason: ladoLeve
+        ? `MM completando hedge: ${tamanhoLadoLeve} ${ladoLeve} (attempt ${proximoAttempt})`
+        : (modoTaker ? 'Entrada taker simultânea (par balanceado)' : `MM maker tentativa ${proximoAttempt}`),
+    }).catch((e: any) => log.warn(`⚠️ [${strategy.slug}] Falha ao registrar mm_quote: ${e.message}`));
   } catch (e: any) {
     log.warn(`⚠️ [${strategy.slug}] Falha ao cotar MM: ${e.message}`);
   }
