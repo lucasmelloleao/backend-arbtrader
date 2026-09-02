@@ -105,28 +105,39 @@ async function monitorOpenStrategies(settings: any) {
       const hoursToEnd = endMs > 0 ? (endMs - now) / 3600000 : Infinity;
 
       // Mercado venceu: faz redeem das posições (recupera o pUSD) e encerra.
+      // Só encerra a estratégia se o redeem FUNCIONOU — se falhou (timing,
+      // mercado ainda não pronto), mantém positionOpen para o próximo ciclo
+      // tentar de novo. Antes zerava a estratégia mesmo com redeem falho,
+      // deixando o capital preso para sempre (resgate manual no portal).
       if (hoursToEnd <= 0 && strat.positionOpen) {
-        log.info(`⏰ [${strat.slug}] Mercado venceu. Fazendo redeem das posições...`);
+        let redeemOk = false;
         try {
           const key = await resolvePolymarketKey(settings.userId);
           if (key && strat.conditionId) {
             const keyDoc = await ExchangeKey.findById(key._id).lean().catch(() => key);
             await redeemPositionsViaSdk(keyDoc, strat.conditionId);
             log.info(`✅ [${strat.slug}] Redeem executado.`);
+            redeemOk = true;
           }
         } catch (e: any) {
-          log.warn(`⚠️ [${strat.slug}] Redeem falhou: ${e.message}`);
+          log.warn(`⚠️ [${strat.slug}] Redeem falhou (vai tentar de novo no próximo ciclo): ${e.message}`);
         }
-        await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
-          positionOpen: false,
-          positionSize: 0,
-          yesShares: 0,
-          noShares: 0,
-          avgYesPrice: 0,
-          avgNoPrice: 0,
-          active: false,
-          lastCheckAt: new Date(),
-        });
+        if (redeemOk) {
+          await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
+            positionOpen: false,
+            positionSize: 0,
+            yesShares: 0,
+            noShares: 0,
+            avgYesPrice: 0,
+            avgNoPrice: 0,
+            active: false,
+            lastCheckAt: new Date(),
+          });
+        } else {
+          await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
+            lastCheckAt: new Date(),
+          });
+        }
         continue;
       }
 
