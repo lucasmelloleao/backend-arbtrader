@@ -69,7 +69,11 @@ async function formatStrategy(s: any) {
     bidYesAtual = bookYes.bid;
     bidNoAtual = bookNo.bid;
     valorAtual = yesShares * bidYesAtual + noShares * bidNoAtual;
-    custoTotal = yesShares * avgYes + noShares * avgNo;
+    // Custo: usa o preço médio gravado; se ausente (posição antiga), usa o
+    // yesPrice/noPrice da estratégia (preços de entrada do MM) como aproximação.
+    const custoYes = avgYes > 0 ? avgYes : Number(s.yesPrice || 0);
+    const custoNo = avgNo > 0 ? avgNo : Number(s.noPrice || 0);
+    custoTotal = yesShares * custoYes + noShares * custoNo;
     pnlAtual = valorAtual - custoTotal;
     // No vencimento o lado vencedor paga $1/share (o par hedgeado garante o
     // menor dos dois lados × $1, que é o retorno seguro).

@@ -61,8 +61,10 @@ export async function reconcilePosition(strategy: any, keyDoc: any): Promise<{ y
 
   const yesShares = Number(yesPos?.size || 0);
   const noShares = Number(noPos?.size || 0);
-  const yesAvg = Number(yesPos?.avg_price || yesPos?.price || 0);
-  const noAvg = Number(noPos?.avg_price || noPos?.price || 0);
+  // Data API de positions não retorna avg_price — usa curPrice como fallback
+  // (preço atual da posição ≈ custo de entrada para o mark-to-market).
+  const yesAvg = Number(yesPos?.avg_price || yesPos?.price || yesPos?.curPrice || 0);
+  const noAvg = Number(noPos?.avg_price || noPos?.price || noPos?.curPrice || 0);
 
   await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
     yesShares,
