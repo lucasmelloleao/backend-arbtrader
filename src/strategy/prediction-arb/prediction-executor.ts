@@ -61,10 +61,31 @@ export async function reconcilePosition(strategy: any, keyDoc: any): Promise<{ y
 
   const yesShares = Number(yesPos?.size || 0);
   const noShares = Number(noPos?.size || 0);
-  // Data API de positions não retorna avg_price — usa curPrice como fallback
-  // (preço atual da posição ≈ custo de entrada para o mark-to-market).
-  const yesAvg = Number(yesPos?.avg_price || yesPos?.price || yesPos?.curPrice || 0);
-  const noAvg = Number(noPos?.avg_price || noPos?.price || noPos?.curPrice || 0);
+  // Preço médio REAL de entrada: calculado das COMPRAS na activity da Data API
+  // (o curPrice muda com o mercado e distorce o custo — o NO comprado a 0.49
+  // aparecia como 0.515, inflando o custo e mostrando P&L errado no front).
+  let yesAvg = Number(yesPos?.avg_price || 0);
+  let noAvg = Number(noPos?.avg_price || 0);
+  try {
+    const dw = String(keyDoc?.depositWallet || process.env.POLYMARKET_DEPOSIT_WALLET || '').trim();
+    if (dw && strategy.conditionId) {
+      const res = await fetch(`https://data-api.polymarket.com/activity?user=${dw}&limit=500`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+      if (res?.ok) {
+        const atv = await res.json();
+        const meus = (Array.isArray(atv) ? atv : []).filter((a: any) => a.conditionId === strategy.conditionId);
+        const buysYes = meus.filter((a: any) => a.type === 'TRADE' && a.side === 'BUY' && String(a.outcome || '').toLowerCase() === 'up');
+        const buysNo = meus.filter((a: any) => a.type === 'TRADE' && a.side === 'BUY' && String(a.outcome || '').toLowerCase() === 'down');
+        const sumYes = buysYes.reduce((s: number, a: any) => s + Number(a.usdcSize || 0), 0);
+        const shYes = buysYes.reduce((s: number, a: any) => s + Number(a.size || 0), 0);
+        const sumNo = buysNo.reduce((s: number, a: any) => s + Number(a.usdcSize || 0), 0);
+        const shNo = buysNo.reduce((s: number, a: any) => s + Number(a.size || 0), 0);
+        if (shYes > 0) yesAvg = sumYes / shYes;
+        if (shNo > 0) noAvg = sumNo / shNo;
+      }
+    }
+  } catch { /* mantém o fallback */ }
+  if (yesAvg <= 0) yesAvg = Number(yesPos?.price || yesPos?.curPrice || 0);
+  if (noAvg <= 0) noAvg = Number(noPos?.price || noPos?.curPrice || 0);
 
   await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
     yesShares,
