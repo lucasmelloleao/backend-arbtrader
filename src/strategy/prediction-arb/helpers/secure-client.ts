@@ -156,26 +156,36 @@ export async function fetchPositionsViaDataApi(exchangeKeyDoc: any): Promise<any
 /** Faz redeem de posições de mercados resolvidos (recupera o pUSD). */
 export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: string): Promise<void> {
   installProxyIntercept();
-  // 1. Tenta o caminho da SDK (funciona quando o mercado ainda está na Gamma).
-  try {
-    const client = await getSecureClient(exchangeKeyDoc);
-    await client.redeemPositions({ conditionId });
-    return;
-  } catch (e: any) {
-    // Se falhou por "No market found" (mercado saiu da listagem), cai para o
-    // redeem DIRETO no contrato NegRisk Adapter — não depende da Gamma.
-    if (!String(e?.message || '').includes('No market found')) {
-      throw e;
+  // 1. Tenta o caminho da SDK (funciona quando o mercado está na Gamma).
+  //    Com RETRY: o "No market found" é muitas vezes timing — o mercado pode
+  //    ter saído brevemente da Gamma logo após o vencimento e voltar em
+  //    segundos. Esperar e tentar de novo resolve o caso mais comum.
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    try {
+      const client = await getSecureClient(exchangeKeyDoc);
+      await client.redeemPositions({ conditionId });
+      return;
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      const ehTiming = msg.includes('No market found') || msg.includes('rate limit') || msg.includes('429');
+      if (!ehTiming || tentativa === 3) {
+        // Não é timing (ou acabaram as tentativas): cai para o redeem direto.
+        if (!ehTiming) throw e;
+        break;
+      }
+      console.warn(`⚠️ [redeem] SDK falhou na tentativa ${tentativa} (${msg.slice(0, 80)}). Aguardando 10s e tentando de novo...`);
+      await new Promise((r) => setTimeout(r, 10_000));
     }
-    console.warn(`⚠️ [redeem] SDK falhou (No market found). Tentando redeem direto no NegRisk Adapter...`);
   }
 
-  // 2. Redeem direto via NegRisk Adapter (mercados updown são neg-risk).
-  //    devolve o pUSD para a deposit wallet (dona das posições); a EOA paga o gas.
+  // 2. Fallback: redeem direto no contrato. Detectar se o mercado é negRisk
+  //    (via CLOB /neg-risk) para escolher o adapter correto.
+  console.warn(`⚠️ [redeem] SDK não conseguiu após retries. Tentando redeem direto no contrato...`);
   const { ethers } = await import('ethers');
 
   const RPC = process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com';
   const COLLATERAL = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
+  const CONDITIONAL_TOKENS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
   const NEG_RISK_ADAPTER = '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296';
 
   let pk = String(exchangeKeyDoc.apiSecret || '');
@@ -187,12 +197,33 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
 
   const provider = new ethers.JsonRpcProvider(RPC, 137);
   const wallet = new ethers.Wallet(pk, provider);
-  const negRiskAbi = [
+  const ZERO = '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+  // Detecta negRisk pelo primeiro tokenId da posição (via CLOB)
+  let negRisk = false;
+  try {
+    const dw = String(exchangeKeyDoc.depositWallet || process.env.POLYMARKET_DEPOSIT_WALLET || '').trim();
+    const posRes = await fetch(`https://data-api.polymarket.com/positions?user=${dw}&limit=100`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (posRes?.ok) {
+      const poss = await posRes.json();
+      const pos = (Array.isArray(poss) ? poss : []).find((p: any) => p.conditionId === conditionId);
+      if (pos?.asset) {
+        const nr = await fetch(`https://clob.polymarket.com/neg-risk?token_id=${pos.asset}`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+        if (nr?.ok) {
+          const nrj = (await nr.json()) as { neg_risk?: boolean };
+          negRisk = nrj?.neg_risk === true;
+        }
+      }
+    }
+  } catch { /* assume não negRisk */ }
+
+  const redeemAbi = [
     'function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)',
   ];
-  const adapter = new ethers.Contract(NEG_RISK_ADAPTER, negRiskAbi, wallet);
-  const ZERO = '0x0000000000000000000000000000000000000000000000000000000000000000';
-  const tx = await adapter.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
+  const target = negRisk ? NEG_RISK_ADAPTER : CONDITIONAL_TOKENS;
+  console.warn(`ℹ️ [redeem] Mercado ${negRisk ? 'NEG-RISK' : 'padrão'} — usando adapter ${negRisk ? 'NegRisk' : 'CTF'}.`);
+  const contract = new ethers.Contract(target, redeemAbi, wallet);
+  const tx = await contract.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
   await tx.wait();
-  console.warn(`✅ [redeem] Redeem direto no NegRisk Adapter OK (tx ${tx.hash}).`);
+  console.warn(`✅ [redeem] Redeem direto OK (tx ${tx.hash}).`);
 }
