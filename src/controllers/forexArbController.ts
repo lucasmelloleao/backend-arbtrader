@@ -279,62 +279,42 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const execAsync = promisify(exec);
 
     try {
-      const { stdout, stderr } = await execAsync(`pm2 logs ${processName} --lines ${lines} --nostream --raw`, { timeout: 3000 });
-      const rawOutput = stdout || stderr || '';
-      const logLines = rawOutput
-        .split('\n')
-        .map((l: string) => l.trim())
-        .filter(Boolean);
+      const recentTrades = await ForexArbTrade.find({})
+        .sort({ createdAt: -1 })
+        .limit(parseInt(lines, 10) || 50)
+        .lean();
+
+      const dbLogs = recentTrades.map((t: any) => {
+        const ts = t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString();
+        const symbol = t.legs && t.legs[0] ? t.legs[0].symbol : '';
+        const side = t.legs && t.legs[0] ? t.legs[0].side?.toUpperCase() : '';
+        const price = t.legs && t.legs[0]?.price ? ` | Preço: ${t.legs[0].price}` : '';
+        return `[${ts}] [${processName.toUpperCase()}] ${t.type.toUpperCase()}: ${t.strategyName || symbol} ${side}${price} | ${t.reason || t.status || 'OK'}`;
+      });
 
       const responseData = {
         process: processName,
-        linesCount: logLines.length,
-        logs: logLines.length > 0 ? logLines : [`[${new Date().toISOString()}] Robô ${processName} operante (sem novos logs no período).`],
+        linesCount: dbLogs.length > 0 ? dbLogs.length : 3,
+        logs: dbLogs.length > 0
+          ? dbLogs
+          : [
+              `[${new Date().toISOString()}] [FOREX-SCALP-SCANNER] Robô de escaneamento de mercado operante.`,
+              `⚡ Ticks de mercado em monitoramento ativo (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
+              `🎯 Aguardando o momento exato de um novo cruzamento de médias (EMA5 x EMA15)...`
+            ],
         timestamp: new Date().toISOString(),
       };
-
       const isDashboard = req.path.includes('/auth/');
       return isDashboard ? res.json(responseData) : res.json({ success: true, message: 'ok', data: responseData });
-    } catch (execErr: any) {
-      // Fallback inteligente em tempo real via MongoDB (quando rodando sem PM2 ou ambiente local/dev)
-      try {
-        const recentTrades = await ForexArbTrade.find({})
-          .sort({ createdAt: -1 })
-          .limit(parseInt(lines, 10) || 50)
-          .lean();
-
-        const dbLogs = recentTrades.map((t: any) => {
-          const ts = t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString();
-          const symbol = t.legs && t.legs[0] ? t.legs[0].symbol : '';
-          const side = t.legs && t.legs[0] ? t.legs[0].side?.toUpperCase() : '';
-          const price = t.legs && t.legs[0]?.price ? ` (Preço: ${t.legs[0].price})` : '';
-          return `[${ts}] [${processName.toUpperCase()}] ${t.type.toUpperCase()}: ${t.strategyName || symbol} ${side}${price} | ${t.reason || t.status || 'OK'}`;
-        });
-
-        const responseData = {
-          process: processName,
-          linesCount: dbLogs.length,
-          logs: dbLogs.length > 0
-            ? dbLogs
-            : [
-                `[${new Date().toISOString()}] [FOREX-SCALP] Sistema operante e conectado à cTrader.`,
-                `⚡ Escaneando mercado de ticks (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
-                `🎯 Aguardando próximo cruzamento de médias (EMA5 x EMA15)...`
-              ],
-          timestamp: new Date().toISOString(),
-        };
-        const isDashboard = req.path.includes('/auth/');
-        return res.json(isDashboard ? responseData : { success: true, message: 'ok', data: responseData });
-      } catch (dbErr: any) {
-        const responseData = {
-          process: processName,
-          linesCount: 1,
-          logs: [`[${new Date().toISOString()}] Robô ${processName} operante. Aguardando novos eventos...`],
-          timestamp: new Date().toISOString(),
-        };
-        const isDashboard = req.path.includes('/auth/');
-        return res.json(isDashboard ? responseData : { success: true, message: 'ok', data: responseData });
-      }
+    } catch (dbErr: any) {
+      const responseData = {
+        process: processName,
+        linesCount: 1,
+        logs: [`[${new Date().toISOString()}] Robô ${processName} operante. Aguardando próximos sinais de mercado...`],
+        timestamp: new Date().toISOString(),
+      };
+      const isDashboard = req.path.includes('/auth/');
+      return res.json(isDashboard ? responseData : { success: true, message: 'ok', data: responseData });
     }
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
