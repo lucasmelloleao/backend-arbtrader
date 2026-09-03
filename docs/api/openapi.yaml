@@ -839,7 +839,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
   /forex-arb/strategies:
     get:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Lista as estratégias de arbitragem Forex
       operationId: getForexStrategies
       security:
@@ -856,7 +856,7 @@ paths:
         "401":
           description: Não autenticado
     post:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Cria uma nova estratégia Forex
       operationId: createForexStrategy
       security:
@@ -877,7 +877,7 @@ paths:
         "401":
           description: Não autenticado
     delete:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Remove uma estratégia Forex
       operationId: deleteForexStrategy
       security:
@@ -895,7 +895,7 @@ paths:
           description: Não autenticado
   /forex-arb/trades:
     get:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Lista o histórico de trades de arbitragem Forex
       operationId: getForexTrades
       security:
@@ -913,7 +913,7 @@ paths:
           description: Não autenticado
   /forex-arb/opportunities:
     get:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Lista as oportunidades detectadas de arbitragem Forex
       operationId: getForexOpportunities
       security:
@@ -931,7 +931,7 @@ paths:
           description: Não autenticado
   /forex-arb/settings:
     get:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Retorna as configurações de arbitragem Forex
       operationId: getForexSettings
       security:
@@ -946,7 +946,7 @@ paths:
         "401":
           description: Não autenticado
     post:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Atualiza as configurações de arbitragem Forex
       operationId: updateForexSettings
       security:
