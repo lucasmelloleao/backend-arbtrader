@@ -111,8 +111,37 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
-// Controle de posições abertas por símbolo: symbol -> { positionId, side, entryPrice, amount, entryTime, peakPnlPct }
-const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; entryTime: number; peakPnlPct: number }>();
+// Controle de posições abertas por símbolo: symbol -> { positionId, side, entryPrice, amount, volumeProtocol, entryTime, peakPnlPct }
+const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; volumeProtocol: number; entryTime: number; peakPnlPct: number }>();
+
+export function decidePositionClose(input: {
+  positionId?: string;
+  volumeProtocol?: number;
+  amount?: number;
+  side?: 'BUY' | 'SELL' | 'buy' | 'sell';
+  symbol?: string;
+}) {
+  const normalizedPositionId = input.positionId ? String(input.positionId).trim() : '';
+  const hasRealPositionId = Boolean(normalizedPositionId) && !normalizedPositionId.startsWith('pos_');
+  const volumeProtocol = Number(input.volumeProtocol ?? 0);
+
+  if (hasRealPositionId && Number.isFinite(volumeProtocol) && volumeProtocol > 0) {
+    return {
+      usePositionClose: true,
+      mode: 'position-close' as const,
+      volumeProtocol,
+      closeSide: undefined as string | undefined,
+    };
+  }
+
+  const closeSide = input.side && (input.side === 'BUY' || input.side === 'buy') ? 'sell' : 'buy';
+  return {
+    usePositionClose: false,
+    mode: 'market-order' as const,
+    volumeProtocol: 0,
+    closeSide,
+  };
+}
 
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
@@ -153,11 +182,13 @@ async function startScalper() {
                 const amount = Number(pos.tradeData?.volume || 0) / 100;
 
                 if (!activePositions.has(sym)) {
+                  const volumeProtocol = Number(pos.tradeData?.volume || 0);
                   activePositions.set(sym, {
                     positionId: posId,
                     side,
                     entryPrice,
                     amount: amount > 0 ? amount : tradeSize,
+                    volumeProtocol: volumeProtocol > 0 ? volumeProtocol : 100,
                     entryTime: Date.now(),
                     peakPnlPct: 0,
                   });
@@ -214,11 +245,24 @@ async function startScalper() {
                           ? `Stop Loss atingido (${pnlPct.toFixed(3)}%)`
                           : `Reversão de sinal para ${signal.action}`;
 
-                    const closeSide = activePos.side === 'BUY' ? 'sell' : 'buy';
-                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
+                    const closeDecision = decidePositionClose({
+                      positionId: activePos.positionId,
+                      volumeProtocol: activePos.volumeProtocol,
+                      amount: activePos.amount,
+                      side: activePos.side,
+                      symbol: sym,
+                    });
+                    const closeSide = closeDecision.closeSide ?? (activePos.side === 'BUY' ? 'sell' : 'buy');
+                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar} | Modo: ${closeDecision.mode}`);
 
                     try {
-                      const closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
+                      let closeRes;
+                      if (closeDecision.usePositionClose && activePos.positionId) {
+                        closeRes = await adapter.closePosition(activePos.positionId, closeDecision.volumeProtocol);
+                      } else {
+                        closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
+                      }
+
                       const pnlEst = (pnlPct / 100) * activePos.amount;
                       activePositions.delete(sym);
                       log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
@@ -275,11 +319,17 @@ async function startScalper() {
                   try {
                     const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
                     const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
+                    const market = (adapter as any).marketsBySymbol.get(sym);
+                    const volumeProtocol = market
+                      ? Math.max(1, Math.round((tradeSize / (market.lotSize || 100000)) * 100))
+                      : 1;
+
                     activePositions.set(sym, {
                       positionId: String(posIdNew),
                       side: signal.action,
                       entryPrice: midPrice,
                       amount: tradeSize,
+                      volumeProtocol,
                       entryTime: Date.now(),
                       peakPnlPct: 0,
                     });
