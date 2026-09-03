@@ -130,14 +130,21 @@ async function startScalpScanner() {
                 log.info(`📊 [SCALP TICK] ${sym}: Bid=${ticker.bid.toFixed(5)} Ask=${ticker.ask.toFixed(5)} Mid=${midPrice.toFixed(5)} | Status: ${signal.reason}`);
 
                 if (signal.action !== 'NEUTRAL') {
-                  // Trava de 1 posição ativa por par (Verifica se já existe estratégia aberta no banco de dados)
+                  // Trava de 1 posição ativa por par (Verifica se já existe estratégia aberta OU oportunidade pendente no banco de dados)
                   const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                     userId: settings.userId,
                     name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
                     positionOpen: true
                   });
 
-                  if (!temPosicaoAbertaNoBanco) {
+                  const temOportunidadePendente = await ForexArbTrade.exists({
+                    userId: settings.userId,
+                    type: 'opportunity_found',
+                    status: 'detected',
+                    'legs.symbol': sym
+                  });
+
+                  if (!temPosicaoAbertaNoBanco && !temOportunidadePendente) {
                     log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                     const side = signal.action === 'BUY' ? 'buy' : 'sell';
 

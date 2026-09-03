@@ -95,8 +95,14 @@ async function startScalpExecutor() {
               const sym = leg.symbol;
               const side = leg.side as 'buy' | 'sell';
 
-              // Garante que não existe posição ativa para este par antes de abrir
-              if (!activePositions.has(sym)) {
+              // Garante que não existe posição ativa para este par (verificando memória + banco) antes de abrir
+              const temPosicaoNoBanco = await ForexArbStrategy.exists({
+                userId: settings.userId,
+                name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
+                positionOpen: true
+              });
+
+              if (!activePositions.has(sym) && !temPosicaoNoBanco) {
                 log.info(`🚀 [ORDEM ABERTA PELO ROBÔ 2] Executando sinal para ${sym} (${side.toUpperCase()})...`);
                 try {
                   const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
