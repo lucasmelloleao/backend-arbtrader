@@ -83,21 +83,27 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   const emaSlow = calculateEMA(prices, 15);
   const rsi = calculateRSI(prices, 14);
 
-  // Scalping Strategy logic:
-  // COMPRA: EMA Fast cruza acima de EMA Slow e RSI < 65
-  // VENDA: EMA Fast cruza abaixo de EMA Slow e RSI > 35
-  if (emaFast > emaSlow && rsi < 65) {
+  const prevEmaFast = calculateEMA(prices.slice(0, -1), 5);
+  const prevEmaSlow = calculateEMA(prices.slice(0, -1), 15);
+
+  // Exige CRUZAMENTO REAL (crossover no último tick):
+  // COMPRA: No tick anterior EMA5 <= EMA15, e no tick atual EMA5 > EMA15 com RSI < 65
+  // VENDA: No tick anterior EMA5 >= EMA15, e no tick atual EMA5 < EMA15 com RSI > 35
+  const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
+  const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
+
+  if (crossoverBuy && rsi < 65) {
     return {
       symbol,
       action: 'BUY',
-      reason: `EMA5 (${emaFast.toFixed(5)}) > EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) < 65`,
+      reason: `Cruzamento de Alta! EMA5 (${emaFast.toFixed(5)}) cruzou acima de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) < 65`,
       price: currentPrice
     };
-  } else if (emaFast < emaSlow && rsi > 35) {
+  } else if (crossoverSell && rsi > 35) {
     return {
       symbol,
       action: 'SELL',
-      reason: `EMA5 (${emaFast.toFixed(5)}) < EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) > 35`,
+      reason: `Cruzamento de Baixa! EMA5 (${emaFast.toFixed(5)}) cruzou abaixo de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) > 35`,
       price: currentPrice
     };
   }
