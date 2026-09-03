@@ -328,7 +328,9 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
 
     // Tenta executar o fechamento real na cTrader se houver orderId de posição
     const posId = strategy.legs && strategy.legs[0]?.orderId;
-    if (posId && !posId.startsWith('pos_')) {
+    const symStrategy = strategy.legs && strategy.legs[0]?.symbol;
+
+    if (posId || symStrategy) {
       try {
         const keys = await ExchangeKey.find({ userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
@@ -340,15 +342,21 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
           const accountId = Number((ctraderKey as any).accountId);
           const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
           if (rec && rec.position) {
-            const p = rec.position.find((x: any) => String(x.positionId) === String(posId));
+            // Busca a posição pelo positionId exato OU pelo símbolo correspondente se a ordem foi aberta anteriormente
+            const p = rec.position.find((x: any) => {
+              const m = adapter.marketsById.get(String(x.tradeData?.symbolId));
+              return String(x.positionId) === String(posId) || (symStrategy && m?.symbol === symStrategy);
+            });
             if (p) {
+              const realPosId = String(p.positionId);
               const volProto = Number(p.tradeData?.volume || 100);
-              await adapter.closePosition(String(posId), volProto);
+              console.log(`📤 [MANUAL CLOSE FRONTEND] Encerrando posição #${realPosId} na cTrader (volume: ${volProto})...`);
+              await adapter.closePosition(realPosId, volProto);
             }
           }
         }
       } catch (ctraderErr: any) {
-        console.warn(`⚠️ Erro ao fechar posição #${posId} na cTrader via API:`, ctraderErr.message);
+        console.warn(`⚠️ Erro ao fechar posição na cTrader via API:`, ctraderErr.message);
       }
     }
 
