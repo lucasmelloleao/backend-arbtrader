@@ -26,6 +26,7 @@ module.exports = {
       max_restarts: 10,
       kill_timeout: 8000,
     },
+    /* Desativado temporariamente em favor do forex-scalper
     {
       name: "forex-arb",
       script: "dist/strategy/forex/forex-arb.js",
@@ -44,6 +45,7 @@ module.exports = {
       restart_delay: 10000,
       kill_timeout: 8000,
     },
+    */
     {
       name: "prediction-arb",
       script: "dist/strategy/prediction-arb/prediction-arb.js",
@@ -52,6 +54,16 @@ module.exports = {
       max_restarts: 10,
       max_memory_restart: "500M",
       restart_delay: 10000,
+      kill_timeout: 8000,
+    },
+    {
+      name: "forex-scalper",
+      script: "dist/strategy/forex/forex-scalper.js",
+      node_args: "--expose-gc --max-old-space-size=300",
+      autorestart: true,
+      max_restarts: 15,
+      max_memory_restart: "400M",
+      restart_delay: 5000,
       kill_timeout: 8000,
     }
   ]

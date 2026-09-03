@@ -72,6 +72,9 @@ async function main() {
   // Trailing stop em memória: strategyId -> pico de retorno (%)
   const peakProfitMap = new Map<string, number>();
 
+  log.info('⚠️ [FOREX-ARB] Estratégia de arbitragem temporariamente desativada em favor do Scalper.');
+  return;
+
   while (true) {
     try {
       log.info('🔁 [FOREX-ARB] Iniciando ciclo...');
@@ -137,7 +140,7 @@ async function main() {
                     let realPnl = 0;
                     for (const leg of strat.legs || []) {
                       const pos = positionsPnl.get(leg.symbol);
-                      if (pos) realPnl += pos.netPnl;
+                      if (pos && typeof pos.netPnl === 'number') realPnl += pos.netPnl;
                     }
                     if (realPnl !== 0 && positionSize > 0) {
                       currentProfitPct = (realPnl / positionSize) * 100;
