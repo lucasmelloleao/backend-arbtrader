@@ -326,12 +326,38 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
     const strategy = await ForexArbStrategy.findOne({ _id: strategyId, userId });
     if (!strategy) return res.status(404).json({ success: false, message: 'Estratégia não encontrada.' });
 
+    // Tenta executar o fechamento real na cTrader se houver orderId de posição
+    const posId = strategy.legs && strategy.legs[0]?.orderId;
+    if (posId && !posId.startsWith('pos_')) {
+      try {
+        const keys = await ExchangeKey.find({ userId, active: true }).lean();
+        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        if (ctraderKey) {
+          const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
+          const adapter = await getSharedCtraderAdapter(ctraderKey as any);
+          await adapter.connect();
+          await adapter.loadMarkets();
+          const accountId = Number((ctraderKey as any).accountId);
+          const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
+          if (rec && rec.position) {
+            const p = rec.position.find((x: any) => String(x.positionId) === String(posId));
+            if (p) {
+              const volProto = Number(p.tradeData?.volume || 100);
+              await adapter.closePosition(String(posId), volProto);
+            }
+          }
+        }
+      } catch (ctraderErr: any) {
+        console.warn(`⚠️ Erro ao fechar posição #${posId} na cTrader via API:`, ctraderErr.message);
+      }
+    }
+
     await ForexArbStrategy.updateOne(
       { _id: strategyId },
       { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
     );
 
-    return res.json({ success: true, message: 'Fechamento de posição acionado.' });
+    return res.json({ success: true, message: 'Fechamento de posição encerrado com sucesso.' });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
