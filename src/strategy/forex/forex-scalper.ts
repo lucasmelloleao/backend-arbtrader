@@ -153,16 +153,18 @@ async function startScalper() {
                 if (!activePositions.has(posId)) {
                   const side = pos.tradeData?.tradeSide === 1 ? 'BUY' : 'SELL';
                   const entryPrice = Number(pos.price || 0);
-                  const amount = (Number(pos.tradeData?.volume || 0) / 100) * (market?.lotSize || 100);
+                  // Na ProtoOA da cTrader: volume é em 1/100 de unidade base (ex: 100000 unidades = volume 10000000 no ProtoOA).
+                  // Dividindo por 100 obtemos as unidades base reais (ex: 100.000 unidades / $100 trade size).
+                  const amount = Number(pos.tradeData?.volume || 0) / 100;
                   activePositions.set(posId, {
                     symbol: sym,
                     side,
                     entryPrice,
-                    amount,
+                    amount: amount > 0 ? amount : tradeSize,
                     entryTime: Date.now(),
                     peakPnlPct: 0,
                   });
-                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader: ${sym} ${side}`);
+                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader: ${sym} ${side} (amount: ${amount})`);
                 }
               }
             }
