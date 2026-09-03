@@ -181,18 +181,36 @@ async function startScalpExecutor() {
                 const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
                 const atingiuTrailing = activePos.peakPnlPct >= 0.10 && (activePos.peakPnlPct - pnlPct) >= 0.05; // Trailing stop
 
-                if (atingiuTP || atingiuSL || atingiuTrailing) {
+                // Verifica se há sinal de reversão gerado pelo scanner
+                const pendingOppReversao = await ForexArbTrade.findOne({
+                  userId: settings.userId,
+                  type: 'opportunity_found',
+                  status: 'detected',
+                  'legs.symbol': sym
+                });
+                const reversaoSinal = pendingOppReversao && pendingOppReversao.legs && pendingOppReversao.legs[0]?.side.toUpperCase() !== activePos.side;
+
+                if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
                   const motivoFechar = atingiuTrailing
                     ? `Trailing Stop acionado (Pico: +${activePos.peakPnlPct.toFixed(3)}%, Atual: +${pnlPct.toFixed(3)}%)`
                     : atingiuTP
                       ? `Take Profit atingido (+${pnlPct.toFixed(3)}%)`
-                      : `Stop Loss atingido (${pnlPct.toFixed(3)}%)`;
+                      : atingiuSL
+                        ? `Stop Loss atingido (${pnlPct.toFixed(3)}%)`
+                        : `Reversão de sinal detectada no mercado`;
 
                   const closeSide = activePos.side === 'BUY' ? 'sell' : 'buy';
-                  log.info(`🔄 [AUTO-SCALPER EXECUTOR CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
+                  log.info(`🔄 [AUTO-SCALPER EXECUTOR CLOSE] Encerrando posição #${activePos.positionId || 'indefinida'} de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
 
                   try {
-                    const closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
+                    let closeRes;
+                    if (activePos.positionId && !activePos.positionId.startsWith('pos_')) {
+                      // Usa fechamento oficial de posição por ProtoOAClosePositionReq da cTrader
+                      closeRes = await adapter.closePosition(activePos.positionId, activePos.amount * 100);
+                    } else {
+                      closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
+                    }
+
                     const pnlEst = (pnlPct / 100) * activePos.amount;
                     activePositions.delete(sym);
                     log.info(`✅ [POSIÇÃO ENCERRADA PELO ROBÔ 2] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
