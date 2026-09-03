@@ -262,7 +262,14 @@ async function startScalper() {
                 }
 
                 // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÕES ABERTAS PARA O SÍMBOLO ---
-                if (symbolPositions.length === 0 && signal.action !== 'NEUTRAL') {
+                // Trava estrita de 1 posição ativa por par (Verifica memória + Mongo DB):
+                const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
+                  userId: settings.userId,
+                  name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
+                  positionOpen: true
+                });
+
+                if (symbolPositions.length === 0 && !temPosicaoAbertaNoBanco && signal.action !== 'NEUTRAL') {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                   const side = signal.action === 'BUY' ? 'buy' : 'sell';
                   log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${tradeSize} unidades)...`);
