@@ -98,7 +98,8 @@ async function startScalpExecutor() {
                 log.info(`🚀 [ORDEM ABERTA PELO ROBÔ 2] Executando sinal para ${sym} (${side.toUpperCase()})...`);
                 try {
                   const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
-                  const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
+                  const posIdReal = orderRes?.positionId ? String(orderRes.positionId) : null;
+                  const posIdNew = posIdReal || orderRes?.id || `pos_${Date.now()}`;
                   const entryPrice = orderRes?.price || leg.price || 0;
 
                   activePositions.set(sym, {
@@ -114,14 +115,14 @@ async function startScalpExecutor() {
                   pendingOpp.status = 'executed';
                   await pendingOpp.save();
 
-                  // Persiste a nova estratégia ativa no MongoDB
+                  // Persiste a nova estratégia ativa no MongoDB com o positionId oficial da cTrader
                   const stratDoc = await ForexArbStrategy.create({
                     userId: settings.userId,
                     exchangeKeyId: ctraderKey._id,
                     name: `Scalping ${sym} (${side.toUpperCase()})`,
                     exchangeId: 'ctrader',
                     type: 'simple',
-                    legs: [{ symbol: sym, side, price: entryPrice, amount: tradeSize, orderId: orderRes?.id }],
+                    legs: [{ symbol: sym, side, price: entryPrice, amount: tradeSize, orderId: String(posIdNew) }],
                     tradeSize,
                     positionOpen: true,
                     positionOpenedAt: new Date(),
