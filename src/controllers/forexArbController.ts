@@ -12,7 +12,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const strategies = await ForexArbStrategy.find({ userId }).sort({ createdAt: -1 });
+    // Retorna apenas estratégias com posição atualmente aberta (positionOpen: true)
+    const strategies = await ForexArbStrategy.find({ userId, positionOpen: true }).sort({ createdAt: -1 });
     const formatted = strategies.map((s: any) => ({
       _id: s._id.toString(),
       id: s._id.toString(),
