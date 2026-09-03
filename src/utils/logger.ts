@@ -7,14 +7,6 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // Create pino logger with structured format
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
-  transport: {
-    target: 'pino-pretty',
-    options: {
-      translateTime: true,
-      colorize: true,
-    },
-  },
-  // Structured JSON output in production, pretty in development
   base: undefined,
 });
 

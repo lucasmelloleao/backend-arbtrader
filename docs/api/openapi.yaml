@@ -31,8 +31,8 @@ tags:
     description: Resumo patrimonial, evolução e posições ao vivo
   - name: PerpArb
     description: Estratégias e operações de arbitragem perpétuo vs spot (Funding Arb)
-  - name: ForexArb
-    description: Estratégias, oportunidades e operações de arbitragem Forex (simples e triangular)
+  - name: ForexScalping
+    description: Estratégias, sinais e operações de Scalping Forex (RSI, EMA, cTrader)
   - name: PredictionArb
     description: Arbitragem estrutural + market making em prediction markets (Polymarket)
   - name: Usuarios

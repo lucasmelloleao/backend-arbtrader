@@ -67,4 +67,15 @@ app.get('/readyz', (req, res) => {
   res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not-ready', database: ready ? 'connected' : 'disconnected' });
 });
 
-// ... rest of the file
+// Start database connection then start listening
+(async () => {
+  try {
+    await connectToDatabase();
+    app.listen(PORT, () => {
+      console.log(`🚀 [auth-backend] Servidor rodando com sucesso na porta ${PORT}`);
+    });
+  } catch (err: any) {
+    console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
+    process.exit(1);
+  }
+})();

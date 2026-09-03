@@ -6,8 +6,6 @@
 // 2. O fetch é INTERCEPTADO globalmente: qualquer chamada a
 //    clob.polymarket.com é redirecionada para o proxy Vercel em Dublin
 //    (dub1), contornando o geoblock do servidor (Alemanha) para trading.
-import { createSecureClient, relayerApiKey } from '@polymarket/client';
-import { privateKey } from '@polymarket/client/viem';
 import { decryptSecretKey } from '../../../utils/encryption';
 import { updateCollateralBalance, resolveClobCredentials } from './clob-client';
 import { withRpcFailover } from './rpc-failover';
@@ -82,6 +80,8 @@ export async function getSecureClient(exchangeKeyDoc: ExchangeKeyDoc): Promise<a
     throw new Error('Deposit wallet não configurada ou inválida na ExchangeKey');
   }
 
+  const { createSecureClient, relayerApiKey } = await import('@polymarket/client');
+  const { privateKey } = await import('@polymarket/client/viem');
   const signer = privateKey(getPrivateKey(exchangeKeyDoc));
   const client = await createSecureClient({
     wallet: depositWallet,
