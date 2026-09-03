@@ -161,10 +161,6 @@ export async function getOnchainBalance(depositWallet?: string): Promise<number>
 const EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B';
 const NEG_RISK_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59';
 
-// Deposit wallet da wallet signer (deployada via relayer — o saldo/allowances
-// ficam nela). Ordens usam signatureType=3 (EIP-1271) com maker = deposit wallet.
-const DEPOSIT_WALLET = process.env.POLYMARKET_DEPOSIT_WALLET || '0x82d51169a7af29f26a276aaa303bc29b67f1c130';
-
 // Struct V2: remove taker/expiration/nonce/feeRateBps; adiciona timestamp/metadata/builder.
 const ORDER_TYPES = {
   Order: [
@@ -191,6 +187,7 @@ const log = {
 export interface ClobCredentials {
   address: string;
   privateKey: string;
+  depositWallet: string;
   apiCreds?: { key: string; secret: string; passphrase: string };
 }
 
@@ -268,6 +265,10 @@ export function resolveClobCredentials(exchangeKeyDoc: any): ClobCredentials {
   if (!address.startsWith('0x') || address.length !== 42) {
     throw new Error('ExchangeKey polymarket inválida: apiKey deve ser o endereço 0x... da wallet');
   }
+  const depositWallet = String(exchangeKeyDoc.depositWallet || '').toLowerCase();
+  if (!depositWallet.startsWith('0x') || depositWallet.length !== 42) {
+    throw new Error('ExchangeKey polymarket inválida: depositWallet não configurada ou inválida');
+  }
   let privateKey = String(exchangeKeyDoc.apiSecret || '');
   try {
     const aad = exchangeKeyDoc.userId ? `${exchangeKeyDoc.userId}-polymarket` : '';
@@ -279,7 +280,7 @@ export function resolveClobCredentials(exchangeKeyDoc: any): ClobCredentials {
   if (wallet.address.toLowerCase() !== address) {
     throw new Error(`ExchangeKey polymarket: endereço (${address}) não bate com a chave privada (${wallet.address})`);
   }
-  return { address, privateKey };
+  return { address, privateKey, depositWallet };
 }
 
 /** Gera o domínio EIP-712 do Exchange V2 (Polymarket CLOB). */
@@ -318,10 +319,11 @@ export async function signOrder(params: {
 
   // Deposit wallet: maker/signer = deposit wallet, signatureType=3 (EIP-1271).
   // A assinatura é feita pela EOA signer (owner da deposit wallet).
+  const depositWallet = credentials.depositWallet;
   const order = {
     salt,
-    maker: DEPOSIT_WALLET,
-    signer: DEPOSIT_WALLET,
+    maker: depositWallet,
+    signer: depositWallet,
     tokenId: BigInt(tokenId),
     makerAmount: BigInt(makerAmount),
     takerAmount: BigInt(takerAmount),
