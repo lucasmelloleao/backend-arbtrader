@@ -139,8 +139,8 @@ async function main() {
                     const positionsPnl = await adapter.getPositionsPnL();
                     let realPnl = 0;
                     for (const leg of strat.legs || []) {
-                      const pos = positionsPnl.get(leg.symbol);
-                      if (pos && typeof pos.netPnl === 'number') realPnl += pos.netPnl;
+                      const posItem: any = positionsPnl.get(leg.symbol);
+                      if (posItem && typeof posItem.netPnl === 'number') realPnl += posItem.netPnl;
                     }
                     if (realPnl !== 0 && positionSize > 0) {
                       currentProfitPct = (realPnl / positionSize) * 100;
