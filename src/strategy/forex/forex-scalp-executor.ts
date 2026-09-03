@@ -16,8 +16,8 @@ const log = {
   error: (...args: any[]) => console.error(getTs(), '[FOREX-SCALP-EXECUTOR]', ...args),
 };
 
-// Controle local das posições sob gestão: symbol -> { positionId, side, entryPrice, amount, entryTime, peakPnlPct }
-const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; entryTime: number; peakPnlPct: number }>();
+// Controle local das posições sob gestão: symbol -> { positionId, side, entryPrice, amount, volumeProtocol, entryTime, peakPnlPct }
+const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; volumeProtocol: number; entryTime: number; peakPnlPct: number }>();
 
 async function startScalpExecutor() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
@@ -56,7 +56,8 @@ async function startScalpExecutor() {
                 const posId = String(pos.positionId);
                 const side = pos.tradeData?.tradeSide === 1 ? 'BUY' : 'SELL';
                 const entryPrice = Number(pos.price || 0);
-                const amount = Number(pos.tradeData?.volume || 0) / 100;
+                const volProto = Number(pos.tradeData?.volume || 0);
+                const amount = volProto / 100;
 
                 if (!activePositions.has(sym)) {
                   activePositions.set(sym, {
@@ -64,10 +65,11 @@ async function startScalpExecutor() {
                     side,
                     entryPrice,
                     amount: amount > 0 ? amount : tradeSize,
+                    volumeProtocol: volProto > 0 ? volProto : 100,
                     entryTime: Date.now(),
                     peakPnlPct: 0,
                   });
-                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} sob gestão para ${sym} (${side})`);
+                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} sob gestão para ${sym} (${side}) | volumeProtocol: ${volProto}`);
                 }
               }
             }
@@ -101,12 +103,14 @@ async function startScalpExecutor() {
                   const posIdReal = orderRes?.positionId ? String(orderRes.positionId) : null;
                   const posIdNew = posIdReal || orderRes?.id || `pos_${Date.now()}`;
                   const entryPrice = orderRes?.price || leg.price || 0;
+                  const volProtoNew = orderRes?.amount ? Math.round(orderRes.amount) : 100;
 
                   activePositions.set(sym, {
                     positionId: String(posIdNew),
                     side: side.toUpperCase() as 'BUY' | 'SELL',
                     entryPrice,
                     amount: tradeSize,
+                    volumeProtocol: volProtoNew,
                     entryTime: Date.now(),
                     peakPnlPct: 0,
                   });
@@ -206,8 +210,9 @@ async function startScalpExecutor() {
                   try {
                     let closeRes;
                     if (activePos.positionId && !activePos.positionId.startsWith('pos_')) {
-                      // Usa fechamento oficial de posição por ProtoOAClosePositionReq da cTrader
-                      closeRes = await adapter.closePosition(activePos.positionId, activePos.amount * 100);
+                      // Usa fechamento oficial de posição por ProtoOAClosePositionReq da cTrader com o volumeProtocol exato da cTrader
+                      const volClose = activePos.volumeProtocol || 100;
+                      closeRes = await adapter.closePosition(activePos.positionId, volClose);
                     } else {
                       closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
                     }
