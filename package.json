@@ -15,6 +15,8 @@
     "bot:forex-arb": "ts-node-dev --transpile-only src/strategy/forex/forex-arb.ts",
     "bot:forex-scanner": "ts-node-dev --transpile-only src/strategy/forex/loop-scanner-robot.ts",
     "bot:forex-scalper": "ts-node-dev --transpile-only src/strategy/forex/forex-scalper.ts",
+    "bot:forex-scalp-scanner": "npx tsx src/strategy/forex/forex-scalp-scanner.ts",
+    "bot:forex-scalp-executor": "npx tsx src/strategy/forex/forex-scalp-executor.ts",
     "bot:all": "concurrently -n API,SCANNER,FUNDARB,FOREXARB,FOREXSCAN,FOREXSCALPER -c blue,green,yellow,magenta,cyan,red \"npm run dev\" \"npm run bot:scanner\" \"npm run bot:funding-arb\" \"npm run bot:forex-arb\" \"npm run bot:forex-scanner\" \"npm run bot:forex-scalper\"",
     "crypto-env": "npx tsx scripts/crypto-env.ts"
   },

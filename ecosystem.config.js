@@ -36,6 +36,22 @@ module.exports = {
       kill_timeout: 8000,
     },
     {
+      name: "forex-scalp-scanner",
+      script: "dist/strategy/forex/forex-scalp-scanner.js",
+      node_args: "--expose-gc --max-old-space-size=300",
+      max_memory_restart: "400M",
+      restart_delay: 5000,
+      kill_timeout: 8000,
+    },
+    {
+      name: "forex-scalp-executor",
+      script: "dist/strategy/forex/forex-scalp-executor.js",
+      node_args: "--expose-gc --max-old-space-size=300",
+      max_memory_restart: "400M",
+      restart_delay: 5000,
+      kill_timeout: 8000,
+    },
+    {
       name: "forex-scanner",
       script: "dist/strategy/forex/loop-scanner-robot.js",
       node_args: "--expose-gc --max-old-space-size=300",
