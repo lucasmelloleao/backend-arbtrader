@@ -24,7 +24,7 @@ export interface ScanConfig {
   marketCoins?: string[];
 }
 
-function toNum(v: any): number {
+function toNum(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
@@ -161,7 +161,7 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
 
 /** Cria estratégias para as oportunidades (ou atualiza preços das existentes). */
 export async function createStrategiesFromMarkets(
-  userId: any,
+  userId: string,
   opportunities: MarketOpportunity[],
   config: ScanConfig,
   exchangeKeyId?: string,
@@ -170,10 +170,10 @@ export async function createStrategiesFromMarkets(
   let created = 0;
   for (const opp of opportunities) {
     const m = opp.market;
-    const existing = await (PredictionArbStrategy as any).findOne({ userId, marketId: m.id }).lean();
+    const existing = await PredictionArbStrategy.findOne({ userId, marketId: m.id }).lean();
 
     if (existing) {
-      await (PredictionArbStrategy as any).findByIdAndUpdate(existing._id, {
+      await PredictionArbStrategy.findByIdAndUpdate(existing._id, {
         yesPrice: opp.yes,
         noPrice: opp.no,
         spreadPct: opp.spreadPct,
@@ -185,7 +185,7 @@ export async function createStrategiesFromMarkets(
       continue;
     }
 
-    await (PredictionArbStrategy as any).create({
+    await PredictionArbStrategy.create({
       userId,
       exchangeKeyId: exchangeKeyId || null,
       marketId: m.id,
@@ -284,8 +284,8 @@ export async function runScan(userId: any, config: ScanConfig, autoExecute = fal
 }
 
 /** Resolve a ExchangeKey polymarket ativa do usuário (para trading). */
-export async function resolvePolymarketKey(userId: any): Promise<any | null> {
-  const key = await (ExchangeKey as any).findOne({ userId, exchangeId: 'polymarket', active: true }).lean();
+export async function resolvePolymarketKey(userId: string): Promise<ExchangeKey | null> {
+  const key = await ExchangeKey.findOne({ userId, exchangeId: 'polymarket', active: true }).lean();
   return key || null;
 }
 

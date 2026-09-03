@@ -40,6 +40,7 @@ const ExchangeKeySchema = new mongoose.Schema({
   // Credenciais adicionais para trading automatizado:
   relayerApiKey: { type: String },          // Relayer API key (UUID) — deploy wallet + transações gasless
   relayerApiKeyAddress: { type: String },   // Signer address da relayer key
+  relayerBaseUrl: { type: String },         // Base URL do relayer proxy (Vercel/self-hosted)
   depositWallet: { type: String },          // Endereço da deposit wallet (proxy) — onde ficam pUSD/tokens
   clobApiKey: { type: String },             // Credencial L2 do CLOB (criada via derive)
   clobSecret: { type: String },             // Credencial L2 do CLOB (criptografada)

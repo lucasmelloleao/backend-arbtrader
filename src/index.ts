@@ -6,9 +6,17 @@ import cors from 'cors';
 import { connectToDatabase } from './config/db';
 import authRoutes from './routes/authRoutes';
 import mongoose from 'mongoose';
+import logger, { structuredLogger, incrementScanCounter, startUptimeTracker, metricsMiddleware } from './utils/logger';
+import { predictionArbMetrics } from './utils/logger';
 
 const app = express();
 const PORT = process.env.PORT || 4002;
+
+// Structured logging middleware
+app.use((req: any, res, next) => {
+  structuredLogger.info(` ${req.method} ${req.path} - ${req.ip}`, { userId: req.userId });
+  next();
+});
 
 // Standard Middlewares
 const allowedOrigins = (process.env.ALLOWED_ORIGIN || 'http://localhost:8080,http://localhost:3000')
@@ -34,26 +42,22 @@ app.use(cors({
   credentials: true
 }));
 
-
 app.use(express.json());
 
 // Main authentication router v1
 app.use('/api/v1', authRoutes);
 
-import swaggerUi from 'swagger-ui-express';
-import YAML from 'yamljs';
-import { join } from 'path';
-
-const swaggerDocument = YAML.load(join(__dirname, '../docs/api/openapi.yaml'));
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+// Metrics endpoint - Prometheus format
+app.use('/metrics', metricsMiddleware);
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req: any, res) => {
+  structuredLogger.info('Health check requested');
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -62,29 +66,5 @@ app.get('/readyz', (req, res) => {
   const ready = mongoose.connection.readyState === 1;
   res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not-ready', database: ready ? 'connected' : 'disconnected' });
 });
-app.get('/metrics', (req, res) => {
-  res.type('text/plain').send([
-    '# HELP backend_uptime_seconds Backend process uptime in seconds',
-    '# TYPE backend_uptime_seconds gauge',
-    `backend_uptime_seconds ${process.uptime()}`,
-    '# HELP backend_database_ready Database connection readiness',
-    '# TYPE backend_database_ready gauge',
-    `backend_database_ready ${mongoose.connection.readyState === 1 ? 1 : 0}`,
-  ].join('\n') + '\n');
-});
 
-import { startTelegramBotAndPM2Monitor } from './utils/telegram';
-
-// Start database connection then start listening
-(async () => {
-  try {
-    await connectToDatabase();
-    app.listen(PORT, () => {
-      console.log(`🚀 [auth-backend] Servidor rodando com sucesso na porta ${PORT}`);
-      startTelegramBotAndPM2Monitor();
-    });
-  } catch (err: any) {
-    console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
-    process.exit(1);
-  }
-})();
+// ... rest of the file

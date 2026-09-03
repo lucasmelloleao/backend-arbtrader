@@ -20,7 +20,19 @@ function getProxyBase(): string {
 }
 
 // Cache de clients por endereço.
-const clients = new Map<string, any>();
+const clients = new Map<string, ReturnType<typeof createSecureClient>>();
+
+/** Interface para o documento ExchangeKeyPolymarket. */
+export interface ExchangeKeyDoc {
+  _id: any;
+  userId: string;
+  apiKey: string;
+  apiSecret: string;
+  relayerApiKey?: string;
+  relayerApiKeyAddress?: string;
+  depositWallet: string;
+  active?: boolean;
+}
 
 /** Instala o intercept global que redireciona clob.polymarket.com → proxy. */
 let interceptInstalled = false;
@@ -28,25 +40,25 @@ function installProxyIntercept(): void {
   if (interceptInstalled) return;
   interceptInstalled = true;
   const origFetch = global.fetch;
-  (global as any).fetch = async (url: any, opts: any) => {
+  (global as any).fetch = async (url: RequestInfo | Request, opts: RequestInit) => {
     let target = url;
     if (typeof url === 'string' && url.startsWith('https://clob.polymarket.com')) {
       target = getProxyBase() + url.slice('https://clob.polymarket.com'.length);
-    } else if (url && typeof url === 'object' && String((url as any).url || '').startsWith('https://clob.polymarket.com')) {
-      const u = new URL((url as any).url);
+    } else if (url && typeof url === 'object' && String((url as Request).url || '').startsWith('https://clob.polymarket.com')) {
+      const u = new URL(String((url as Request).url));
       target = new Request(getProxyBase() + u.pathname + u.search, {
-        method: (url as any).method,
-        headers: (url as any).headers,
-        body: (url as any).body,
+        method: (url as Request).method,
+        headers: (url as Request).headers,
+        body: (url as Request).body,
         duplex: 'half',
-      } as any);
+      });
     }
     return origFetch(target, opts);
   };
 }
 
 /** Descriptografa a private key da ExchangeKey. */
-function getPrivateKey(doc: any): string {
+function getPrivateKey(doc: ExchangeKeyDoc): string {
   let pk = String(doc.apiSecret || '');
   try {
     const aad = doc.userId ? `${doc.userId}-polymarket` : '';
@@ -56,7 +68,7 @@ function getPrivateKey(doc: any): string {
 }
 
 /** Cria (ou reutiliza) o secure client da SDK para a wallet EOA + deposit wallet. */
-export async function getSecureClient(exchangeKeyDoc: any): Promise<any> {
+export async function getSecureClient(exchangeKeyDoc: ExchangeKeyDoc): Promise<any> {
   installProxyIntercept();
   const address = String(exchangeKeyDoc.apiKey || '').toLowerCase();
   const cached = clients.get(address);
@@ -215,7 +227,7 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
     const posRes = await fetch(`https://data-api.polymarket.com/positions?user=${dw}&limit=100`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
     if (posRes?.ok) {
       const poss = await posRes.json();
-      const pos = (Array.isArray(poss) ? poss : []).find((p: any) => p.conditionId === conditionId);
+      const pos = (Array.isArray(poss) ? poss : []).find((p: { conditionId: string; asset?: string }) => p.conditionId === conditionId);
       if (pos?.asset) {
         const nr = await fetch(`https://clob.polymarket.com/neg-risk?token_id=${pos.asset}`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
         if (nr?.ok) {

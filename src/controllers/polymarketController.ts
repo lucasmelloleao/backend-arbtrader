@@ -172,8 +172,8 @@ export async function deployDepositWallet(req: AuthenticatedRequest, res: Respon
 
     const eoa = String(key.apiKey || '').trim();
     const FACTORY = '0x00000000000Fb5C9ADea0298D729A0CB3823Cc07';
-    const RELAYER = getRelayerBaseUrl();
-    if (!RELAYER) return err(res, 500, 'POLYMARKET_RELAYER_BASE não configurada.', isDashboard(req));
+    const RELAYER = String(key.relayerBaseUrl || process.env.POLYMARKET_RELAYER_BASE || '').trim();
+    if (!RELAYER) return err(res, 500, 'Relayer base URL não configurada (ExchangeKey ou POLYMARKET_RELAYER_BASE).', isDashboard(req));
 
     // 1. Verifica se já existe (params retorna nonce; se wallet existe, o create falha)
     // 2. Envia WALLET-CREATE

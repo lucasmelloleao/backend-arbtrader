@@ -174,8 +174,12 @@ export async function runMarketMaking(
     log.info(`🧺 [${strategy.slug}] Par completo: ${yesShares} YES + ${noShares} NO. Segurando até vencimento.`);
     // Cancela ordens abertas (não quer mais acumular)
     for (const oid of strategy.openOrderIds || []) {
-      if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
-      else await cancelOrder(credentials, oid).catch(() => {});
+      try {
+        if (useSdk) await cancelOrderViaSdk(keyDoc, oid);
+        else await cancelOrder(credentials, oid);
+      } catch (e: any) {
+        log.warn(`⚠️ falha ao cancelar ordem ${oid}: ${e.message}`);
+      }
     }
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
       openOrderIds: [],
@@ -253,10 +257,14 @@ export async function runMarketMaking(
         log.warn(`⚠️ [${strategy.slug}] Falha ao vender excesso: ${e.message}`);
       }
       // Cancela ordens do outro lado e marca como fechada (sem posição útil)
-      for (const oid of strategy.openOrderIds || []) {
-        if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
-        else await cancelOrder(credentials, oid).catch(() => {});
+for (const oid of strategy.openOrderIds || []) {
+      try {
+        if (useSdk) await cancelOrderViaSdk(keyDoc, oid);
+        else await cancelOrder(credentials, oid);
+      } catch (e: any) {
+        log.warn(`⚠️ falha ao cancelar ordem ${oid}: ${e.message}`);
       }
+    }
       await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
         openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
       });
@@ -423,8 +431,12 @@ export async function runMarketMaking(
   //     ordens parciais e libera o capital travado em ordens GTC que não
   //     preencheram — sem isso a checagem de saldo trava tudo).
   for (const oid of strategy.openOrderIds || []) {
-    if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
-    else await cancelOrder(credentials, oid).catch(() => {});
+    try {
+      if (useSdk) await cancelOrderViaSdk(keyDoc, oid);
+      else await cancelOrder(credentials, oid);
+    } catch (e: any) {
+      log.warn(`⚠️ falha ao cancelar ordem ${oid}: ${e.message}`);
+    }
   }
   // Após cancelar, limpa o registro local (o passo 7 grava as novas)
   if ((strategy.openOrderIds || []).length > 0) {

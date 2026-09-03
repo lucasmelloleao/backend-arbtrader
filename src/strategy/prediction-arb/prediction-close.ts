@@ -166,7 +166,9 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
           amount: Number(feeVendaEstimada.toFixed(4)),
           pnl: Number((-feeVendaEstimada).toFixed(4)),
           reason: `Taker fee estimada da venda (${TAKER_FEE_RATE * 100}% sobre prêmio)`,
-        }).catch(() => {});
+        }).catch(() => {
+        log.warn(`⚠️ falha ao criar trade de fee para ${strat.slug}`);
+      });
       }
 
       await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
@@ -184,8 +186,12 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
     }
 
     for (const id of orderIds) {
-      if (useSdk) await cancelOrderViaSdk(keyDoc, id).catch(() => {});
-      else await cancelOrder(credentials, id).catch(() => {});
+      try {
+        if (useSdk) await cancelOrderViaSdk(keyDoc, id);
+        else await cancelOrder(credentials, id);
+      } catch (e: any) {
+        log.warn(`⚠️ falha ao cancelar ordem ${id}: ${e.message}`);
+      }
     }
     trade.status = 'failed';
     trade.errorMessage = `Fechamento parcial: restam YES=${remainingYes} NO=${remainingNo}`;

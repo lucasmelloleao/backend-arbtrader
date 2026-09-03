@@ -77,14 +77,16 @@ export const PREDICTION_ARB_CONFIG = {
 
   // RPC Failover
   rpc: {
-    primary: process.env.POLYGON_RPC_PRIMARY,
-    secondary: process.env.POLYGON_RPC_SECONDARY,
-    tertiary: process.env.POLYGON_RPC_TERTIARY,
+    primary: process.env.POLYGON_RPC_PRIMARY || 'https://polygon-rpc.com',
+    secondary: process.env.POLYGON_RPC_SECONDARY || 'https://rpc.ankr.com/polygon',
+    tertiary: process.env.POLYGON_RPC_TERTIARY || 'https://polygon.llamarpc.com',
     publicEndpoints: [
       'https://polygon-bor-rpc.publicnode.com',
+      'https://alchemy.com/v2/demo',
       'https://polygon-rpc.com',
       'https://rpc.ankr.com/polygon',
       'https://polygon.llamarpc.com',
+      'https://quicknode.com/v2/demo',
     ],
     timeoutMs: 15_000,
   },

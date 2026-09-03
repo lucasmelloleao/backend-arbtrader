@@ -10,9 +10,11 @@ const RPC_ENDPOINTS = [
   process.env.POLYGON_RPC_SECONDARY,
   process.env.POLYGON_RPC_TERTIARY,
   'https://polygon-bor-rpc.publicnode.com',
+  'https://alchemy.com/v2/demo',
   'https://polygon-rpc.com',
   'https://rpc.ankr.com/polygon',
   'https://polygon.llamarpc.com',
+  'https://quicknode.com/v2/demo',
 ].filter(Boolean) as string[];
 
 const log = {

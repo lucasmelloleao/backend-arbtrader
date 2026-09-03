@@ -362,7 +362,12 @@ export async function placeOrder(
   // Sincroniza saldo/allowance com o CLOB antes da ordem: sem isso a CLOB usa
   // o saldo stale (ex: $0.02) e rejeita com "not enough balance / allowance"
   // mesmo com pUSD depositado na wallet (o update registra o saldo on-chain).
-  await updateCollateralBalance(credentials).catch(() => {});
+  // Se falhar, a ordem pode ser rejeitada, mas continuamos tentando.
+  try {
+    await updateCollateralBalance(credentials);
+  } catch (e: any) {
+    log.warn(`⚠️ updateCollateralBalance antes da ordem falhou: ${e.message}`);
+  }
 
   // Monta o wire V2 com orderToJsonV2 da SDK (converte salt p/ int etc.)
   // owner = signer EOA (dono da API key); maker/signer da ordem = deposit wallet.

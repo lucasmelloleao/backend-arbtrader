@@ -131,11 +131,15 @@ function getRedisClient(): Redis | null {
 
 async function heartbeat(userId: any) {
   if (!userId) return;
-  await (BotStatus as any).updateOne(
-    { userId: String(userId), botName: BOT_NAME },
-    { $set: { lastHeartbeat: new Date() } },
-    { upsert: true }
-  ).catch(() => {});
+  try {
+    await (BotStatus as any).updateOne(
+      { userId: String(userId), botName: BOT_NAME },
+      { $set: { lastHeartbeat: new Date() } },
+      { upsert: true }
+    );
+  } catch (e: any) {
+    log.warn(`⚠️ heartbeat falhou para o usuário ${userId}: ${e.message}`);
+  }
 }
 
 async function monitorOpenStrategies(settings: any) {
