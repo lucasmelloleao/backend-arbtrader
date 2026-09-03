@@ -143,9 +143,9 @@ const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
  * as ordens da deposit wallet contra esse saldo. Usado pelo MM para não
  * cotar quando o custo do par + ordens ativas excede o saldo.
  */
-export async function getOnchainBalance(depositWallet?: string): Promise<number> {
+export async function getOnchainBalance(depositWallet: string): Promise<number> {
   try {
-    const dw = String(depositWallet || DEPOSIT_WALLET || '').trim();
+    const dw = String(depositWallet || '').trim();
     if (!dw) return 0;
     const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com', 137);
     const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
