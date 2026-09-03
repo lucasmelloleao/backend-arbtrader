@@ -105,8 +105,8 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
-// Controle de posições abertas por símbolo: symbol -> { side, entryPrice, amount, entryTime, peakPnlPct }
-const activePositions = new Map<string, { side: 'BUY' | 'SELL'; entryPrice: number; amount: number; entryTime: number; peakPnlPct: number }>();
+// Controle de posições abertas por ID da posição: positionId -> { symbol, side, entryPrice, amount, entryTime, peakPnlPct }
+const activePositions = new Map<string, { symbol: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; entryTime: number; peakPnlPct: number }>();
 
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
@@ -128,23 +128,43 @@ async function startScalper() {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
           const tradeSize = settings.tradeSize || 100; // Tamanho padrão da ordem em unidades base
 
-          // Sincroniza posições reais da cTrader para a memória (evita perder controle se o bot reiniciar)
+          // Sincroniza posições reais da cTrader por posição individual (positionId)
           try {
-            const realPositions = await adapter.getPositionsPnL();
-            for (const sym of symbols) {
-              const realPos = realPositions.get(sym);
-              if (realPos && !activePositions.has(sym)) {
-                activePositions.set(sym, {
-                  side: realPos.side.toUpperCase() as 'BUY' | 'SELL',
-                  entryPrice: 0, // Será atualizado com o midPrice do primeiro tick
-                  amount: realPos.volume * 100, // Converte lotes para unidades base
-                  entryTime: Date.now(),
-                  peakPnlPct: 0,
-                });
-                log.info(`🔄 [RECONCILE CTRADER] Posição existente detectada na cTrader: ${sym} ${realPos.side.toUpperCase()}`);
-              } else if (!realPos && activePositions.has(sym)) {
-                // Se foi fechada manualmente na cTrader, limpa a memória local
-                activePositions.delete(sym);
+            const realPositions = await adapter.getPositionsPnL(); // Map por símbolo/ID
+            // Reconcilia com cTrader: busca via getPositionsList do adapter
+            const accountId = Number(ctraderKey.accountId);
+            const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
+            const cTraderOpenPosIds = new Set<string>();
+
+            if (rec && rec.position) {
+              for (const pos of rec.position) {
+                const posId = String(pos.positionId);
+                cTraderOpenPosIds.add(posId);
+                const market = (adapter as any).marketsById.get(String(pos.tradeData?.symbolId));
+                const sym = market?.symbol;
+                if (!sym || !symbols.includes(sym)) continue;
+
+                if (!activePositions.has(posId)) {
+                  const side = pos.tradeData?.tradeSide === 1 ? 'BUY' : 'SELL';
+                  const entryPrice = Number(pos.price || 0);
+                  const amount = (Number(pos.tradeData?.volume || 0) / 100) * (market?.lotSize || 100);
+                  activePositions.set(posId, {
+                    symbol: sym,
+                    side,
+                    entryPrice,
+                    amount,
+                    entryTime: Date.now(),
+                    peakPnlPct: 0,
+                  });
+                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader: ${sym} ${side}`);
+                }
+              }
+            }
+
+            // Remove da memória se foi fechada manualmente na cTrader
+            for (const [posId] of Array.from(activePositions.entries())) {
+              if (!cTraderOpenPosIds.has(posId)) {
+                activePositions.delete(posId);
               }
             }
           } catch { /* erro transitório no reconcile */ }
@@ -157,13 +177,14 @@ async function startScalper() {
                 const midPrice = (ticker.bid + ticker.ask) / 2;
                 const signal = analyzeScalpOpportunity(sym, midPrice);
 
-                const activePos = activePositions.get(sym);
-                if (activePos && activePos.entryPrice === 0) {
-                  activePos.entryPrice = midPrice; // Ajusta preço base de referência se veio da cTrader
-                }
+                // --- 1. AVALIAÇÃO DE FECHAMENTO (TAKE PROFIT / STOP LOSS / TRAILING STOP) PARA POSIÇÕES EXISTENTES ---
+                const symbolPositions = Array.from(activePositions.entries()).filter(([_, p]) => p.symbol === sym);
 
-                // --- 1. AVALIAÇÃO DE FECHAMENTO (TAKE PROFIT / STOP LOSS / TRAILING STOP) PARA POSIÇÃO EXISTENTE ---
-                if (activePos) {
+                for (const [posId, activePos] of symbolPositions) {
+                  if (activePos.entryPrice === 0) {
+                    activePos.entryPrice = midPrice; // Ajusta preço base de referência se veio da cTrader
+                  }
+
                   const pnlPct = activePos.side === 'BUY'
                     ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
                     : ((activePos.entryPrice - midPrice) / activePos.entryPrice) * 100;
@@ -189,13 +210,13 @@ async function startScalper() {
                           : `Reversão de sinal para ${signal.action}`;
 
                     const closeSide = activePos.side === 'BUY' ? 'sell' : 'buy';
-                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
+                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição #${posId} de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
 
                     try {
                       const closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
                       const pnlEst = (pnlPct / 100) * activePos.amount;
-                      activePositions.delete(sym);
-                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
+                      activePositions.delete(posId);
+                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] #${posId} ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
 
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({
@@ -229,26 +250,28 @@ async function startScalper() {
                         log.error(`⚠️ Erro ao atualizar fechamento no banco: ${dbErr.message}`);
                       }
                     } catch (closeErr: any) {
-                      log.error(`❌ [ERRO AO FECHAR POSIÇÃO] ${sym}:`, closeErr?.message || closeErr);
+                      log.error(`❌ [ERRO AO FECHAR POSIÇÃO] #${posId} ${sym}:`, closeErr?.message || closeErr);
                     }
                   }
                 }
 
-                // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÃO ATIVA ---
-                if (!activePositions.has(sym) && signal.action !== 'NEUTRAL') {
+                // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÕES ABERTAS PARA O SÍMBOLO ---
+                if (symbolPositions.length === 0 && signal.action !== 'NEUTRAL') {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                   const side = signal.action === 'BUY' ? 'buy' : 'sell';
                   log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${tradeSize} unidades)...`);
                   try {
                     const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
-                    activePositions.set(sym, {
+                    const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
+                    activePositions.set(String(posIdNew), {
+                      symbol: sym,
                       side: signal.action,
                       entryPrice: midPrice,
                       amount: tradeSize,
                       entryTime: Date.now(),
                       peakPnlPct: 0,
                     });
-                    log.info(`✅ [ORDEM ABERTA COM SUCESSO] ${sym} ${signal.action}! ID/Result:`, orderRes);
+                    log.info(`✅ [ORDEM ABERTA COM SUCESSO] #${posIdNew} ${sym} ${signal.action}! ID/Result:`, orderRes);
 
                     try {
                       const stratDoc = await ForexArbStrategy.create({
