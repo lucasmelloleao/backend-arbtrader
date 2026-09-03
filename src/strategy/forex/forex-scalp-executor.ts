@@ -37,6 +37,7 @@ async function startScalpExecutor() {
 
         if (ctraderKey) {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
+          await adapter.loadMarkets();
           const tradeSize = settings.tradeSize || 100;
 
           // 1. RECONCILE CTRADER: Sincroniza posições reais abertas na cTrader
