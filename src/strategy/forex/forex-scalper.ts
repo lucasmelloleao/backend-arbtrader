@@ -4,6 +4,8 @@ import { loadEnv } from '../../utils/env-loader';
 loadEnv();
 import { connectToDatabase } from '../../config/db';
 import ForexArbSettings from '../../models/ForexArbSettings';
+import ForexArbStrategy from '../../models/ForexArbStrategy';
+import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
 import { getSharedFixAdapter, isFixExchange } from './fix/fix-factory';
@@ -103,6 +105,9 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
+// Controle de posições abertas por símbolo: symbol -> { side, entryPrice, amount, entryTime, peakPnlPct }
+const activePositions = new Map<string, { side: 'BUY' | 'SELL'; entryPrice: number; amount: number; entryTime: number; peakPnlPct: number }>();
+
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
@@ -121,18 +126,168 @@ async function startScalper() {
 
         if (ctraderKey) {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
-          for (const sym of symbols) {
-            try {
-              const ticker = await (adapter as any).fetchTicker(sym);
+          const tradeSize = settings.tradeSize || 100; // Tamanho padrão da ordem em unidades base
+
+          // Sincroniza posições reais da cTrader para a memória (evita perder controle se o bot reiniciar)
+          try {
+            const realPositions = await adapter.getPositionsPnL();
+            for (const sym of symbols) {
+              const realPos = realPositions.get(sym);
+              if (realPos && !activePositions.has(sym)) {
+                activePositions.set(sym, {
+                  side: realPos.side.toUpperCase() as 'BUY' | 'SELL',
+                  entryPrice: 0, // Será atualizado com o midPrice do primeiro tick
+                  amount: realPos.volume * 100, // Converte lotes para unidades base
+                  entryTime: Date.now(),
+                  peakPnlPct: 0,
+                });
+                log.info(`🔄 [RECONCILE CTRADER] Posição existente detectada na cTrader: ${sym} ${realPos.side.toUpperCase()}`);
+              } else if (!realPos && activePositions.has(sym)) {
+                // Se foi fechada manualmente na cTrader, limpa a memória local
+                activePositions.delete(sym);
+              }
+            }
+          } catch { /* erro transitório no reconcile */ }
+
+          try {
+            const tickers = await (adapter as any).fetchTickers(symbols);
+            for (const sym of symbols) {
+              const ticker = tickers[sym];
               if (ticker && ticker.bid && ticker.ask) {
                 const midPrice = (ticker.bid + ticker.ask) / 2;
                 const signal = analyzeScalpOpportunity(sym, midPrice);
-                if (signal.action !== 'NEUTRAL') {
+
+                const activePos = activePositions.get(sym);
+                if (activePos && activePos.entryPrice === 0) {
+                  activePos.entryPrice = midPrice; // Ajusta preço base de referência se veio da cTrader
+                }
+
+                // --- 1. AVALIAÇÃO DE FECHAMENTO (TAKE PROFIT / STOP LOSS / TRAILING STOP) PARA POSIÇÃO EXISTENTE ---
+                if (activePos) {
+                  const pnlPct = activePos.side === 'BUY'
+                    ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
+                    : ((activePos.entryPrice - midPrice) / activePos.entryPrice) * 100;
+
+                  // Atualiza pico de ganho da posição (Peak PnL %)
+                  if (pnlPct > activePos.peakPnlPct) {
+                    activePos.peakPnlPct = pnlPct;
+                  }
+
+                  const atingiuTP = pnlPct >= 0.20; // Take profit máximo fixo em +0.20%
+                  const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
+                  // Trailing stop: Se o pico ultrapassou +0.10% e recuou 0.05% do topo
+                  const atingiuTrailing = activePos.peakPnlPct >= 0.10 && (activePos.peakPnlPct - pnlPct) >= 0.05;
+                  const reversaoSinal = signal.action !== 'NEUTRAL' && signal.action !== activePos.side;
+
+                  if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
+                    const motivoFechar = atingiuTrailing
+                      ? `Trailing Stop acionado (Pico: +${activePos.peakPnlPct.toFixed(3)}%, Atual: +${pnlPct.toFixed(3)}%)`
+                      : atingiuTP
+                        ? `Take Profit atingido (+${pnlPct.toFixed(3)}%)`
+                        : atingiuSL
+                          ? `Stop Loss atingido (${pnlPct.toFixed(3)}%)`
+                          : `Reversão de sinal para ${signal.action}`;
+
+                    const closeSide = activePos.side === 'BUY' ? 'sell' : 'buy';
+                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
+
+                    try {
+                      const closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
+                      const pnlEst = (pnlPct / 100) * activePos.amount;
+                      activePositions.delete(sym);
+                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
+
+                      try {
+                        const existingStrat = await ForexArbStrategy.findOne({
+                          userId: settings.userId,
+                          name: `Scalping ${sym} (${activePos.side})`,
+                          positionOpen: true
+                        });
+
+                        if (existingStrat) {
+                          existingStrat.positionOpen = false;
+                          existingStrat.status = 'closed';
+                          existingStrat.active = false;
+                          existingStrat.closedAt = new Date();
+                          existingStrat.pnl = pnlEst;
+                          await existingStrat.save();
+
+                          await ForexArbTrade.create({
+                            userId: settings.userId,
+                            strategyId: existingStrat._id,
+                            strategyName: existingStrat.name,
+                            exchangeId: 'ctrader',
+                            type: 'close',
+                            legs: [{ symbol: sym, side: closeSide, price: midPrice, amount: activePos.amount, orderId: closeRes?.id }],
+                            amount: activePos.amount,
+                            realizedPnl: pnlEst,
+                            status: 'executed',
+                            reason: motivoFechar,
+                          });
+                        }
+                      } catch (dbErr: any) {
+                        log.error(`⚠️ Erro ao atualizar fechamento no banco: ${dbErr.message}`);
+                      }
+                    } catch (closeErr: any) {
+                      log.error(`❌ [ERRO AO FECHAR POSIÇÃO] ${sym}:`, closeErr?.message || closeErr);
+                    }
+                  }
+                }
+
+                // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÃO ATIVA ---
+                if (!activePositions.has(sym) && signal.action !== 'NEUTRAL') {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
+                  const side = signal.action === 'BUY' ? 'buy' : 'sell';
+                  log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${tradeSize} unidades)...`);
+                  try {
+                    const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
+                    activePositions.set(sym, {
+                      side: signal.action,
+                      entryPrice: midPrice,
+                      amount: tradeSize,
+                      entryTime: Date.now(),
+                      peakPnlPct: 0,
+                    });
+                    log.info(`✅ [ORDEM ABERTA COM SUCESSO] ${sym} ${signal.action}! ID/Result:`, orderRes);
+
+                    try {
+                      const stratDoc = await ForexArbStrategy.create({
+                        userId: settings.userId,
+                        exchangeKeyId: ctraderKey._id,
+                        name: `Scalping ${sym} (${signal.action})`,
+                        exchangeId: 'ctrader',
+                        type: 'simple',
+                        legs: [{ symbol: sym, side, price: midPrice, amount: tradeSize, orderId: orderRes?.id }],
+                        tradeSize,
+                        positionOpen: true,
+                        positionOpenedAt: new Date(),
+                        positionSize: tradeSize,
+                        status: 'open',
+                        active: true,
+                      });
+
+                      await ForexArbTrade.create({
+                        userId: settings.userId,
+                        strategyId: stratDoc._id,
+                        strategyName: stratDoc.name,
+                        exchangeId: 'ctrader',
+                        type: 'execution',
+                        legs: [{ symbol: sym, side, price: midPrice, amount: tradeSize, orderId: orderRes?.id }],
+                        amount: tradeSize,
+                        status: 'executed',
+                        reason: signal.reason,
+                      });
+                    } catch (dbErr: any) {
+                      log.error(`⚠️ Erro ao registrar estratégia/trade no banco: ${dbErr.message}`);
+                    }
+
+                  } catch (execErr: any) {
+                    log.error(`❌ [ERRO AO ABRIR ORDEM] ${sym}:`, execErr?.message || execErr);
+                  }
                 }
               }
-            } catch { /* ignora erro de par indisponível */ }
-          }
+            }
+          } catch { /* ignora erro de fetch */ }
         }
       }
     } catch (err: any) {
