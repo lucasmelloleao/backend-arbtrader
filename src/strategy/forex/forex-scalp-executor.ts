@@ -104,6 +104,10 @@ async function startScalpExecutor() {
 
               if (!activePositions.has(sym) && !temPosicaoNoBanco) {
                 log.info(`🚀 [ORDEM ABERTA PELO ROBÔ 2] Executando sinal para ${sym} (${side.toUpperCase()})...`);
+                // Marca IMEDIATAMENTE como processing para evitar corrida de execução (race condition)
+                pendingOpp.status = 'processing';
+                await pendingOpp.save();
+
                 try {
                   const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
                   const posIdReal = orderRes?.positionId ? String(orderRes.positionId) : null;
