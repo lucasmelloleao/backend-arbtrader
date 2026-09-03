@@ -196,23 +196,12 @@ async function startScalpExecutor() {
                 const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
                 const atingiuTrailing = activePos.peakPnlPct >= 0.10 && (activePos.peakPnlPct - pnlPct) >= 0.05; // Trailing stop
 
-                // Verifica se há sinal de reversão gerado pelo scanner
-                const pendingOppReversao = await ForexArbTrade.findOne({
-                  userId: settings.userId,
-                  type: 'opportunity_found',
-                  status: 'detected',
-                  'legs.symbol': sym
-                });
-                const reversaoSinal = pendingOppReversao && pendingOppReversao.legs && pendingOppReversao.legs[0]?.side.toUpperCase() !== activePos.side;
-
-                if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
+                if (atingiuTP || atingiuSL || atingiuTrailing) {
                   const motivoFechar = atingiuTrailing
                     ? `Trailing Stop acionado (Pico: +${activePos.peakPnlPct.toFixed(3)}%, Atual: +${pnlPct.toFixed(3)}%)`
                     : atingiuTP
                       ? `Take Profit atingido (+${pnlPct.toFixed(3)}%)`
-                      : atingiuSL
-                        ? `Stop Loss atingido (${pnlPct.toFixed(3)}%)`
-                        : `Reversão de sinal detectada no mercado`;
+                      : `Stop Loss atingido (${pnlPct.toFixed(3)}%)`;
 
                   const closeSide = activePos.side === 'BUY' ? 'sell' : 'buy';
                   log.info(`🔄 [AUTO-SCALPER EXECUTOR CLOSE] Encerrando posição #${activePos.positionId || 'indefinida'} de ${activePos.side} em ${sym}. Motivo: ${motivoFechar}`);
