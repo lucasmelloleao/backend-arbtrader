@@ -284,7 +284,7 @@ export async function runScan(userId: any, config: ScanConfig, autoExecute = fal
 }
 
 /** Resolve a ExchangeKey polymarket ativa do usuário (para trading). */
-export async function resolvePolymarketKey(userId: string): Promise<ExchangeKey | null> {
+export async function resolvePolymarketKey(userId: string): Promise<any | null> {
   const key = await ExchangeKey.findOne({ userId, exchangeId: 'polymarket', active: true }).lean();
   return key || null;
 }

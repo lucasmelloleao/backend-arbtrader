@@ -20,7 +20,7 @@ function getProxyBase(): string {
 }
 
 // Cache de clients por endereço.
-const clients = new Map<string, ReturnType<typeof createSecureClient>>();
+const clients = new Map<string, any>();
 
 /** Interface para o documento ExchangeKeyPolymarket. */
 export interface ExchangeKeyDoc {
@@ -40,16 +40,16 @@ function installProxyIntercept(): void {
   if (interceptInstalled) return;
   interceptInstalled = true;
   const origFetch = global.fetch;
-  (global as any).fetch = async (url: RequestInfo | Request, opts: RequestInit) => {
+  (global as any).fetch = async (url: any, opts: any) => {
     let target = url;
     if (typeof url === 'string' && url.startsWith('https://clob.polymarket.com')) {
       target = getProxyBase() + url.slice('https://clob.polymarket.com'.length);
-    } else if (url && typeof url === 'object' && String((url as Request).url || '').startsWith('https://clob.polymarket.com')) {
-      const u = new URL(String((url as Request).url));
-      target = new Request(getProxyBase() + u.pathname + u.search, {
-        method: (url as Request).method,
-        headers: (url as Request).headers,
-        body: (url as Request).body,
+    } else if (url && typeof url === 'object' && String((url as any).url || '').startsWith('https://clob.polymarket.com')) {
+      const u = new URL(String((url as any).url));
+      target = new (global as any).Request(getProxyBase() + u.pathname + u.search, {
+        method: (url as any).method,
+        headers: (url as any).headers,
+        body: (url as any).body,
         duplex: 'half',
       });
     }

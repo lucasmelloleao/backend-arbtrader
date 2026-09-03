@@ -62,7 +62,7 @@ register.registerMetric(predictionArbMetrics.dailyLossUsd);
 register.registerMetric(predictionArbMetrics.uptimeSeconds);
 
 // Export metrics endpoint middleware
-export function metricsMiddleware(req: any, res: any, next: any) {
+export async function metricsMiddleware(req: any, res: any, next: any) {
   try {
     res.setHeader('Content-Type', register.contentType);
     res.end(await register.metrics());
