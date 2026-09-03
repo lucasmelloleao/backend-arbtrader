@@ -121,12 +121,18 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const opportunities = await ForexArbTrade.find({ userId, type: 'opportunity_found' }).sort({ createdAt: -1 }).limit(50);
+    const opportunities = await ForexArbTrade.find({
+      userId,
+      type: 'opportunity_found',
+      status: 'detected'
+    }).sort({ createdAt: -1 }).limit(50);
+
     const formatted = opportunities.map((t: any) => ({
       _id: t._id.toString(),
       id: t._id.toString(),
       exchangeId: t.exchangeId,
       type: t.type,
+      status: t.status,
       legs: t.legs || [],
       amount: t.amount,
       expectedProfitPct: t.expectedProfitPct,

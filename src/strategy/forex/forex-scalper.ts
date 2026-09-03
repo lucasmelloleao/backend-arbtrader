@@ -120,7 +120,12 @@ export function decidePositionClose(input: {
   amount?: number;
   side?: 'BUY' | 'SELL' | 'buy' | 'sell';
   symbol?: string;
-}) {
+}): {
+  usePositionClose: boolean;
+  mode: 'position-close' | 'market-order';
+  volumeProtocol: number;
+  closeSide?: 'buy' | 'sell';
+} {
   const normalizedPositionId = input.positionId ? String(input.positionId).trim() : '';
   const hasRealPositionId = Boolean(normalizedPositionId) && !normalizedPositionId.startsWith('pos_');
   const volumeProtocol = Number(input.volumeProtocol ?? 0);
@@ -128,16 +133,16 @@ export function decidePositionClose(input: {
   if (hasRealPositionId && Number.isFinite(volumeProtocol) && volumeProtocol > 0) {
     return {
       usePositionClose: true,
-      mode: 'position-close' as const,
+      mode: 'position-close',
       volumeProtocol,
-      closeSide: undefined as string | undefined,
+      closeSide: undefined,
     };
   }
 
-  const closeSide = input.side && (input.side === 'BUY' || input.side === 'buy') ? 'sell' : 'buy';
+  const closeSide: 'buy' | 'sell' = input.side && (input.side === 'BUY' || input.side === 'buy') ? 'sell' : 'buy';
   return {
     usePositionClose: false,
-    mode: 'market-order' as const,
+    mode: 'market-order',
     volumeProtocol: 0,
     closeSide,
   };
@@ -252,7 +257,7 @@ async function startScalper() {
                       side: activePos.side,
                       symbol: sym,
                     });
-                    const closeSide = closeDecision.closeSide ?? (activePos.side === 'BUY' ? 'sell' : 'buy');
+                    const closeSide: 'buy' | 'sell' = closeDecision.closeSide ?? (activePos.side === 'BUY' ? 'sell' : 'buy');
                     log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar} | Modo: ${closeDecision.mode}`);
 
                     try {
