@@ -8,6 +8,7 @@ import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositi
 import { fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { fetchUserPositions } from './helpers/data-client';
 import { makerEntryPrices, completenessSpreadPct } from './helpers/pricing';
+import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -15,7 +16,7 @@ const log = {
   error: (msg: string, ...args: any[]) => console.error(`[ERROR] ${msg}`, ...args),
 };
 
-const ORDER_TIMEOUT_MS = 45_000;
+const ORDER_TIMEOUT_MS = PREDICTION_ARB_CONFIG.marketMaking.orderTimeoutMs;
 
 /** Busca a melhor profundidade do book para um token (bids e asks). */
 async function bestBids(strategy: any): Promise<{ bidYes: number; bidNo: number; askYes: number; askNo: number }> {

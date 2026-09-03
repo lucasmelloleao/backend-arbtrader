@@ -15,7 +15,9 @@ const log = {
 };
 
 function getDataBase(): string {
-  return process.env.POLYMARKET_DATA_BASE || 'https://proxy-vercel-lilac.vercel.app/api/proxy/data';
+  const base = String(process.env.POLYMARKET_DATA_BASE || '').trim();
+  if (!base) throw new Error('POLYMARKET_DATA_BASE não configurada');
+  return base;
 }
 
 /** Busca a activity da deposit wallet na Data API. */

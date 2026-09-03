@@ -8,6 +8,8 @@ import { ClobClient, createL2Headers, orderToJsonV2, OrderType } from '@polymark
 import type { BalanceAllowanceResponse } from '@polymarket/clob-client-v2/dist/types/clob';
 import { decryptSecretKey } from '../../../utils/encryption';
 import { withTimeout } from '../../perpetuals/helpers/ccxt-factory';
+import { getOnchainBalanceWithFailover } from './rpc-failover';
+import { CircuitBreaker } from '../../../utils/circuit-breaker';
 
 // Lido em RUNTIME (não no import) porque o loadEnv() roda depois dos imports
 // serem hoisted — sem isso o proxy configurado no .env/secrets.enc era ignorado.
@@ -17,6 +19,7 @@ function getClobBase(): string {
 
 // Cache de clientes SDK por endereço (reutiliza credenciais L2 derivadas).
 const sdkClients = new Map<string, ClobClient>();
+const clobCircuit = new CircuitBreaker('polymarket-clob', { failureThreshold: 3, resetTimeoutMs: 30_000 });
 
 /**
  * Envolve um ethers.Wallet num formato compatível com o signer que a SDK
@@ -137,24 +140,14 @@ export async function getCollateralBalance(credentials: ClobCredentials): Promis
 const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
 
 /**
- * Saldo pUSD ON-CHAIN da deposit wallet (via RPC da Polygon).
+ * Saldo pUSD ON-CHAIN da deposit wallet (via RPC da Polygon com failover).
  *
  * É a fonte da verdade do capital disponível para operar — o CLOB valida
  * as ordens da deposit wallet contra esse saldo. Usado pelo MM para não
  * cotar quando o custo do par + ordens ativas excede o saldo.
  */
 export async function getOnchainBalance(depositWallet: string): Promise<number> {
-  try {
-    const dw = String(depositWallet || '').trim();
-    if (!dw) return 0;
-    const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com', 137);
-    const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
-    const bal = await pusd.balanceOf(dw);
-    return Number(ethers.formatUnits(bal, 6));
-  } catch (e: any) {
-    log.warn(`⚠️ getOnchainBalance falhou: ${e.message}`);
-    return 0;
-  }
+  return getOnchainBalanceWithFailover(depositWallet);
 }
 
 // V2 Exchange contract (Polygon): https://docs.polymarket.com/resources/contracts
@@ -436,7 +429,7 @@ export async function cancelOrder(credentials: ClobCredentials, orderId: string)
 
 /** Busca o order book de um token (GET /book). */
 export async function fetchBook(tokenId: string): Promise<{ bids: [number, number][]; asks: [number, number][] }> {
-  const res = await withTimeout(fetch(`${getClobBase()}/book?token_id=${tokenId}`), 10_000, null);
+  const res = await clobCircuit.execute(() => withTimeout(fetch(`${getClobBase()}/book?token_id=${tokenId}`), 10_000, null));
   if (!res || !res.ok) return { bids: [], asks: [] };
   const data: any = await res.json();
 

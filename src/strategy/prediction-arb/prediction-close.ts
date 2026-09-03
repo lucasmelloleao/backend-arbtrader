@@ -7,6 +7,7 @@ import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk } from './helpers/secure-client';
 import { pairExitPnl, estimateFee, TAKER_FEE_RATE } from './helpers/pricing';
+import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -76,7 +77,7 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
   if (ehClosePorPreco && entryYes > 0 && entryNo > 0 && askYes > 0 && askNo > 0) {
     const valorRealizavel = shares * (askYes + askNo); // receberia vendendo as duas pernas
     const custoPago = shares * (entryYes + entryNo);
-    const margemMinima = custoPago * 0.002; // 0.2% — só fecha se não tomar prejuízo
+    const margemMinima = custoPago * PREDICTION_ARB_CONFIG.exit.minRealizableMargin; // 0.2% — só fecha se não tomar prejuízo
     if (valorRealizavel < custoPago + margemMinima) {
       const msg = `${reason} mas book fraco: realizável $${valorRealizavel.toFixed(2)} < custo $${custoPago.toFixed(2)} (asks ${askYes}/${askNo}). Segurando até vencimento.`;
       log.warn(`⚠️ [${strat.slug}] ${msg}`);

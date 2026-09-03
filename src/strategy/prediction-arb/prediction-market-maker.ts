@@ -12,6 +12,7 @@ import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { makerEntryPrices } from './helpers/pricing';
+import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -97,9 +98,9 @@ export async function runMarketMaking(
   // true se a SDK pode operar (relayer key configurada)
   const useSdk = Boolean(String(keyDoc?.relayerApiKey || process.env.POLYMARKET_RELAYER_KEY || '').trim());
 
-  const cap = Number(strategy.maxInventoryPairs ?? 10);
-  const step = Number(strategy.quoteStep ?? 0.005);
-  const tradeSize = Number(strategy.tradeSize ?? 100);
+  const cap = Number(strategy.maxInventoryPairs ?? PREDICTION_ARB_CONFIG.risk.maxInventoryPairs);
+  const step = Number(strategy.quoteStep ?? PREDICTION_ARB_CONFIG.marketMaking.quoteStep);
+  const tradeSize = Number(strategy.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
   let sharesPerQuote = Math.max(1, Math.min(Math.floor(tradeSize), cap)); // ações por lado
 
   // 1. Inventário real (fonte da verdade) — via Data API da deposit wallet
@@ -135,14 +136,14 @@ export async function runMarketMaking(
 
   // ── HARD CAP DE EXPOSIÇÃO POR MERCADO (Corr. bola de neve) ──────────────
   // Teto por lado = o aporte alvo (sharesPerQuote) com pequena folga p/
-  // aceitar fill parcial (1.5×). Acima disso o robô NUNCA compra mais nada
+  // aceitar fill parcial (exposureCapMultiplier×). Acima disso o robô NUNCA compra mais nada
   // neste mercado — só cancela ordens e segura até o vencimento. Isso impede
   // o caso SOL 5→10→15 (a defasagem da Data API fazia o MM "completar hedge"
   // comprando em cima de posição que já tinha preenchido).
   // Obs: par MONTADO balanceado é tratado pelo bloco `hasPair` abaixo (segura
   // e registra); par montado desbalanceado cai no fluxo de rebalance (vende o
   // excesso perto do vencimento). Este guard só captura exposição acima do teto.
-  const tetoLado = Math.ceil(sharesPerQuote * 1.5);
+  const tetoLado = Math.ceil(sharesPerQuote * PREDICTION_ARB_CONFIG.risk.exposureCapMultiplier);
   const estourouCapExposicao = yesShares > tetoLado || noShares > tetoLado;
   if (estourouCapExposicao) {
     log.warn(`🧯 [${strategy.slug}] Exposição estourou o teto (${yesShares}/${noShares} > ${tetoLado}/lado). Cancelando ordens e segurando — NÃO compra mais neste mercado.`);
@@ -326,7 +327,7 @@ export async function runMarketMaking(
   //     Além disso, exige um mínimo em USD (liquidez real): mercados finos
   //     com bid ilusório (ex: 0.48 sem volume) não preenchem e travam o
   //     capital — foi o caso das 2 ordens a 0.48 que ficaram no book.
-  const MIN_LIQUIDEZ_USD = 20; // liquidez mínima por lado (bid/ask × size)
+  const MIN_LIQUIDEZ_USD = PREDICTION_ARB_CONFIG.marketMaking.minLiquidityUsd;
   const temLadoLeveProf = yesShares !== noShares;
   const ladoLeveProf = temLadoLeveProf ? (yesShares > noShares ? 'NO' : 'YES') : null;
 
@@ -357,7 +358,7 @@ export async function runMarketMaking(
   //    nasce balanceado (sem fill parcial desigual como o 21 vs 10).
   //    Se não há folga no ask, NÃO cota (evita o maker GTC desbalanceado).
   const askSum = bYes.ask + bNo.ask;
-  const TAKER_MARGEM = 0.002; // 0.2% de folga mínima sobre o ask
+  const TAKER_MARGEM = PREDICTION_ARB_CONFIG.marketMaking.takerMargin;
   const podeTaker = bYes.ask > 0 && bNo.ask > 0 && askSum + TAKER_MARGEM < 1;
 
   // Preço maker (bid) — usado como fallback quando o mercado está em modo
@@ -457,7 +458,7 @@ export async function runMarketMaking(
     // (o bid ainda tem liquidez); senão, apenas não cota.
     const endMsSaldo = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const minParaVencer = endMsSaldo > 0 ? (endMsSaldo - Date.now()) / 60000 : Infinity;
-    const pernaUnicaSemSaldo = oneSideOnly && minParaVencer <= 15 && minParaVencer > 0;
+    const pernaUnicaSemSaldo = oneSideOnly && minParaVencer <= PREDICTION_ARB_CONFIG.timeWindows.singleLegSellMinutes && minParaVencer > 0;
     if (pernaUnicaSemSaldo) {
       log.warn(`⚠️ [${strategy.slug}] Perna única (${yesShares >= 1 ? 'YES' : 'NO'} ${Math.max(yesShares, noShares)}) sem saldo p/ hedge (${minParaVencer.toFixed(1)}min p/ vencer). Vendendo a perna para não perder tudo.`);
       try {
@@ -488,9 +489,9 @@ export async function runMarketMaking(
   // 5.0 Tamanho mínimo por ordem: a Polymarket exige no mínimo $1 por ordem
   //     (BUY marketable). Se price * shares < $1 num dos lados, a ordem é
   //     rejeitada. Se um lado está tão barato que exigiria inflar o tamanho
-  //     além de 2x o tradeSize (ex: 5 -> 25 shares), NÃO cota — inflar o
+  //     além de maxOrderInflationMultiplier x o tradeSize (ex: 5 -> 25 shares), NÃO cota — inflar o
   //     tamanho num lado barato foi o que causou o par 25+25 comprado caro.
-  const MIN_ORDER_USD = 1;
+  const MIN_ORDER_USD = PREDICTION_ARB_CONFIG.risk.minOrderUsd;
   const valorYes = yesPrice * sharesPerQuote;
   const valorNo = noPrice * sharesPerQuote;
   // No modo lado leve só o lado leve é comprado — a checagem de mínimo aplica
@@ -498,8 +499,8 @@ export async function runMarketMaking(
   const verificarMinimo = (valor: number, preco: number): boolean => {
     if (valor >= MIN_ORDER_USD) return true;
     const minShares = Math.ceil(MIN_ORDER_USD / preco);
-    const tradeSizeOriginal = Math.max(1, Math.min(Math.floor(Number(strategy.tradeSize ?? 100)), cap));
-    if (minShares <= cap && minShares <= tradeSizeOriginal * 2) {
+    const tradeSizeOriginal = Math.max(1, Math.min(Math.floor(Number(strategy.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize)), cap));
+    if (minShares <= cap && minShares <= tradeSizeOriginal * PREDICTION_ARB_CONFIG.risk.maxOrderInflationMultiplier) {
       log.warn(`⚠️ [${strategy.slug}] Ordem abaixo do mínimo $1 (valor $${valor.toFixed(2)}). Ajustando para ${minShares} shares.`);
       sharesPerQuote = minShares;
       return true;
@@ -561,14 +562,14 @@ export async function runMarketMaking(
         // ask 0.663 → soma 1.070, perda certa de $0.69. A trava antiga de 1.1
         // deixava passar 1.07; o correto é nunca completar acima de ~1.0.
         // Se não der para completar lucrativamente:
-        //   - Perto do vencimento (<= 10min): SEGURA a perna única — vender
+        //   - Perto do vencimento (<= hedgeCompletionMaxMinutes): SEGURA a perna única — vender
         //     agora realiza perda certa, e segurar dá 50% de o lado certo
         //     vencer (redeem paga $1, podendo até lucrar).
-        //   - Com tempo ( > 10min): VENDE a perna pesada no bid — encerra o
+        //   - Com tempo ( > hedgeCompletionMaxMinutes): VENDE a perna pesada no bid — encerra o
         //     risco direcional com perda pequena agora e libera o capital.
         const precoMedioPesado = ladoLeve === 'NO' ? yesAvg : noAvg;
         const precoLeve = ladoLeve === 'YES' ? yesPrice : noPrice;
-        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= 0.998) {
+        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold) {
           const somaHedge = precoMedioPesado + precoLeve;
           const endMsGuard = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
           const minRestante = endMsGuard > 0 ? (endMsGuard - Date.now()) / 60000 : Infinity;
@@ -582,13 +583,13 @@ export async function runMarketMaking(
             else await cancelOrder(credentials, oid).catch(() => {});
           }
 
-          if (minRestante <= 10) {
-            log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ 0.998). Vencimento em ${minRestante.toFixed(1)}min — SEGURANDO perna única (${pernaPesadaSide} ${pernaPesadaShares}).`);
+          if (minRestante <= PREDICTION_ARB_CONFIG.timeWindows.hedgeCompletionMaxMinutes) {
+            log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ ${PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold}). Vencimento em ${minRestante.toFixed(1)}min — SEGURANDO perna única (${pernaPesadaSide} ${pernaPesadaShares}).`);
             return { quoted: false, orderIds: [] };
           }
 
           // Com tempo sobrando: vende a perna pesada no bid para zerar o risco
-          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ 0.998, vencimento em ${minRestante.toFixed(1)}min). Vendendo perna pesada ${pernaPesadaSide} ${pernaPesadaShares} no bid.`);
+          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ ${PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold}, vencimento em ${minRestante.toFixed(1)}min). Vendendo perna pesada ${pernaPesadaSide} ${pernaPesadaShares} no bid.`);
           try {
             const bookPesada = await bookPrices(pernaPesadaToken);
             if (bookPesada.bid > 0) {
@@ -716,12 +717,12 @@ export async function rebalanceInventory(strategy: any, opts: { dryRun?: boolean
   const imbalance = Math.abs(yesShares - noShares) / Math.max(yesShares, noShares);
   if (imbalance < 0.1) return; // tolerância de 10%
 
-  // Só rebalanceia (vende excesso) nos últimos 5min. Antes disso, o MM
+  // Só rebalanceia (vende excesso) nos últimos rebalanceWindowMinutes. Antes disso, o MM
   // completa o par pelo lado leve — vender cedo realizava perda desnecessária
   // (o caso do mercado 8:15: DOWN comprado a 0.50 vendido a 0.44 em 13s).
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const hoursToEnd = endMs > 0 ? (endMs - Date.now()) / 3600000 : Infinity;
-  if (hoursToEnd >= 5 / 60) return;
+  if (hoursToEnd >= PREDICTION_ARB_CONFIG.marketMaking.rebalanceWindowMinutes / 60) return;
 
   const key = await resolvePolymarketKey(strategy.userId);
   if (!key) return;

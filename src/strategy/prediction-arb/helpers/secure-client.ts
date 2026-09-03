@@ -10,12 +10,13 @@ import { createSecureClient, relayerApiKey } from '@polymarket/client';
 import { privateKey } from '@polymarket/client/viem';
 import { decryptSecretKey } from '../../../utils/encryption';
 import { updateCollateralBalance, resolveClobCredentials } from './clob-client';
+import { withRpcFailover } from './rpc-failover';
 
-// Deposit wallet da wallet signer (deployada via relayer).
-const DEPOSIT_WALLET = process.env.POLYMARKET_DEPOSIT_WALLET || '0x82d51169a7af29f26a276aaa303bc29b67f1c130';
 // Proxy Dublin (contorna geoblock do servidor). Lido em runtime.
 function getProxyBase(): string {
-  return process.env.POLYMARKET_CLOB_BASE || 'https://proxy-vercel-lilac.vercel.app/api/proxy/clob';
+  const base = process.env.POLYMARKET_CLOB_BASE;
+  if (!base) throw new Error('POLYMARKET_CLOB_BASE não configurada para o proxy CLOB');
+  return base;
 }
 
 // Cache de clients por endereço.
@@ -64,9 +65,14 @@ export async function getSecureClient(exchangeKeyDoc: any): Promise<any> {
   const relayerKey = String(exchangeKeyDoc.relayerApiKey || process.env.POLYMARKET_RELAYER_KEY || '').trim();
   if (!relayerKey) throw new Error('Relayer API key não configurada (ExchangeKey polymarket)');
 
+  const depositWallet = String(exchangeKeyDoc.depositWallet || '').toLowerCase();
+  if (!depositWallet.startsWith('0x') || depositWallet.length !== 42) {
+    throw new Error('Deposit wallet não configurada ou inválida na ExchangeKey');
+  }
+
   const signer = privateKey(getPrivateKey(exchangeKeyDoc));
   const client = await createSecureClient({
-    wallet: DEPOSIT_WALLET,
+    wallet: depositWallet,
     signer,
     apiKey: relayerApiKey({ key: relayerKey, address: String(exchangeKeyDoc.apiKey || '').toLowerCase() }),
   });
@@ -143,7 +149,7 @@ export async function fetchPositionsViaSdk(exchangeKeyDoc: any): Promise<any[]> 
  * é a fonte da verdade que funciona — retorna size/avg_price por token.
  */
 export async function fetchPositionsViaDataApi(exchangeKeyDoc: any): Promise<any[]> {
-  const dw = String(exchangeKeyDoc?.depositWallet || DEPOSIT_WALLET || '').trim();
+  const dw = String(exchangeKeyDoc?.depositWallet || '').trim();
   if (!dw) return [];
   const res = await fetch(`https://data-api.polymarket.com/positions?user=${dw}&limit=100`, {
     signal: AbortSignal.timeout(15000),
@@ -189,7 +195,6 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
   console.warn(`⚠️ [redeem] SDK não conseguiu após retries. Tentando redeem direto no contrato...`);
   const { ethers } = await import('ethers');
 
-  const RPC = process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com';
   const COLLATERAL = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
   const CONDITIONAL_TOKENS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
   const NEG_RISK_ADAPTER = '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296';
@@ -201,14 +206,12 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
   } catch { /* raw */ }
   if (!pk.startsWith('0x')) pk = `0x${pk}`;
 
-  const provider = new ethers.JsonRpcProvider(RPC, 137);
-  const wallet = new ethers.Wallet(pk, provider);
   const ZERO = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
   // Detecta negRisk pelo primeiro tokenId da posição (via CLOB)
   let negRisk = false;
   try {
-    const dw = String(exchangeKeyDoc.depositWallet || process.env.POLYMARKET_DEPOSIT_WALLET || '').trim();
+    const dw = String(exchangeKeyDoc.depositWallet || '').trim();
     const posRes = await fetch(`https://data-api.polymarket.com/positions?user=${dw}&limit=100`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
     if (posRes?.ok) {
       const poss = await posRes.json();
@@ -228,8 +231,13 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
   ];
   const target = negRisk ? NEG_RISK_ADAPTER : CONDITIONAL_TOKENS;
   console.warn(`ℹ️ [redeem] Mercado ${negRisk ? 'NEG-RISK' : 'padrão'} — usando adapter ${negRisk ? 'NegRisk' : 'CTF'}.`);
-  const contract = new ethers.Contract(target, redeemAbi, wallet);
-  const tx = await contract.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
-  await tx.wait();
-  console.warn(`✅ [redeem] Redeem direto OK (tx ${tx.hash}).`);
+
+  // Executa o redeem com failover de RPC
+  await withRpcFailover(async (provider) => {
+    const wallet = new ethers.Wallet(pk, provider);
+    const contract = new ethers.Contract(target, redeemAbi, wallet);
+    const tx = await contract.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
+    await tx.wait();
+    console.warn(`✅ [redeem] Redeem direto OK (tx ${tx.hash}).`);
+  });
 }

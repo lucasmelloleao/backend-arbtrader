@@ -6,8 +6,10 @@ import PredictionArbSettings from '../models/PredictionArbSettings';
 import BotStatus from '../models/BotStatus';
 import ExchangeKey from '../models/ExchangeKey';
 import { invalidatePredictionLiveCache } from '../strategy/prediction-arb/prediction-live';
+import { withRpcFailover } from '../strategy/prediction-arb/helpers/rpc-failover';
 
 const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
+const ERC20_ABI = ['function balanceOf(address) view returns (uint256)'];
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
@@ -77,15 +79,17 @@ export async function getPredictionBotStatus(req: AuthenticatedRequest, res: Res
     }
 
     // Saldo pUSD da deposit wallet (on-chain) — fonte da verdade do capital
-    // disponível para operar. Buscado via RPC da Polygon.
+    // disponível para operar. Buscado via RPC da Polygon com failover.
     let saldoDisponivel = 0;
     try {
       const key = await ExchangeKey.findOne({ userId, exchangeId: 'polymarket' }).lean();
       const dw = String(key?.depositWallet || process.env.POLYMARKET_DEPOSIT_WALLET || '').trim();
       if (dw) {
-        const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC || 'https://polygon-bor-rpc.publicnode.com', 137);
-        const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
-        saldoDisponivel = Number(ethers.formatUnits(await pusd.balanceOf(dw), 6));
+        saldoDisponivel = await withRpcFailover(async (provider) => {
+          const pusd = new ethers.Contract(PUSD, ERC20_ABI, provider);
+          const bal = await pusd.balanceOf(dw);
+          return Number(ethers.formatUnits(bal, 6));
+        });
       }
     } catch (e: any) {
       console.error('⚠️ [GET PredictionBotStatus] Falha ao buscar saldo on-chain:', e.message);

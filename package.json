@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc && mkdir -p dist/strategy/forex/ctrader/proto && cp -r src/strategy/forex/ctrader/proto/* dist/strategy/forex/ctrader/proto/",
+    "build": "tsc && node -e \"const fs=require('fs'); fs.cpSync('src/strategy/forex/ctrader/proto','dist/strategy/forex/ctrader/proto',{recursive:true});\"",
+    "test": "tsx --test test/**/*.test.ts",
     "start": "node dist/index.js",
     "bot:scanner": "ts-node-dev --transpile-only src/strategy/perpetuals/loop-scanner-robot.ts",
     "bot:funding-arb": "ts-node-dev --transpile-only src/strategy/perpetuals/funding-arb.ts",
@@ -48,6 +49,7 @@
     "@types/node": "^20.19.43",
     "@types/speakeasy": "^2.0.10",
     "@types/swagger-ui-express": "^4.1.8",
-    "@types/yamljs": "^0.2.34"
+    "@types/yamljs": "^0.2.34",
+    "tsx": "^4.23.13"
   }
 }

@@ -19,34 +19,25 @@ import { resolveClobCredentials, getOnchainBalance } from './helpers/clob-client
 import { redeemPositionsViaSdk } from './helpers/secure-client';
 import { syncPredictionHistory } from './sync-history';
 import ExchangeKey from '../../models/ExchangeKey';
+import { logger } from '../../utils/logger';
+import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
-const log = {
-  info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
-  warn: (msg: string, ...args: any[]) => console.warn(`[WARN] ${msg}`, ...args),
-  error: (msg: string, ...args: any[]) => console.error(`[ERROR] ${msg}`, ...args),
-};
+const log = logger;
 
-const isTelegramEnabled = () => !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+const isTelegramEnabled = () => PREDICTION_ARB_CONFIG.telegram.enabled;
 const BOT_NAME = 'prediction-arb';
-const DEFAULT_INTERVAL_MS = 60_000;
+const DEFAULT_INTERVAL_MS = PREDICTION_ARB_CONFIG.scan.intervalMs;
 
-// Contador de ciclos para o sync periódico do histórico (a cada 4 ciclos ~2min)
+// Contador de ciclos para o sync periódico do histórico
 let syncCycleCount = 0;
 
 // Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
-// e encerrar posições existentes antes de começar a operar.
 let liveAnterior = false;
-
-// Limite padrão de pares (posições reais) simultâneos quando a settings não
-// define maxOpenPairs. Acima do limite o robô para de ABRIR posição nova —
-// continua apenas completando hedges parciais e monitorando as abertas
-// (evita estourar o capital da deposit wallet).
-const MAX_PARES_ABERTOS_DEFAULT = 3;
 
 /** Lê o limite de pares simultâneos configurado (settings.maxOpenPairs). */
 function maxParesAbertos(settings: any): number {
   const v = Number(settings?.maxOpenPairs);
-  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : MAX_PARES_ABERTOS_DEFAULT;
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : PREDICTION_ARB_CONFIG.risk.maxOpenPairs;
 }
 
 /** Conta os pares (posições reais) atualmente abertos na Polymarket. */
@@ -103,7 +94,7 @@ async function saldoLivreEstimado(userId: any, key: any): Promise<{ livre: numbe
  */
 async function stopDiarioAtivo(settings: any): Promise<{ ativo: boolean; perdaDia: number; limite: number }> {
   try {
-    const limite = Number(settings?.maxDailyLoss ?? 10);
+    const limite = Number(settings?.maxDailyLoss ?? PREDICTION_ARB_CONFIG.risk.maxDailyLossUsd);
     if (limite <= 0) return { ativo: false, perdaDia: 0, limite };
     // Início do dia (UTC)
     const inicioDia = new Date(); inicioDia.setUTCHours(0, 0, 0, 0);
@@ -122,7 +113,7 @@ async function stopDiarioAtivo(settings: any): Promise<{ ativo: boolean; perdaDi
     return { ativo, perdaDia, limite };
   } catch (e: any) {
     log.warn(`⚠️ Falha ao checar stop diário: ${e.message}`);
-    return { ativo: false, perdaDia: 0, limite: Number(settings?.maxDailyLoss ?? 10) };
+    return { ativo: false, perdaDia: 0, limite: Number(settings?.maxDailyLoss ?? PREDICTION_ARB_CONFIG.risk.maxDailyLossUsd) };
   }
 }
 
@@ -361,10 +352,10 @@ async function runCycle() {
 
   // 1. Scan (pulado quando o stop diário está ativo — não criar risco novo)
   const config = {
-    minSpreadPct: Number(settings.minSpreadPct ?? 0.5),
-    minVolume24hUSD: Number(settings.minVolume24hUSD ?? 10000),
-    maxStrategiesPerScan: Number(settings.maxStrategiesPerScan ?? 5),
-    tradeSize: Number(settings.tradeSize ?? 100),
+    minSpreadPct: Number(settings.minSpreadPct ?? PREDICTION_ARB_CONFIG.scan.minSpreadPct),
+    minVolume24hUSD: Number(settings.minVolume24hUSD ?? PREDICTION_ARB_CONFIG.scan.minVolume24hUsd),
+    maxStrategiesPerScan: Number(settings.maxStrategiesPerScan ?? PREDICTION_ARB_CONFIG.scan.maxStrategiesPerScan),
+    tradeSize: Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize),
     allowedMarkets: settings.allowedMarkets || [],
     marketFilter: settings.marketFilter || '',
     marketCoins: settings.marketCoins || [],
@@ -416,8 +407,8 @@ async function runCycle() {
   //    - Com posição parcial (desbalanceada): pode completar o hedge mesmo
   //      faltando < 5 min.
   //    - Exclui mercados com > 20min (períodos futuros, sem referência).
-  const MIN_MINUTOS_PARA_VENCER = 5;
-  const MAX_MINUTOS_PARA_VENCER = 20;
+  const MIN_MINUTOS_PARA_VENCER = PREDICTION_ARB_CONFIG.timeWindows.mmMinMinutesToExpiry;
+  const MAX_MINUTOS_PARA_VENCER = PREDICTION_ARB_CONFIG.timeWindows.mmMaxMinutesToExpiry;
   const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
   const limiteFuturo = new Date(Date.now() + MAX_MINUTOS_PARA_VENCER * 60 * 1000);
 
@@ -429,7 +420,7 @@ async function runCycle() {
   if (podeAbrirNovo) {
     const orcamento = await saldoLivreEstimado(settings.userId, key);
     // Custo estimado do par novo: tradeSize aplicado nos dois lados (pior caso)
-    const tradeSizeConf = Number(settings.tradeSize ?? 100);
+    const tradeSizeConf = Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
     const custoParNovo = tradeSizeConf * 2;
     if (orcamento.livre < custoParNovo) {
       log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir par novo (livre $${orcamento.livre.toFixed(2)} < custo $${custoParNovo.toFixed(2)} de ${tradeSizeConf}/lado; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
@@ -488,7 +479,7 @@ async function runCycle() {
   //    venda) — sem isso o Histórico de Trades do frontend fica sem as
   //    operações encerradas e sem o lucro/prejuízo.
   syncCycleCount++;
-  if (syncCycleCount >= 4) {
+  if (syncCycleCount >= PREDICTION_ARB_CONFIG.sync.historySyncEveryNCycles) {
     syncCycleCount = 0;
     try {
       const r = await syncPredictionHistory(settings.userId);

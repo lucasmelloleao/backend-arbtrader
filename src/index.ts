@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import { connectToDatabase } from './config/db';
 import authRoutes from './routes/authRoutes';
+import mongoose from 'mongoose';
 
 const app = express();
 const PORT = process.env.PORT || 4002;
@@ -54,6 +55,22 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
+});
+
+app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+app.get('/readyz', (req, res) => {
+  const ready = mongoose.connection.readyState === 1;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not-ready', database: ready ? 'connected' : 'disconnected' });
+});
+app.get('/metrics', (req, res) => {
+  res.type('text/plain').send([
+    '# HELP backend_uptime_seconds Backend process uptime in seconds',
+    '# TYPE backend_uptime_seconds gauge',
+    `backend_uptime_seconds ${process.uptime()}`,
+    '# HELP backend_database_ready Database connection readiness',
+    '# TYPE backend_database_ready gauge',
+    `backend_database_ready ${mongoose.connection.readyState === 1 ? 1 : 0}`,
+  ].join('\n') + '\n');
 });
 
 import { startTelegramBotAndPM2Monitor } from './utils/telegram';

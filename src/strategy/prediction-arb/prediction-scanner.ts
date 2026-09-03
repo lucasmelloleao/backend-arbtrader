@@ -5,6 +5,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { fetchOpenMarkets, fetchMarketBySlug, invalidateMarketsCache, GammaMarket } from './helpers/gamma-client';
 import { fetchBook } from './helpers/clob-client';
 import { completenessSpreadPct } from './helpers/pricing';
+import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -35,7 +36,7 @@ function toNum(v: any): number {
  */
 export async function fetchBookSpread(
   m: GammaMarket,
-  minDepthUsd = 100
+  minDepthUsd: number = PREDICTION_ARB_CONFIG.scan.minDepthUsdBase
 ): Promise<{ bidYes: number; bidNo: number; askYes: number; askNo: number; spreadPct: number; depthOk: boolean }> {
   let bidYes = 0;
   let bidNo = 0;
@@ -115,7 +116,10 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
   // Busca o book de cada candidato (com limite para não estourar rate-limit).
   // A profundidade mínima exigida é proporcional ao tradeSize (4× o par):
   // mercado com menos liquidez que isso não tem contraparte real para o par.
-  const minDepthUsdScan = Math.max(20, Number(config.tradeSize ?? 5) * 4);
+  const minDepthUsdScan = Math.max(
+    PREDICTION_ARB_CONFIG.scan.minDepthUsdBase,
+    Number(config.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize) * PREDICTION_ARB_CONFIG.scan.depthMultiplier
+  );
   const evaluated: MarketOpportunity[] = [];
   for (const m of candidates.slice(0, 30)) {
     const book = await fetchBookSpread(m, minDepthUsdScan);
@@ -147,7 +151,7 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
       // bid mínimo de 0.01 distorce o spread de completude.
       if (e.yes > 0 && e.no > 0) {
         const pMin = Math.min(e.yes, e.no);
-        if (pMin < 0.02) return false;
+        if (pMin < PREDICTION_ARB_CONFIG.scan.minProbability) return false;
       }
       return true;
     })

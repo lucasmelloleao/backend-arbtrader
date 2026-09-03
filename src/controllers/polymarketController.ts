@@ -7,9 +7,11 @@ import ExchangeKey from '../models/ExchangeKey';
 import { encryptSecretKey, decryptSecretKey } from '../utils/encryption';
 import { syncPredictionHistory } from '../strategy/prediction-arb/sync-history';
 import { ethers } from 'ethers';
+import { withRpcFailover } from '../strategy/prediction-arb/helpers/rpc-failover';
+import { getRelayerBaseUrl } from '../config/prediction-arb';
 
 const PUSD = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
-const RPC = 'https://polygon-bor-rpc.publicnode.com';
+const ERC20_ABI = ['function balanceOf(address) view returns (uint256)'];
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
@@ -69,14 +71,21 @@ export async function syncPolymarketBalance(req: AuthenticatedRequest, res: Resp
     if (!userId) return err(res, 401, 'Não autorizado.', isDashboard(req));
 
     const key = await findPolyKey(userId);
-    const provider = new ethers.JsonRpcProvider(RPC, 137);
-    const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)'], provider);
-
     const eoa = String(key.apiKey || '').toLowerCase();
     const dw = String(key.depositWallet || '').toLowerCase();
 
-    const balEoa = eoa ? Number(ethers.formatUnits(await pusd.balanceOf(eoa), 6)) : 0;
-    const balDw = dw ? Number(ethers.formatUnits(await pusd.balanceOf(dw), 6)) : 0;
+    const [balEoa, balDw] = await Promise.all([
+      eoa ? withRpcFailover(async (provider) => {
+        const pusd = new ethers.Contract(PUSD, ERC20_ABI, provider);
+        const bal = await pusd.balanceOf(eoa);
+        return Number(ethers.formatUnits(bal, 6));
+      }) : Promise.resolve(0),
+      dw ? withRpcFailover(async (provider) => {
+        const pusd = new ethers.Contract(PUSD, ERC20_ABI, provider);
+        const bal = await pusd.balanceOf(dw);
+        return Number(ethers.formatUnits(bal, 6));
+      }) : Promise.resolve(0),
+    ]);
 
     await ExchangeKey.findByIdAndUpdate(key._id, {
       $set: { pusdBalance: balDw, lastSyncAt: new Date() },
@@ -107,38 +116,43 @@ export async function transferPusdToDepositWallet(req: AuthenticatedRequest, res
     }
 
     const privateKey = getPrivateKey(key);
-    const provider = new ethers.JsonRpcProvider(RPC, 137);
-    const wallet = new ethers.Wallet(privateKey, provider);
-    const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)', 'function transfer(address,uint256) returns (bool)'], wallet);
 
-    const bal = await pusd.balanceOf(wallet.address);
-    if (bal <= 0n) {
-      return err(res, 400, 'Nenhum pUSD na wallet EOA para transferir.', isDashboard(req));
-    }
+    // Tenta a transferência com failover de RPC
+    const result = await withRpcFailover(async (provider) => {
+      const wallet = new ethers.Wallet(privateKey, provider);
+      const pusd = new ethers.Contract(PUSD, ['function balanceOf(address) view returns (uint256)', 'function transfer(address,uint256) returns (bool)'], wallet);
 
-    const matic = await provider.getBalance(wallet.address);
-    if (matic < ethers.parseEther('0.01')) {
-      return err(res, 400, 'MATIC insuficiente na EOA para pagar o gas da transferência.', isDashboard(req));
-    }
+      const bal = await pusd.balanceOf(wallet.address);
+      if (bal <= 0n) {
+        throw new Error('Nenhum pUSD na wallet EOA para transferir.');
+      }
 
-    const amount = Number(req.body?.amount);
-    const value = amount && amount > 0
-      ? ethers.parseUnits(Math.min(amount, Number(ethers.formatUnits(bal, 6))).toFixed(6), 6)
-      : bal;
+      const matic = await provider.getBalance(wallet.address);
+      if (matic < ethers.parseEther('0.01')) {
+        throw new Error('MATIC insuficiente na EOA para pagar o gas da transferência.');
+      }
 
-    const tx = await pusd.transfer(dw, value, { gasLimit: 100000 });
-    const receipt = await tx.wait();
+      const amount = Number(req.body?.amount);
+      const value = amount && amount > 0
+        ? ethers.parseUnits(Math.min(amount, Number(ethers.formatUnits(bal, 6))).toFixed(6), 6)
+        : bal;
 
-    const balDw = Number(ethers.formatUnits(await pusd.balanceOf(dw), 6));
-    await ExchangeKey.findByIdAndUpdate(key._id, {
-      $set: { pusdBalance: balDw, lastSyncAt: new Date() },
+      const tx = await pusd.transfer(dw, value, { gasLimit: 100000 });
+      const receipt = await tx.wait();
+
+      const balDw = Number(ethers.formatUnits(await pusd.balanceOf(dw), 6));
+      await ExchangeKey.findByIdAndUpdate(key._id, {
+        $set: { pusdBalance: balDw, lastSyncAt: new Date() },
+      });
+
+      return {
+        success: true,
+        message: `Transferidos ${ethers.formatUnits(value, 6)} pUSD para a deposit wallet.`,
+        data: { txHash: receipt.hash, amount: Number(ethers.formatUnits(value, 6)), depositWalletBalance: balDw },
+      };
     });
 
-    return res.json({
-      success: true,
-      message: `Transferidos ${ethers.formatUnits(value, 6)} pUSD para a deposit wallet.`,
-      data: { txHash: receipt.hash, amount: Number(ethers.formatUnits(value, 6)), depositWalletBalance: balDw },
-    });
+    return res.json(result);
   } catch (e: any) {
     return err(res, 500, e.message, isDashboard(req));
   }
@@ -158,7 +172,8 @@ export async function deployDepositWallet(req: AuthenticatedRequest, res: Respon
 
     const eoa = String(key.apiKey || '').trim();
     const FACTORY = '0x00000000000Fb5C9ADea0298D729A0CB3823Cc07';
-    const RELAYER = process.env.POLYMARKET_RELAYER_BASE || 'https://proxy-vercel-lilac.vercel.app/api/proxy/relayer';
+    const RELAYER = getRelayerBaseUrl();
+    if (!RELAYER) return err(res, 500, 'POLYMARKET_RELAYER_BASE não configurada.', isDashboard(req));
 
     // 1. Verifica se já existe (params retorna nonce; se wallet existe, o create falha)
     // 2. Envia WALLET-CREATE
