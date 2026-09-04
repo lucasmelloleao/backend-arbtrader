@@ -74,10 +74,15 @@ async function startScalpExecutor() {
               }
             }
 
-            // Remove da gestão se a posição foi fechada na cTrader
+            // Remove da gestão e atualiza MongoDB se a posição foi fechada manualmente ou por SL/TP na cTrader
             for (const sym of symbols) {
               if (!cTraderOpenSymbols.has(sym) && activePositions.has(sym)) {
                 activePositions.delete(sym);
+                ForexArbStrategy.updateMany(
+                  { userId: settings.userId, name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`), positionOpen: true },
+                  { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+                ).catch(() => {});
+                log.info(`🔄 [RECONCILE CTRADER] Posição em ${sym} encerrada na cTrader. Status sincronizado no banco.`);
               }
             }
           } catch { /* erro no reconcile */ }
