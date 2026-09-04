@@ -263,7 +263,7 @@ async function startScalpExecutor() {
     } catch (err: any) {
       log.error('❌ Erro no loop do Scalp Executor:', err.message);
     }
-    await new Promise(r => setTimeout(r, 1000)); // Execução rápida de 1s
+    await new Promise(r => setTimeout(r, 250)); // Monitoramento ultra-rápido de alta frequência (250ms)
   }
 }
 
