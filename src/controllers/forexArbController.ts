@@ -45,10 +45,12 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       let livePnlUsd = s.pnl || 0;
 
       if (curPrice && entryPrice > 0) {
-        livePnlPct = side === 'BUY'
-          ? ((curPrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - curPrice) / entryPrice) * 100;
-        livePnlUsd = (livePnlPct / 100) * (s.positionSize || s.tradeSize || 100);
+        const diff = side === 'BUY' ? (curPrice - entryPrice) : (entryPrice - curPrice);
+        livePnlPct = (diff / entryPrice) * 100;
+        
+        // Multiplica a diferença de preço pelo volume equivalente (ex: 1 onça para 0.01 lot de XAU/USD)
+        const volumeUnits = (s.positionSize || s.tradeSize || 100) / 100;
+        livePnlUsd = diff * volumeUnits;
       }
 
       const userTrailingTarget = (settings as any).trailingStopPct ?? 0.01;
