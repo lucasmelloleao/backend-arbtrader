@@ -986,7 +986,7 @@ paths:
           description: Não autenticado
   /forex-arb/close:
     post:
-      tags: [ForexArb]
+      tags: [ForexScalping]
       summary: Aciona o fechamento de uma posição Forex aberta
       operationId: closeForexStrategy
       security:
@@ -1004,6 +1004,18 @@ paths:
       responses:
         "200":
           description: Fechamento acionado
+        "401":
+          description: Não autenticado
+  /forex-arb/close-all:
+    post:
+      tags: [ForexScalping]
+      summary: Encerra todas as posições Forex abertas de uma só vez
+      operationId: closeAllForexStrategies
+      security:
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Todas as posições foram encerradas
         "401":
           description: Não autenticado
   /forex-arb/logs:
@@ -2488,6 +2500,12 @@ components:
           type: number
         autoExecute:
           type: boolean
+        pnlPct:
+          type: number
+          description: Percentual de PnL calculado em tempo real
+        isTrailingActive:
+          type: boolean
+          description: Indica se a posição acionou e está com Trailing Stop ativo
     ForexArbTrade:
       type: object
       required: [type, status]
