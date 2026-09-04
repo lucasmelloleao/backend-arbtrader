@@ -216,6 +216,8 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
       amount: t.amount,
       expectedProfitPct: t.expectedProfitPct,
       realizedPnl: t.realizedPnl,
+      commission: t.commission || 0,
+      swap: t.swap || 0,
       status: t.status,
       reason: t.reason,
       errorMessage: t.errorMessage,
