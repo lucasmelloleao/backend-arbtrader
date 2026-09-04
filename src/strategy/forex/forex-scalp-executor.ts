@@ -187,9 +187,13 @@ async function startScalpExecutor() {
                   ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
                   : ((activePos.entryPrice - midPrice) / activePos.entryPrice) * 100;
 
-                // Atualiza pico de ganho da posição
+                // Atualiza pico de ganho da posição (sobe a régua e persiste)
                 if (pnlPct > activePos.peakPnlPct) {
                   activePos.peakPnlPct = pnlPct;
+                  ForexArbStrategy.updateOne(
+                    { userId: settings.userId, name: `Scalping ${sym} (${activePos.side})`, positionOpen: true },
+                    { $set: { peakProfitPct: pnlPct } }
+                  ).catch(() => {});
                 }
 
                 const tpTarget = settings.takeProfitPct ?? 0.10;
@@ -198,7 +202,9 @@ async function startScalpExecutor() {
 
                 const atingiuTP = pnlPct >= tpTarget; // Take profit dinâmico
                 const atingiuSL = pnlPct <= -Math.abs(slTarget); // Stop loss dinâmico
-                const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= (trailingTarget / 2); // Trailing stop dinâmico
+                
+                // Trailing stop: Se a régua subiu além do gatilho (ex: +0.01%) E o preço atual recuou 50% do topo atingido
+                const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= (trailingTarget / 2);
 
                 if (atingiuTP || atingiuSL || atingiuTrailing) {
                   const motivoFechar = atingiuTrailing
