@@ -390,3 +390,54 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
   }
 }
 
+export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
+
+    const openStrategies = await ForexArbStrategy.find({ userId, positionOpen: true });
+    if (!openStrategies || openStrategies.length === 0) {
+      return res.json({ success: true, message: 'Nenhuma posição aberta encontrada.', closedCount: 0 });
+    }
+
+    let closedCount = 0;
+    try {
+      const keys = await ExchangeKey.find({ userId, active: true }).lean();
+      const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+      if (ctraderKey) {
+        const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
+        const adapter = await getSharedCtraderAdapter(ctraderKey as any);
+        await adapter.connect();
+        await adapter.loadMarkets();
+        const accountId = Number((ctraderKey as any).accountId);
+        const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
+
+        if (rec && rec.position && rec.position.length > 0) {
+          for (const p of rec.position) {
+            try {
+              const realPosId = String(p.positionId);
+              const volProto = Number(p.tradeData?.volume || 100);
+              console.log(`🚨 [CLOSE ALL MANUAL] Encerrando posição #${realPosId} na cTrader...`);
+              await adapter.closePosition(realPosId, volProto);
+              closedCount++;
+            } catch (err: any) {
+              console.error(`Erro ao fechar posição #${p.positionId}:`, err.message);
+            }
+          }
+        }
+      }
+    } catch (ctraderErr: any) {
+      console.warn(`⚠️ Erro de conexão com a cTrader durante o Close All:`, ctraderErr.message);
+    }
+
+    await ForexArbStrategy.updateMany(
+      { userId, positionOpen: true },
+      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+    );
+
+    return res.json({ success: true, message: `Todas as posições (${openStrategies.length}) foram encerradas com sucesso!`, closedCount });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+

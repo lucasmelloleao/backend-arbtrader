@@ -72,6 +72,7 @@ import {
   updateForexSettings,
   updateCtraderCredentials,
   closeForexStrategy,
+  closeAllForexStrategies,
   getForexLogs
 } from '../controllers/forexArbController';
 import {
@@ -216,6 +217,7 @@ router.get('/auth/forex-arb/settings', authMiddleware as any, getForexSettings a
 router.post('/auth/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.put('/auth/forex-arb/ctrader-credentials', authMiddleware as any, updateCtraderCredentials as any);
 router.post('/auth/forex-arb/close', authMiddleware as any, closeForexStrategy as any);
+router.post('/auth/forex-arb/close-all', authMiddleware as any, closeAllForexStrategies as any);
 router.get('/auth/forex-arb/logs', authMiddleware as any, getForexLogs as any);
 
 router.get('/auth/bot-status', authMiddleware as any, getBotStatus as any);
