@@ -2562,6 +2562,15 @@ components:
           type: array
           items:
             type: string
+        takeProfitPct:
+          type: number
+          description: Percentual de alvo de Take Profit fixo (ex 0.10 para 0.10%)
+        stopLossPct:
+          type: number
+          description: Percentual de limite de Stop Loss fixo (ex 0.10 para 0.10%)
+        trailingStopPct:
+          type: number
+          description: Percentual de gatilho do Trailing Stop móvel (ex 0.01 para 0.01%)
     ForexArbSettingsUpdateRequest:
       type: object
       properties:

@@ -14,7 +14,9 @@ const ForexArbSettingsSchema = new mongoose.Schema({
   autoExecute: { type: Boolean, default: true },
   simpleEnabled: { type: Boolean, default: true },
   triangularEnabled: { type: Boolean, default: true },
-  allowedExchanges: { type: [String], default: [] },
+  takeProfitPct: { type: Number, default: 0.10 },
+  stopLossPct: { type: Number, default: 0.10 },
+  trailingStopPct: { type: Number, default: 0.01 },
 }, { timestamps: true });
 
 export default mongoose.models.ForexArbSettings || mongoose.model('ForexArbSettings', ForexArbSettingsSchema);

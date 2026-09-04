@@ -210,7 +210,10 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
         autoExecute: true,
         simpleEnabled: true,
         triangularEnabled: true,
-        allowedExchanges: []
+        allowedExchanges: [],
+        takeProfitPct: 0.10,
+        stopLossPct: 0.10,
+        trailingStopPct: 0.01
       });
     }
 
@@ -229,7 +232,10 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
       autoExecute: settings.autoExecute,
       simpleEnabled: settings.simpleEnabled,
       triangularEnabled: settings.triangularEnabled,
-      allowedExchanges: settings.allowedExchanges || []
+      allowedExchanges: settings.allowedExchanges || [],
+      takeProfitPct: settings.takeProfitPct ?? 0.10,
+      stopLossPct: settings.stopLossPct ?? 0.10,
+      trailingStopPct: settings.trailingStopPct ?? 0.01
     };
 
     const isDashboard = req.path.includes('/auth/');

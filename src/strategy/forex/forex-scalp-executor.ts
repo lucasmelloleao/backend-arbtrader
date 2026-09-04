@@ -192,9 +192,13 @@ async function startScalpExecutor() {
                   activePos.peakPnlPct = pnlPct;
                 }
 
-                const atingiuTP = pnlPct >= 0.10; // Take profit fixo em +0.10%
-                const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
-                const atingiuTrailing = activePos.peakPnlPct >= 0.01 && (activePos.peakPnlPct - pnlPct) >= 0.005; // Trailing stop (ativa em +0.01%, realiza se recuar 0.005%)
+                const tpTarget = settings.takeProfitPct ?? 0.10;
+                const slTarget = settings.stopLossPct ?? 0.10;
+                const trailingTarget = settings.trailingStopPct ?? 0.01;
+
+                const atingiuTP = pnlPct >= tpTarget; // Take profit dinâmico
+                const atingiuSL = pnlPct <= -Math.abs(slTarget); // Stop loss dinâmico
+                const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= (trailingTarget / 2); // Trailing stop dinâmico
 
                 if (atingiuTP || atingiuSL || atingiuTrailing) {
                   const motivoFechar = atingiuTrailing
