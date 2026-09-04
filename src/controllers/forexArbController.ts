@@ -15,6 +15,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
     // Retorna apenas estratégias com posição atualmente aberta (positionOpen: true)
     const strategies = await ForexArbStrategy.find({ userId, positionOpen: true }).sort({ createdAt: -1 });
 
+    const settings = await ForexArbSettings.findOne({ userId }).lean() || {};
+
     // Tenta enriquecer com PnL em tempo real se houver conexão com a cTrader
     let currentPrices = new Map<string, number>();
     try {
@@ -49,7 +51,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         livePnlUsd = (livePnlPct / 100) * (s.positionSize || s.tradeSize || 100);
       }
 
-      const userTrailingTarget = settings.trailingStopPct ?? 0.01;
+      const userTrailingTarget = (settings as any).trailingStopPct ?? 0.01;
       const peak = s.peakProfitPct || 0;
       const isTrailingActive = livePnlPct >= userTrailingTarget || peak >= userTrailingTarget;
 
