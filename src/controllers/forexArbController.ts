@@ -14,31 +14,68 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
 
     // Retorna apenas estratégias com posição atualmente aberta (positionOpen: true)
     const strategies = await ForexArbStrategy.find({ userId, positionOpen: true }).sort({ createdAt: -1 });
-    const formatted = strategies.map((s: any) => ({
-      _id: s._id.toString(),
-      id: s._id.toString(),
-      userId: s.userId.toString(),
-      name: s.name,
-      exchangeId: s.exchangeId,
-      exchangeKeyId: s.exchangeKeyId ? s.exchangeKeyId.toString() : null,
-      type: s.type,
-      legs: s.legs || [],
-      tradeSize: s.tradeSize,
-      expectedProfitPct: s.expectedProfitPct,
-      minProfitPct: s.minProfitPct,
-      maxSlippagePct: s.maxSlippagePct,
-      autoExecute: s.autoExecute,
-      isAutoCreated: s.isAutoCreated,
-      active: s.active,
-      positionOpen: s.positionOpen,
-      positionOpenedAt: s.positionOpenedAt,
-      positionSize: s.positionSize,
-      status: s.status,
-      pnl: s.pnl,
-      peakProfitPct: s.peakProfitPct || 0,
-      closedAt: s.closedAt,
-      createdAt: s.createdAt
-    }));
+
+    // Tenta enriquecer com PnL em tempo real se houver conexão com a cTrader
+    let currentPrices = new Map<string, number>();
+    try {
+      const keys = await ExchangeKey.find({ userId, active: true }).lean();
+      const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+      if (ctraderKey) {
+        const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
+        const adapter = await getSharedCtraderAdapter(ctraderKey as any);
+        const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+        const tickers = await (adapter as any).fetchTickers(symbols);
+        for (const sym of symbols) {
+          if (tickers[sym]?.bid && tickers[sym]?.ask) {
+            currentPrices.set(sym, (tickers[sym].bid + tickers[sym].ask) / 2);
+          }
+        }
+      }
+    } catch {}
+
+    const formatted = strategies.map((s: any) => {
+      const leg = s.legs && s.legs[0];
+      const entryPrice = leg?.price || 0;
+      const sym = leg?.symbol;
+      const side = leg?.side?.toUpperCase();
+      const curPrice = sym ? currentPrices.get(sym) : null;
+      let livePnlPct = 0;
+      let livePnlUsd = s.pnl || 0;
+
+      if (curPrice && entryPrice > 0) {
+        livePnlPct = side === 'BUY'
+          ? ((curPrice - entryPrice) / entryPrice) * 100
+          : ((entryPrice - curPrice) / entryPrice) * 100;
+        livePnlUsd = (livePnlPct / 100) * (s.positionSize || s.tradeSize || 100);
+      }
+
+      return {
+        _id: s._id.toString(),
+        id: s._id.toString(),
+        userId: s.userId.toString(),
+        name: s.name,
+        exchangeId: s.exchangeId,
+        exchangeKeyId: s.exchangeKeyId ? s.exchangeKeyId.toString() : null,
+        type: s.type,
+        legs: s.legs || [],
+        tradeSize: s.tradeSize,
+        expectedProfitPct: s.expectedProfitPct,
+        minProfitPct: s.minProfitPct,
+        maxSlippagePct: s.maxSlippagePct,
+        autoExecute: s.autoExecute,
+        isAutoCreated: s.isAutoCreated,
+        active: s.active,
+        positionOpen: s.positionOpen,
+        positionOpenedAt: s.positionOpenedAt,
+        positionSize: s.positionSize,
+        status: s.status,
+        pnl: livePnlUsd,
+        pnlPct: livePnlPct,
+        peakProfitPct: s.peakProfitPct || 0,
+        closedAt: s.closedAt,
+        createdAt: s.createdAt
+      };
+    });
 
     const isDashboard = req.path.includes('/auth/');
     return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
