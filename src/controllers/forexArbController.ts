@@ -49,8 +49,9 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         livePnlUsd = (livePnlPct / 100) * (s.positionSize || s.tradeSize || 100);
       }
 
+      const userTrailingTarget = settings.trailingStopPct ?? 0.01;
       const peak = s.peakProfitPct || 0;
-      const isTrailingActive = livePnlPct >= 0.01 || peak >= 0.01;
+      const isTrailingActive = livePnlPct >= userTrailingTarget || peak >= userTrailingTarget;
 
       return {
         _id: s._id.toString(),
