@@ -17,8 +17,12 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
 
     const settings = await ForexArbSettings.findOne({ userId }).lean() || {};
 
-    // Tenta enriquecer com PnL em tempo real se houver conexão com a cTrader
+    // Tenta enriquecer com PnL em tempo real e reconciliar posições abertas se houver conexão com a cTrader
     let currentPrices = new Map<string, number>();
+    let openCtraderPosIds = new Set<string>();
+    let openCtraderSymbols = new Set<string>();
+    let ctraderConnected = false;
+
     try {
       const keys = await ExchangeKey.find({ userId, active: true }).lean();
       const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
@@ -32,10 +36,24 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
             currentPrices.set(sym, (tickers[sym].bid + tickers[sym].ask) / 2);
           }
         }
+
+        // Reconciliação em tempo real com a cTrader
+        const accountId = Number((ctraderKey as any).accountId);
+        const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 5000);
+        if (rec && rec.position) {
+          ctraderConnected = true;
+          for (const p of rec.position) {
+            openCtraderPosIds.add(String(p.positionId));
+            const m = adapter.marketsById.get(String(p.tradeData?.symbolId));
+            if (m?.symbol) openCtraderSymbols.add(m.symbol);
+          }
+        }
       }
     } catch {}
 
-    const formatted = strategies.map((s: any) => {
+    const formatted: any[] = [];
+
+    for (const s of strategies) {
       const leg = s.legs && s.legs[0];
       const entryPrice = leg?.price || 0;
       const sym = leg?.symbol;
@@ -44,6 +62,21 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       let livePnlPct = s.pnlPct || 0;
       let livePnlUsd = s.pnl || 0;
 
+      // Se a cTrader respondeu e a posição não existe mais na corretora, atualiza o MongoDB como fechada
+      if (ctraderConnected && sym) {
+        const orderIdStr = String(leg?.orderId || '');
+        const matchPosId = orderIdStr.match(/Pos #(\d+)/)?.[1] || orderIdStr;
+        const aindaExiste = openCtraderPosIds.has(matchPosId) || openCtraderSymbols.has(sym);
+
+        if (!aindaExiste) {
+          ForexArbStrategy.updateOne(
+            { _id: s._id },
+            { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+          ).catch(() => {});
+          continue; // Não inclui na listagem de abertas no front
+        }
+      }
+
       if (curPrice && entryPrice > 0) {
         const diff = side === 'BUY' ? (curPrice - entryPrice) : (entryPrice - curPrice);
         livePnlPct = (diff / entryPrice) * 100;
@@ -51,11 +84,18 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         // Na cTrader, tradeSize=100 equivale a 0.01 lote micro.
         // Forex (EUR/USD, GBP/USD, etc): 1.00 Lote = 100.000 unidades (0.01 lote = 1.000 unidades)
         // Commodities (XAU/USD): 1.00 Lote = 100 onças (0.01 lote = 1 onça)
+        // Pares JPY (USD/JPY): a variação é em Ienes (JPY), dividida pelo curPrice para converter em USD.
         const isGold = sym?.includes('XAU');
+        const isJpy = sym?.endsWith('/JPY') || sym?.endsWith('JPY');
         const lotFraction = (s.positionSize || s.tradeSize || 100) / 10000; // 100 -> 0.01 lote
         const contractUnits = isGold ? lotFraction * 100 : lotFraction * 100000;
         
-        livePnlUsd = diff * contractUnits;
+        let pnlUsdRaw = diff * contractUnits;
+        if (isJpy && curPrice > 0) {
+          pnlUsdRaw = pnlUsdRaw / curPrice; // Converte variação de JPY para USD
+        }
+
+        livePnlUsd = pnlUsdRaw;
 
         // Atualiza pico de lucro e PnL no documento para fallback suave
         ForexArbStrategy.updateOne(
@@ -68,7 +108,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       const peak = s.peakProfitPct || 0;
       const isTrailingActive = livePnlPct >= userTrailingTarget || peak >= userTrailingTarget;
 
-      return {
+      formatted.push({
         _id: s._id.toString(),
         id: s._id.toString(),
         userId: s.userId.toString(),
@@ -94,8 +134,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         isTrailingActive,
         closedAt: s.closedAt,
         createdAt: s.createdAt
-      };
-    });
+      });
+    }
 
     const isDashboard = req.path.includes('/auth/');
     return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
