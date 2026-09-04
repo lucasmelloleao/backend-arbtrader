@@ -402,7 +402,13 @@ export class CtraderAdapter {
           clearTimeout(timer);
           this.client.offExecution(handler);
           const deal = evt.deal || {};
-          const price = order.executionPrice != null ? Number(order.executionPrice) : (deal.executionPrice != null ? Number(deal.executionPrice) : 0);
+          const pos = evt.position || {};
+          const rawPrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
+            ? Number(deal.executionPrice)
+            : (pos.price != null && Number(pos.price) > 0
+              ? Number(pos.price)
+              : (order.executionPrice != null ? Number(order.executionPrice) : 0));
+          const price = rawPrice;
           const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : 0);
           resolve({
             id: String(order.orderId || deal.dealId || ''),
