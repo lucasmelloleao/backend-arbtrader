@@ -194,7 +194,7 @@ async function startScalpExecutor() {
 
                 const atingiuTP = pnlPct >= 0.10; // Take profit fixo em +0.10%
                 const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
-                const atingiuTrailing = activePos.peakPnlPct >= 0.02 && (activePos.peakPnlPct - pnlPct) >= 0.01; // Trailing stop (ativa em 0.02%, realiza se recuar 0.01%)
+                const atingiuTrailing = activePos.peakPnlPct >= 0.01 && (activePos.peakPnlPct - pnlPct) >= 0.005; // Trailing stop (ativa em +0.01%, realiza se recuar 0.005%)
 
                 if (atingiuTP || atingiuSL || atingiuTrailing) {
                   const motivoFechar = atingiuTrailing
