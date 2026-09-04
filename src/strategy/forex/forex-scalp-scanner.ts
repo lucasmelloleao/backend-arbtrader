@@ -24,6 +24,7 @@ export interface ScalpSignal {
 }
 
 const priceHistory = new Map<string, Array<{ price: number; timestamp: number }>>();
+const lastClosedTradeTime = new Map<string, number>();
 
 function recordPrice(symbol: string, price: number) {
   if (!priceHistory.has(symbol)) {
@@ -62,13 +63,32 @@ function calculateRSI(prices: number[], period: number = 14): number {
   return 100 - (100 / (1 + rs));
 }
 
-export function analyzeScalpOpportunity(symbol: string, currentPrice: number): ScalpSignal {
+export function analyzeScalpOpportunity(
+  symbol: string,
+  bid: number,
+  ask: number
+): ScalpSignal {
+  const currentPrice = (bid + ask) / 2;
+  
+  // 1. Filtro de Spread Máximo (Máximo 0.025%)
+  const spreadPct = ((ask - bid) / currentPrice) * 100;
+  if (spreadPct > 0.025) {
+    return { symbol, action: 'NEUTRAL', reason: `Spread alto (${spreadPct.toFixed(3)}% > 0.025%)`, price: currentPrice };
+  }
+
+  // 2. Cooldown de 3 minutos após fechar trade no mesmo par
+  const lastTime = lastClosedTradeTime.get(symbol) || 0;
+  if (Date.now() - lastTime < 180000) {
+    const restSec = Math.ceil((180000 - (Date.now() - lastTime)) / 1000);
+    return { symbol, action: 'NEUTRAL', reason: `Em cooldown (${restSec}s restantes)`, price: currentPrice };
+  }
+
   recordPrice(symbol, currentPrice);
   const history = priceHistory.get(symbol)!;
   const prices = history.map(h => h.price);
 
-  if (prices.length < 15) {
-    return { symbol, action: 'NEUTRAL', reason: 'Aguardando mais ticks para calcular indicadores', price: currentPrice };
+  if (prices.length < 20) {
+    return { symbol, action: 'NEUTRAL', reason: 'Aguardando mais amostragem de preços (min. 20 ticks)', price: currentPrice };
   }
 
   const emaFast = calculateEMA(prices, 5);
@@ -77,27 +97,35 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
 
   const prevEmaFast = calculateEMA(prices.slice(0, -1), 5);
   const prevEmaSlow = calculateEMA(prices.slice(0, -1), 15);
+  const prev2EmaSlow = calculateEMA(prices.slice(0, -3), 15);
 
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
-  if (crossoverBuy && rsi < 65) {
+  // 3. Inclinação da EMA Slow (Tendência do mercado)
+  const emaSlowSlope = emaSlow - prev2EmaSlow;
+
+  // 4. Filtro RSI Estrito para evitar exaustão de tendência
+  // BUY: Cruzamento de Alta + EMA Slow subindo + RSI entre 45 e 62
+  if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 62) {
     return {
       symbol,
       action: 'BUY',
-      reason: `Cruzamento de Alta! EMA5 (${emaFast.toFixed(5)}) cruzou acima de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) < 65`,
+      reason: `Cruzamento de Alta com Tendência! EMA5 (${emaFast.toFixed(5)}) > EMA15 (${emaSlow.toFixed(5)}), Inclin: +${emaSlowSlope.toFixed(6)}, RSI: ${rsi.toFixed(1)}`,
       price: currentPrice
     };
-  } else if (crossoverSell && rsi > 35) {
+  } 
+  // SELL: Cruzamento de Baixa + EMA Slow caindo + RSI entre 38 e 55
+  else if (crossoverSell && emaSlowSlope < 0 && rsi >= 38 && rsi <= 55) {
     return {
       symbol,
       action: 'SELL',
-      reason: `Cruzamento de Baixa! EMA5 (${emaFast.toFixed(5)}) cruzou abaixo de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) > 35`,
+      reason: `Cruzamento de Baixa com Tendência! EMA5 (${emaFast.toFixed(5)}) < EMA15 (${emaSlow.toFixed(5)}), Inclin: ${emaSlowSlope.toFixed(6)}, RSI: ${rsi.toFixed(1)}`,
       price: currentPrice
     };
   }
 
-  return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
+  return { symbol, action: 'NEUTRAL', reason: `Sem sinal claro (RSI=${rsi.toFixed(1)}, Slope=${emaSlowSlope.toFixed(6)})`, price: currentPrice };
 }
 
 async function startScalpScanner() {
@@ -125,12 +153,11 @@ async function startScalpScanner() {
             for (const sym of symbols) {
               const ticker = tickers[sym];
               if (ticker && ticker.bid && ticker.ask) {
+                const signal = analyzeScalpOpportunity(sym, ticker.bid, ticker.ask);
                 const midPrice = (ticker.bid + ticker.ask) / 2;
-                const signal = analyzeScalpOpportunity(sym, midPrice);
                 log.info(`📊 [SCALP TICK] ${sym}: Bid=${ticker.bid.toFixed(5)} Ask=${ticker.ask.toFixed(5)} Mid=${midPrice.toFixed(5)} | Status: ${signal.reason}`);
 
                 if (signal.action !== 'NEUTRAL') {
-                  // Trava de 1 posição ativa por par (Verifica se já existe estratégia aberta OU oportunidade pendente no banco de dados)
                   const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                     userId: settings.userId,
                     name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
@@ -148,7 +175,6 @@ async function startScalpScanner() {
                     log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                     const side = signal.action === 'BUY' ? 'buy' : 'sell';
 
-                    // Registra oportunidade / sinal de execução para o Robô Executor
                     try {
                       await ForexArbTrade.create({
                         userId: settings.userId,
