@@ -208,8 +208,9 @@ async function startScalpExecutor() {
                 const atingiuTP = pnlPct >= tpTarget; // Take profit dinâmico
                 const atingiuSL = pnlPct <= -Math.abs(slTarget); // Stop loss dinâmico
                 
-                // Trailing stop: Se a régua subiu além do gatilho (ex: +0.01%) E o preço atual recuou 50% do topo atingido
-                const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= (trailingTarget / 2);
+                // Trailing Stop Rígido: ativa a partir do gatilho (ex: +0.01%) e fecha se recuar 20% do pico ou 0.005%
+                const pullbackAllowed = Math.min(trailingTarget / 2, activePos.peakPnlPct * 0.20);
+                const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= pullbackAllowed;
 
                 if (atingiuTP || atingiuSL || atingiuTrailing) {
                   const motivoFechar = atingiuTrailing
