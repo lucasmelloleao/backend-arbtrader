@@ -41,7 +41,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       const sym = leg?.symbol;
       const side = leg?.side?.toUpperCase();
       const curPrice = sym ? currentPrices.get(sym) : null;
-      let livePnlPct = 0;
+      let livePnlPct = s.pnlPct || 0;
       let livePnlUsd = s.pnl || 0;
 
       if (curPrice && entryPrice > 0) {
@@ -56,6 +56,12 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         const contractUnits = isGold ? lotFraction * 100 : lotFraction * 100000;
         
         livePnlUsd = diff * contractUnits;
+
+        // Atualiza pico de lucro e PnL no documento para fallback suave
+        ForexArbStrategy.updateOne(
+          { _id: s._id },
+          { $set: { pnl: livePnlUsd, pnlPct: livePnlPct } }
+        ).catch(() => {});
       }
 
       const userTrailingTarget = (settings as any).trailingStopPct ?? 0.01;

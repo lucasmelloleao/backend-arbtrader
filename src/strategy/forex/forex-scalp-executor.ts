@@ -232,9 +232,14 @@ async function startScalpExecutor() {
                       closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
                     }
 
-                    const pnlEst = (pnlPct / 100) * activePos.amount;
+                    const isGold = sym.includes('XAU');
+                    const contractUnits = isGold ? (activePos.amount / 100) * 100 : (activePos.amount / 100) * 100000;
+                    const diffPrice = activePos.side === 'BUY' ? (midPrice - activePos.entryPrice) : (activePos.entryPrice - midPrice);
+                    const calcPnlUsd = diffPrice * contractUnits;
+                    const finalPnlUsd = closeRes?.realizedPnl != null ? closeRes.realizedPnl : calcPnlUsd;
+
                     activePositions.delete(sym);
-                    log.info(`✅ [POSIÇÃO ENCERRADA PELO ROBÔ 2] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
+                    log.info(`✅ [POSIÇÃO ENCERRADA PELO ROBÔ 2] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Resposta:`, closeRes);
 
                     try {
                       const existingStrat = await ForexArbStrategy.findOne({
@@ -248,7 +253,7 @@ async function startScalpExecutor() {
                         existingStrat.status = 'closed';
                         existingStrat.active = false;
                         existingStrat.closedAt = new Date();
-                        existingStrat.pnl = pnlEst;
+                        existingStrat.pnl = finalPnlUsd;
                         await existingStrat.save();
 
                         await ForexArbTrade.create({
@@ -257,9 +262,9 @@ async function startScalpExecutor() {
                           strategyName: existingStrat.name,
                           exchangeId: 'ctrader',
                           type: 'close',
-                          legs: [{ symbol: sym, side: closeSide, price: midPrice, amount: activePos.amount, orderId: closeRes?.id }],
+                          legs: [{ symbol: sym, side: closeSide, price: closeRes?.price || midPrice, amount: activePos.amount, orderId: closeRes?.id }],
                           amount: activePos.amount,
-                          realizedPnl: pnlEst,
+                          realizedPnl: finalPnlUsd,
                           status: 'executed',
                           reason: motivoFechar,
                         });

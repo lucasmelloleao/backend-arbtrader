@@ -485,11 +485,27 @@ export class CtraderAdapter {
           clearTimeout(timer);
           this.client.offExecution(handler);
           const deal = evt.deal || {};
+          const pos = evt.position || {};
+          const closePrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
+            ? Number(deal.executionPrice)
+            : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
+          
+          // cTrader Open API fornece em deal.money (lucro em dinheiro na moeda da conta em centavos ou valor direto)
+          // deal.commission e deal.swap também podem estar presentes em ProtoOADeal
+          const grossPnl = deal.money != null ? Number(deal.money) / 100 : undefined;
+          const commission = deal.commission != null ? Number(deal.commission) / 100 : 0;
+          const swap = deal.swap != null ? Number(deal.swap) / 100 : 0;
+          const netPnl = grossPnl != null ? (grossPnl - Math.abs(commission) + swap) : undefined;
+
           resolve({
             id: String(order.orderId || deal.dealId || ''),
             positionId,
-            price: order.executionPrice != null ? Number(order.executionPrice) : 0,
+            price: closePrice,
             amount: Number(deal.filledVolume || 0),
+            realizedPnl: netPnl,
+            grossPnl,
+            commission,
+            swap
           });
         } else if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode) {
           clearTimeout(timer);
