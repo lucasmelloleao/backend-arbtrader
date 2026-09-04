@@ -29,7 +29,7 @@ async function startScalpExecutor() {
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
-      if (settings && settings.isScanningEnabled) {
+      if (settings) {
         log.info('⚡ [FOREX-SCALP-EXECUTOR] Gerenciando e monitorando posições ativas...');
 
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
@@ -88,7 +88,7 @@ async function startScalpExecutor() {
           } catch { /* erro no reconcile */ }
 
           // 2. BUSCA SINAIS / OPORTUNIDADES PENDENTES GERADAS PELO ROBÔ 1 (SCANNER)
-          if (settings.autoExecute) {
+          if (settings.autoExecute && settings.isScanningEnabled) {
             const pendingOpp = await ForexArbTrade.findOne({
               userId: settings.userId,
               type: 'opportunity_found',
