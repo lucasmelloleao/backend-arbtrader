@@ -47,10 +47,15 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       if (curPrice && entryPrice > 0) {
         const diff = side === 'BUY' ? (curPrice - entryPrice) : (entryPrice - curPrice);
         livePnlPct = (diff / entryPrice) * 100;
+
+        // Na cTrader, tradeSize=100 equivale a 0.01 lote micro.
+        // Forex (EUR/USD, GBP/USD, etc): 1.00 Lote = 100.000 unidades (0.01 lote = 1.000 unidades)
+        // Commodities (XAU/USD): 1.00 Lote = 100 onças (0.01 lote = 1 onça)
+        const isGold = sym?.includes('XAU');
+        const lotFraction = (s.positionSize || s.tradeSize || 100) / 10000; // 100 -> 0.01 lote
+        const contractUnits = isGold ? lotFraction * 100 : lotFraction * 100000;
         
-        // Multiplica a diferença de preço pelo volume equivalente (ex: 1 onça para 0.01 lot de XAU/USD)
-        const volumeUnits = (s.positionSize || s.tradeSize || 100) / 100;
-        livePnlUsd = diff * volumeUnits;
+        livePnlUsd = diff * contractUnits;
       }
 
       const userTrailingTarget = (settings as any).trailingStopPct ?? 0.01;
