@@ -35,6 +35,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       positionSize: s.positionSize,
       status: s.status,
       pnl: s.pnl,
+      peakProfitPct: s.peakProfitPct || 0,
       closedAt: s.closedAt,
       createdAt: s.createdAt
     }));
