@@ -286,7 +286,7 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const execAsync = promisify(exec);
 
     try {
-      let filter: any = { userId };
+      let filter: any = {};
       if (processName.includes('scanner')) {
         filter.type = { $in: ['opportunity_found', 'scan'] };
       }
