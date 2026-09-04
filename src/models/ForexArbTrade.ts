@@ -18,6 +18,8 @@ const ForexArbTradeSchema = new mongoose.Schema({
   amount: { type: Number },
   expectedProfitPct: { type: Number },
   realizedPnl: { type: Number, default: 0 },
+  commission: { type: Number, default: 0 },
+  swap: { type: Number, default: 0 },
   status: { type: String, default: 'detected' }, // 'detected' | 'executed' | 'simulated' | 'failed' | 'skipped'
   reason: { type: String },
   errorMessage: { type: String },

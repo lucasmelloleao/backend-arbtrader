@@ -36,6 +36,8 @@ const ForexArbStrategySchema = new mongoose.Schema({
   positionSize: { type: Number, default: 0 },
   status: { type: String, default: 'open' },            // 'open' | 'closed' | 'failed'
   pnl: { type: Number, default: 0 },
+  commission: { type: Number, default: 0 },
+  swap: { type: Number, default: 0 },
   closedAt: { type: Date, default: null },
   peakProfitPct: { type: Number, default: 0 },
   lastLegPrices: { type: Map, of: Number, default: {} }, // symbol -> último preço visto

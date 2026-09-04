@@ -254,6 +254,8 @@ async function startScalpExecutor() {
                         existingStrat.active = false;
                         existingStrat.closedAt = new Date();
                         existingStrat.pnl = finalPnlUsd;
+                        existingStrat.commission = closeRes?.commission || 0;
+                        existingStrat.swap = closeRes?.swap || 0;
                         await existingStrat.save();
 
                         await ForexArbTrade.create({
@@ -265,6 +267,8 @@ async function startScalpExecutor() {
                           legs: [{ symbol: sym, side: closeSide, price: closeRes?.price || midPrice, amount: activePos.amount, orderId: closeRes?.id }],
                           amount: activePos.amount,
                           realizedPnl: finalPnlUsd,
+                          commission: closeRes?.commission || 0,
+                          swap: closeRes?.swap || 0,
                           status: 'executed',
                           reason: motivoFechar,
                         });
