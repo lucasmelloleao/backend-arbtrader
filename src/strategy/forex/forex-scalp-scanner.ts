@@ -158,6 +158,23 @@ async function startScalpScanner() {
                 log.info(`📊 [SCALP TICK] ${sym}: Bid=${ticker.bid.toFixed(5)} Ask=${ticker.ask.toFixed(5)} Mid=${midPrice.toFixed(5)} | Status: ${signal.reason}`);
 
                 if (signal.action !== 'NEUTRAL') {
+                  // Cooldown de 2 minutos (120000ms) após fechar qualquer posição neste par
+                  const ultimaFechada = await ForexArbStrategy.findOne({
+                    userId: settings.userId,
+                    name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
+                    positionOpen: false,
+                    closedAt: { $ne: null }
+                  }).sort({ closedAt: -1 }).lean();
+
+                  if (ultimaFechada && ultimaFechada.closedAt) {
+                    const msDesdeFechamento = Date.now() - new Date(ultimaFechada.closedAt).getTime();
+                    if (msDesdeFechamento < 120000) {
+                      const segRestantes = Math.ceil((120000 - msDesdeFechamento) / 1000);
+                      log.info(`⏳ [COOLDOWN ATIVO] ${sym}: Posição encerrada recentemente. Aguardando mais ${segRestantes}s para liberar novo sinal.`);
+                      continue;
+                    }
+                  }
+
                   const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                     userId: settings.userId,
                     name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
