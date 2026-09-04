@@ -286,11 +286,9 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const execAsync = promisify(exec);
 
     try {
-      let filter: any = {};
+      let filter: any = { userId };
       if (processName.includes('scanner')) {
-        filter = { type: 'opportunity_found' };
-      } else if (processName.includes('executor') || processName.includes('scalper')) {
-        filter = { type: { $in: ['execution', 'close'] } };
+        filter.type = { $in: ['opportunity_found', 'scan'] };
       }
 
       const recentTrades = await ForexArbTrade.find(filter)
