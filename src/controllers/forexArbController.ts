@@ -138,6 +138,20 @@ export async function deleteForexStrategy(req: AuthenticatedRequest, res: Respon
   }
 }
 
+export async function deleteForexTrades(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
+
+    await ForexArbTrade.deleteMany({ userId });
+    await ForexArbStrategy.deleteMany({ userId });
+
+    return res.json({ success: true, message: 'Todas as operações e estratégias foram apagadas do banco de dados.' });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
 // --- TRADES & OPPORTUNITIES ---
 export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
   try {

@@ -67,6 +67,7 @@ import {
   createForexStrategy,
   deleteForexStrategy,
   getForexTrades,
+  deleteForexTrades,
   getForexOpportunities,
   getForexSettings,
   updateForexSettings,
@@ -132,6 +133,7 @@ router.post('/forex-arb/strategies', authMiddleware as any, createForexStrategy 
 router.delete('/forex-arb/strategies', authMiddleware as any, deleteForexStrategy as any);
 router.delete('/forex-arb/strategies/:id', authMiddleware as any, deleteForexStrategy as any);
 router.get('/forex-arb/trades', authMiddleware as any, getForexTrades as any);
+router.delete('/forex-arb/trades', authMiddleware as any, deleteForexTrades as any);
 router.get('/forex-arb/opportunities', authMiddleware as any, getForexOpportunities as any);
 router.get('/forex-arb/settings', authMiddleware as any, getForexSettings as any);
 router.post('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
