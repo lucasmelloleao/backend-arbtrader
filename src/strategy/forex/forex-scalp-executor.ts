@@ -223,6 +223,12 @@ async function startScalpExecutor() {
                 const atingiuTrailing = activePos.peakPnlPct >= trailingTarget && (activePos.peakPnlPct - pnlPct) >= pullbackAllowed;
 
                 if (atingiuTP || atingiuSL || atingiuTrailing) {
+                  const reasonType = atingiuTrailing
+                    ? 'trailing_stop'
+                    : atingiuTP
+                      ? 'take_profit'
+                      : 'stop_loss';
+
                   const motivoFechar = atingiuTrailing
                     ? `Trailing Stop acionado (Pico: +${activePos.peakPnlPct.toFixed(3)}%, Atual: +${pnlPct.toFixed(3)}%)`
                     : atingiuTP
@@ -264,6 +270,8 @@ async function startScalpExecutor() {
                       if (existingStrat) {
                         existingStrat.positionOpen = false;
                         existingStrat.status = 'closed';
+                        existingStrat.closedReason = reasonType;
+                        existingStrat.trailingStopTriggered = atingiuTrailing;
                         existingStrat.active = false;
                         existingStrat.closedAt = new Date();
                         existingStrat.pnl = finalPnlUsd;
@@ -285,6 +293,8 @@ async function startScalpExecutor() {
                           commission: closeRes?.commission || 0,
                           swap: closeRes?.swap || 0,
                           status: 'executed',
+                          closedReason: reasonType,
+                          trailingStopTriggered: atingiuTrailing,
                           reason: motivoFechar,
                         });
                       }

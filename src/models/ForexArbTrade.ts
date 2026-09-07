@@ -25,6 +25,8 @@ const ForexArbTradeSchema = new mongoose.Schema({
   commission: { type: Number, default: 0 },
   swap: { type: Number, default: 0 },
   status: { type: String, default: 'detected' }, // 'detected' | 'executed' | 'simulated' | 'failed' | 'skipped'
+  closedReason: { type: String, default: null },   // 'trailing_stop' | 'take_profit' | 'stop_loss' | 'signal_reversal' | 'manual'
+  trailingStopTriggered: { type: Boolean, default: false },
   reason: { type: String },
   errorMessage: { type: String },
   createdAt: { type: Date, default: Date.now, index: true },

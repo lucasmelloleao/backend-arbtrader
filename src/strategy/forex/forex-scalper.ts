@@ -294,6 +294,14 @@ async function startScalper() {
                     signal.action !== activePos.side;
 
                   if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
+                    const reasonType = atingiuTrailing
+                      ? 'trailing_stop'
+                      : atingiuTP
+                        ? 'take_profit'
+                        : atingiuSL
+                          ? 'stop_loss'
+                          : 'signal_reversal';
+
                     const motivoFechar = atingiuTrailing
                       ? `Trailing USD acionado (Pico: +$${activePos.peakPnlUsd.toFixed(2)}, Piso: +$${activePos.trailingFloorUsd.toFixed(2)}, Atual: $${pnlUsd.toFixed(2)})`
                       : atingiuTP
@@ -337,6 +345,8 @@ async function startScalper() {
                         if (existingStrat) {
                           existingStrat.positionOpen = false;
                           existingStrat.status = 'closed';
+                          existingStrat.closedReason = reasonType;
+                          existingStrat.trailingStopTriggered = atingiuTrailing;
                           existingStrat.active = false;
                           existingStrat.closedAt = new Date();
                           existingStrat.pnl = pnlEst;
@@ -354,6 +364,8 @@ async function startScalper() {
                             amountUsd: closeAmountUsd,
                             realizedPnl: pnlEst,
                             status: 'executed',
+                            closedReason: reasonType,
+                            trailingStopTriggered: atingiuTrailing,
                             reason: motivoFechar,
                           });
                         }
