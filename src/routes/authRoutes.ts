@@ -129,6 +129,12 @@ router.delete('/perp-arb/strategies', authMiddleware as any, deleteStrategy as a
 router.get('/perp-arb/trades', authMiddleware as any, getTrades as any);
 router.get('/perp-arb/trades/resumo', authMiddleware as any, getTradesSummary as any);
 router.delete('/perp-arb/trades', authMiddleware as any, deleteTrades as any);
+router.get('/perp-arb/settings', authMiddleware as any, getPerpArbSettings as any);
+router.post('/perp-arb/settings', authMiddleware as any, updatePerpArbSettings as any);
+router.post('/perp-arb/close', authMiddleware as any, createStrategy as any);
+router.get('/perp-arb/logs', authMiddleware as any, getBotStatus as any);
+router.get('/perp-arb/manual-scan', authMiddleware as any, getBotStatus as any);
+router.get('/perp-arb/audit-exchange', authMiddleware as any, getBotStatus as any);
 
 // --- FOREX ARB ENDPOINTS ---
 router.get('/forex-arb/strategies', authMiddleware as any, getForexStrategies as any);
