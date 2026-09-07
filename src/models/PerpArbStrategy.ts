@@ -60,11 +60,9 @@ const PerpArbStrategySchema = new mongoose.Schema({
 }, { timestamps: true, collection: 'perparbstrategies' });
 
 // Validation: ensure at least one exchange key reference exists
-PerpArbStrategySchema.pre('validate', function (this: any, next: any) {
+PerpArbStrategySchema.pre('validate', function () {
   if (!this.perpExchangeKeyId && !this.exchangeKeyId) {
-    next(new Error('Strategy must have perpExchangeKeyId or exchangeKeyId'));
-  } else {
-    next();
+    throw new Error('Strategy must have perpExchangeKeyId or exchangeKeyId');
   }
 });
 

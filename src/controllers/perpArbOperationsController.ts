@@ -281,12 +281,18 @@ export async function voidCloseStrategy(req: AuthenticatedRequest, res: Response
       pnl: 0,
     });
 
-    strat.positionOpen = false;
-    strat.active = false;
-    strat.positionSize = 0;
-    strat.positionOpenedAt = null;
-    strat.fundingCollected = 0;
-    await strat.save();
+    await PerpArbStrategy.updateOne(
+      { _id: strat._id },
+      {
+        $set: {
+          positionOpen: false,
+          active: false,
+          positionSize: 0,
+          positionOpenedAt: null,
+          fundingCollected: 0
+        }
+      }
+    );
 
     const msg = `Posição [${strat.name}] marcada como encerrada pela corretora (sem PnL).`;
 
