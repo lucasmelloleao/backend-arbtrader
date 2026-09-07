@@ -111,7 +111,7 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
-const TRAILING_ACTIVATION_USD = 0.25;
+const TRAILING_ACTIVATION_USD = 0.15;
 const TRAILING_DISTANCE_USD = 0.08;
 
 // PnL do trailing é líquido e vem da cTrader, não do tradeSize configurado.
