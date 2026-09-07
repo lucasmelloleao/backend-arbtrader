@@ -111,8 +111,22 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
-// Controle de posições abertas por símbolo: symbol -> { positionId, side, entryPrice, amount, volumeProtocol, entryTime, peakPnlPct }
-const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; volumeProtocol: number; entryTime: number; peakPnlPct: number }>();
+const TRAILING_ACTIVATION_USD = 0.30;
+const TRAILING_DISTANCE_USD = 0.15;
+
+// PnL do trailing é líquido e vem da cTrader, não do tradeSize configurado.
+const activePositions = new Map<string, {
+  positionId?: string;
+  side: 'BUY' | 'SELL';
+  entryPrice: number;
+  amount: number;
+  volumeProtocol: number;
+  entryTime: number;
+  peakPnlPct: number;
+  peakPnlUsd: number;
+  trailingFloorUsd: number;
+  trailingActive: boolean;
+}>();
 
 function amountUsdFor(symbol: string, volume: number, price: number): number {
   return symbol.endsWith('/JPY') ? volume : volume * price;
@@ -200,6 +214,9 @@ async function startScalper() {
                     volumeProtocol: volumeProtocol > 0 ? volumeProtocol : 100,
                     entryTime: Date.now(),
                     peakPnlPct: 0,
+                    peakPnlUsd: 0,
+                    trailingFloorUsd: 0,
+                    trailingActive: false,
                   });
                   log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader para ${sym} (${side})`);
                 }
@@ -215,6 +232,13 @@ async function startScalper() {
           } catch { /* erro transitório no reconcile */ }
 
           try {
+            let livePnlBySymbol = new Map<string, { netPnl: number }>();
+            try {
+              livePnlBySymbol = await (adapter as any).getPositionsPnL();
+            } catch {
+              // Usa o cálculo por preço como fallback neste ciclo.
+            }
+
             const tickers = await (adapter as any).fetchTickers(symbols);
             for (const sym of symbols) {
               const ticker = tickers[sym];
@@ -233,27 +257,45 @@ async function startScalper() {
                   const pnlPct = activePos.side === 'BUY'
                     ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
                     : ((activePos.entryPrice - midPrice) / activePos.entryPrice) * 100;
+                  const livePnlUsd = livePnlBySymbol.get(sym)?.netPnl;
+                  const pnlUsd = Number.isFinite(livePnlUsd)
+                    ? Number(livePnlUsd)
+                    : (pnlPct / 100) * tradeSize;
 
                   // Atualiza pico de ganho da posição (Peak PnL %)
                   if (pnlPct > activePos.peakPnlPct) {
                     activePos.peakPnlPct = pnlPct;
                   }
+                  if (pnlUsd > activePos.peakPnlUsd) {
+                    activePos.peakPnlUsd = pnlUsd;
+                  }
+                  if (!activePos.trailingActive && activePos.peakPnlUsd >= TRAILING_ACTIVATION_USD) {
+                    activePos.trailingActive = true;
+                    activePos.trailingFloorUsd = 0;
+                    log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso $0,00`);
+                  } else if (activePos.trailingActive) {
+                    activePos.trailingFloorUsd = Math.max(
+                      activePos.trailingFloorUsd,
+                      activePos.peakPnlUsd - TRAILING_DISTANCE_USD,
+                    );
+                  }
 
                   const takeProfitTarget = settings.takeProfitPct ?? 0.20;
                   const stopLossTarget = Math.abs(settings.stopLossPct ?? 0.10);
-                  const trailingTarget = settings.trailingStopPct ?? 0.10;
-                  const trailingPullback = trailingTarget / 2;
                   const atingiuTP = pnlPct >= takeProfitTarget;
                   const atingiuSL = pnlPct <= -stopLossTarget;
                   // Trailing stop: ativa no percentual configurado e fecha no recuo configurado.
                   const atingiuTrailing =
-                    activePos.peakPnlPct >= trailingTarget &&
-                    (activePos.peakPnlPct - pnlPct) >= trailingPullback;
-                  const reversaoSinal = signal.action !== 'NEUTRAL' && signal.action !== activePos.side;
+                    activePos.trailingActive &&
+                    pnlUsd <= activePos.trailingFloorUsd;
+                  const reversaoSinal =
+                    !activePos.trailingActive &&
+                    signal.action !== 'NEUTRAL' &&
+                    signal.action !== activePos.side;
 
                   if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
                     const motivoFechar = atingiuTrailing
-                      ? `Trailing Stop acionado (Pico: +${activePos.peakPnlPct.toFixed(3)}%, Atual: +${pnlPct.toFixed(3)}%)`
+                      ? `Trailing USD acionado (Pico: +$${activePos.peakPnlUsd.toFixed(2)}, Piso: +$${activePos.trailingFloorUsd.toFixed(2)}, Atual: $${pnlUsd.toFixed(2)})`
                       : atingiuTP
                         ? `Take Profit atingido (+${pnlPct.toFixed(3)}%)`
                         : atingiuSL
@@ -360,6 +402,9 @@ async function startScalper() {
                       volumeProtocol,
                       entryTime: Date.now(),
                       peakPnlPct: 0,
+                      peakPnlUsd: 0,
+                      trailingFloorUsd: 0,
+                      trailingActive: false,
                     });
                     log.info(`✅ [ORDEM ABERTA COM SUCESSO] #${posIdNew} ${sym} ${signal.action}! ID/Result:`, orderRes);
 
