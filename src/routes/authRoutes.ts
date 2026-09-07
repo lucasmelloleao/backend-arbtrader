@@ -60,6 +60,10 @@ import {
   closeLatencyTrade
 } from '../controllers/latencyArbController';
 import {
+  closeStrategy as closePerpStrategy,
+  increaseStrategy as increasePerpStrategy,
+  voidCloseStrategy as voidClosePerpStrategy,
+  getLogs as getPerpLogs,
   manualScan,
   auditExchangeTrades
 } from '../controllers/perpArbOperationsController';
@@ -131,10 +135,12 @@ router.get('/perp-arb/trades/resumo', authMiddleware as any, getTradesSummary as
 router.delete('/perp-arb/trades', authMiddleware as any, deleteTrades as any);
 router.get('/perp-arb/settings', authMiddleware as any, getPerpArbSettings as any);
 router.post('/perp-arb/settings', authMiddleware as any, updatePerpArbSettings as any);
-router.post('/perp-arb/close', authMiddleware as any, createStrategy as any);
-router.get('/perp-arb/logs', authMiddleware as any, getBotStatus as any);
-router.get('/perp-arb/manual-scan', authMiddleware as any, getBotStatus as any);
-router.get('/perp-arb/audit-exchange', authMiddleware as any, getBotStatus as any);
+router.post('/perp-arb/close', authMiddleware as any, closePerpStrategy as any);
+router.post('/perp-arb/increase', authMiddleware as any, increasePerpStrategy as any);
+router.post('/perp-arb/void-close', authMiddleware as any, voidClosePerpStrategy as any);
+router.get('/perp-arb/logs', authMiddleware as any, getPerpLogs as any);
+router.get('/perp-arb/manual-scan', authMiddleware as any, manualScan as any);
+router.get('/perp-arb/audit-exchange', authMiddleware as any, auditExchangeTrades as any);
 
 // --- FOREX ARB ENDPOINTS ---
 router.get('/forex-arb/strategies', authMiddleware as any, getForexStrategies as any);
