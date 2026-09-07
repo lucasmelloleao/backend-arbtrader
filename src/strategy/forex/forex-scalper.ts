@@ -111,8 +111,8 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
   return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
 }
 
-const TRAILING_ACTIVATION_USD = 0.30;
-const TRAILING_DISTANCE_USD = 0.15;
+const TRAILING_ACTIVATION_USD = 0.25;
+const TRAILING_DISTANCE_USD = 0.08;
 
 // PnL do trailing é líquido e vem da cTrader, não do tradeSize configurado.
 const activePositions = new Map<string, {
@@ -178,7 +178,7 @@ async function startScalper() {
       const settings = await ForexArbSettings.findOne().lean();
       if (settings) {
         log.info('⚡ [FOREX-SCALPER] Monitorando mercado para Scalping HFT...');
-        
+
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
