@@ -114,6 +114,10 @@ export function analyzeScalpOpportunity(symbol: string, currentPrice: number): S
 // Controle de posições abertas por símbolo: symbol -> { positionId, side, entryPrice, amount, volumeProtocol, entryTime, peakPnlPct }
 const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; volumeProtocol: number; entryTime: number; peakPnlPct: number }>();
 
+function amountUsdFor(symbol: string, volume: number, price: number): number {
+  return symbol.endsWith('/JPY') ? volume : volume * price;
+}
+
 export function decidePositionClose(input: {
   positionId?: string;
   volumeProtocol?: number;
@@ -158,7 +162,7 @@ async function startScalper() {
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
-      if (settings && settings.isScanningEnabled) {
+      if (settings) {
         log.info('⚡ [FOREX-SCALPER] Monitorando mercado para Scalping HFT...');
         
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
@@ -235,10 +239,16 @@ async function startScalper() {
                     activePos.peakPnlPct = pnlPct;
                   }
 
-                  const atingiuTP = pnlPct >= 0.20; // Take profit máximo fixo em +0.20%
-                  const atingiuSL = pnlPct <= -0.10; // Stop loss fixo em -0.10%
-                  // Trailing stop: Se o pico ultrapassou +0.10% e recuou 0.05% do topo
-                  const atingiuTrailing = activePos.peakPnlPct >= 0.10 && (activePos.peakPnlPct - pnlPct) >= 0.05;
+                  const takeProfitTarget = settings.takeProfitPct ?? 0.20;
+                  const stopLossTarget = Math.abs(settings.stopLossPct ?? 0.10);
+                  const trailingTarget = settings.trailingStopPct ?? 0.10;
+                  const trailingPullback = trailingTarget / 2;
+                  const atingiuTP = pnlPct >= takeProfitTarget;
+                  const atingiuSL = pnlPct <= -stopLossTarget;
+                  // Trailing stop: ativa no percentual configurado e fecha no recuo configurado.
+                  const atingiuTrailing =
+                    activePos.peakPnlPct >= trailingTarget &&
+                    (activePos.peakPnlPct - pnlPct) >= trailingPullback;
                   const reversaoSinal = signal.action !== 'NEUTRAL' && signal.action !== activePos.side;
 
                   if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
@@ -269,6 +279,9 @@ async function startScalper() {
                       }
 
                       const pnlEst = (pnlPct / 100) * activePos.amount;
+                      const closePrice = closeRes?.price || midPrice;
+                      const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
+                      const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
                       log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
 
@@ -293,8 +306,10 @@ async function startScalper() {
                             strategyName: existingStrat.name,
                             exchangeId: 'ctrader',
                             type: 'close',
-                            legs: [{ symbol: sym, side: closeSide, price: midPrice, amount: activePos.amount, orderId: closeRes?.id }],
-                            amount: activePos.amount,
+                            legs: [{ symbol: sym, side: closeSide, price: closePrice, amount: closeVolume, volume: closeVolume, amountUsd: closeAmountUsd, orderId: closeRes?.id }],
+                            amount: closeVolume,
+                            volume: closeVolume,
+                            amountUsd: closeAmountUsd,
                             realizedPnl: pnlEst,
                             status: 'executed',
                             reason: motivoFechar,
@@ -317,13 +332,21 @@ async function startScalper() {
                   positionOpen: true
                 });
 
-                if (!activePositions.has(sym) && !temPosicaoAbertaNoBanco && signal.action !== 'NEUTRAL') {
+                if (
+                  settings.isScanningEnabled &&
+                  settings.autoExecute &&
+                  !activePositions.has(sym) &&
+                  !temPosicaoAbertaNoBanco &&
+                  signal.action !== 'NEUTRAL'
+                ) {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                   const side = signal.action === 'BUY' ? 'buy' : 'sell';
                   log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${tradeSize} unidades)...`);
                   try {
                     const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
                     const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
+                    const volume = Number(orderRes?.amount || 0);
+                    const amountUsd = volume > 0 && midPrice > 0 ? amountUsdFor(sym, volume, midPrice) : tradeSize;
                     const market = (adapter as any).marketsBySymbol.get(sym);
                     const volumeProtocol = market
                       ? Math.max(1, Math.round((tradeSize / (market.lotSize || 100000)) * 100))
@@ -347,11 +370,13 @@ async function startScalper() {
                         name: `Scalping ${sym} (${signal.action})`,
                         exchangeId: 'ctrader',
                         type: 'simple',
-                        legs: [{ symbol: sym, side, price: midPrice, amount: tradeSize, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                        legs: [{ symbol: sym, side, price: midPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
                         tradeSize,
                         positionOpen: true,
                         positionOpenedAt: new Date(),
                         positionSize: tradeSize,
+                        positionVolume: volume,
+                        positionAmountUsd: amountUsd,
                         status: 'open',
                         active: true,
                       });
@@ -362,8 +387,10 @@ async function startScalper() {
                         strategyName: stratDoc.name,
                         exchangeId: 'ctrader',
                         type: 'execution',
-                        legs: [{ symbol: sym, side, price: midPrice, amount: tradeSize, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
-                        amount: tradeSize,
+                        legs: [{ symbol: sym, side, price: midPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                        amount: volume || tradeSize,
+                        volume: volume || null,
+                        amountUsd,
                         status: 'executed',
                         reason: signal.reason,
                       });

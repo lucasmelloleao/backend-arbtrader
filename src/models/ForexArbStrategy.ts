@@ -34,6 +34,8 @@ const ForexArbStrategySchema = new mongoose.Schema({
   positionOpen: { type: Boolean, default: false },
   positionOpenedAt: { type: Date, default: null },
   positionSize: { type: Number, default: 0 },
+  positionVolume: { type: Number, default: 0 },
+  positionAmountUsd: { type: Number, default: 0 },
   status: { type: String, default: 'open' },            // 'open' | 'closed' | 'failed'
   pnl: { type: Number, default: 0 },
   commission: { type: Number, default: 0 },

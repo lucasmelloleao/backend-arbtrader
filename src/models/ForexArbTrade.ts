@@ -4,7 +4,9 @@ const ForexLegSchema = new mongoose.Schema({
   symbol: { type: String, required: true },
   side: { type: String, required: true },   // 'buy' | 'sell'
   price: { type: Number, default: null },
-  amount: { type: Number, default: null },
+  amount: { type: Number, default: null }, // legado: quantidade da moeda base
+  volume: { type: Number, default: null },
+  amountUsd: { type: Number, default: null },
   orderId: { type: String, default: null },
 }, { _id: false });
 
@@ -15,7 +17,9 @@ const ForexArbTradeSchema = new mongoose.Schema({
   exchangeId: { type: String },
   type: { type: String, required: true },  // 'opportunity_found' | 'execution' | 'close' | 'error'
   legs: { type: [ForexLegSchema], default: [] },
-  amount: { type: Number },
+  amount: { type: Number }, // legado: quantidade ou capital configurado
+  volume: { type: Number },
+  amountUsd: { type: Number },
   expectedProfitPct: { type: Number },
   realizedPnl: { type: Number, default: 0 },
   commission: { type: Number, default: 0 },

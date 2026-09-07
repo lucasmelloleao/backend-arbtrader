@@ -19,6 +19,10 @@ const log = {
 // Controle local das posições sob gestão: symbol -> { positionId, side, entryPrice, amount, volumeProtocol, entryTime, peakPnlPct }
 const activePositions = new Map<string, { positionId?: string; side: 'BUY' | 'SELL'; entryPrice: number; amount: number; volumeProtocol: number; entryTime: number; peakPnlPct: number }>();
 
+function amountUsdFor(symbol: string, volume: number, price: number): number {
+  return symbol.endsWith('/JPY') ? volume : volume * price;
+}
+
 async function startScalpExecutor() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
@@ -118,6 +122,8 @@ async function startScalpExecutor() {
                   const posIdReal = orderRes?.positionId ? String(orderRes.positionId) : null;
                   const posIdNew = posIdReal || orderRes?.id || `pos_${Date.now()}`;
                   const entryPrice = orderRes?.price || leg.price || 0;
+                  const volume = Number(orderRes?.amount || 0);
+                  const amountUsd = volume > 0 && entryPrice > 0 ? amountUsdFor(sym, volume, entryPrice) : tradeSize;
                   const volProtoNew = orderRes?.amount ? Math.round(orderRes.amount) : 100;
 
                   activePositions.set(sym, {
@@ -141,11 +147,13 @@ async function startScalpExecutor() {
                     name: `Scalping ${sym} (${side.toUpperCase()})`,
                     exchangeId: 'ctrader',
                     type: 'simple',
-                    legs: [{ symbol: sym, side, price: entryPrice, amount: tradeSize, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                    legs: [{ symbol: sym, side, price: entryPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
                     tradeSize,
                     positionOpen: true,
                     positionOpenedAt: new Date(),
                     positionSize: tradeSize,
+                    positionVolume: volume,
+                    positionAmountUsd: amountUsd,
                     status: 'open',
                     active: true,
                   });
@@ -156,8 +164,10 @@ async function startScalpExecutor() {
                     strategyName: stratDoc.name,
                     exchangeId: 'ctrader',
                     type: 'execution',
-                    legs: [{ symbol: sym, side, price: entryPrice, amount: tradeSize, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
-                    amount: tradeSize,
+                    legs: [{ symbol: sym, side, price: entryPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                    amount: volume || tradeSize,
+                    volume: volume || null,
+                    amountUsd,
                     status: 'executed',
                     reason: pendingOpp.reason,
                   });
@@ -237,6 +247,9 @@ async function startScalpExecutor() {
                     const diffPrice = activePos.side === 'BUY' ? (midPrice - activePos.entryPrice) : (activePos.entryPrice - midPrice);
                     const calcPnlUsd = diffPrice * contractUnits;
                     const finalPnlUsd = closeRes?.realizedPnl != null ? closeRes.realizedPnl : calcPnlUsd;
+                    const closePrice = closeRes?.price || midPrice;
+                    const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
+                    const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
 
                     activePositions.delete(sym);
                     log.info(`✅ [POSIÇÃO ENCERRADA PELO ROBÔ 2] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Resposta:`, closeRes);
@@ -264,8 +277,10 @@ async function startScalpExecutor() {
                           strategyName: existingStrat.name,
                           exchangeId: 'ctrader',
                           type: 'close',
-                          legs: [{ symbol: sym, side: closeSide, price: closeRes?.price || midPrice, amount: activePos.amount, orderId: closeRes?.id }],
-                          amount: activePos.amount,
+                          legs: [{ symbol: sym, side: closeSide, price: closePrice, amount: closeVolume, volume: closeVolume, amountUsd: closeAmountUsd, orderId: closeRes?.id }],
+                          amount: closeVolume,
+                          volume: closeVolume,
+                          amountUsd: closeAmountUsd,
                           realizedPnl: finalPnlUsd,
                           commission: closeRes?.commission || 0,
                           swap: closeRes?.swap || 0,
