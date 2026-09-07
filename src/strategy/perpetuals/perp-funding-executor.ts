@@ -55,10 +55,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T = null as a
  * Usa o retorno do createOrder e, se o average não vier preenchido
  * (comum na MEXC), consulta a ordem na corretora via fetchOrder.
  */
-async function resolveOrderFill(exchange: any, order: any, symbol: string): Promise<{ filled: number; price: number }> {
+async function resolveOrderFill(exchange: any, order: any, symbol: string): Promise<{ filled: number; price: number; fee: number }> {
+  let feeAmount = 0;
+  if (order?.fee?.cost) {
+    feeAmount = Number(order.fee.cost);
+  } else if (Array.isArray(order?.fees)) {
+    feeAmount = order.fees.reduce((acc: number, f: any) => acc + Number(f.cost || 0), 0);
+  }
+
   const fallback = {
     filled: Number(order?.filled || order?.amount || 0),
     price: Number(order?.average || 0),
+    fee: feeAmount,
   };
   const orderId = String(order?.id || '');
   const isSentinel = !orderId || order?.skipped || orderId === 'ALREADY_CLOSED' || orderId === 'CONSOLIDATED' || orderId === 'RECONCILED';
@@ -83,9 +91,19 @@ async function resolveOrderFill(exchange: any, order: any, symbol: string): Prom
       if (quote > 0) price = quote / filled;
     }
 
+    let fetchedFee = feeAmount;
+    if (fetched?.fee?.cost) {
+      fetchedFee = Number(fetched.fee.cost);
+    } else if (Array.isArray(fetched?.fees)) {
+      fetchedFee = fetched.fees.reduce((acc: number, f: any) => acc + Number(f.cost || 0), 0);
+    } else if (info?.takerFee || info?.fee) {
+      fetchedFee = Math.abs(Number(info.takerFee || info.fee || 0));
+    }
+
     return {
       filled: filled > 0 ? filled : fallback.filled,
       price: price > 0 ? price : fallback.price,
+      fee: fetchedFee > 0 ? fetchedFee : fallback.fee,
     };
   } catch (e: any) {
     log.warn(`⚠️ Não foi possível consultar a ordem ${orderId} (${symbol}) para o preço real de fill: ${e?.message}`);
@@ -602,6 +620,16 @@ export async function executeStrategy(strategyId: string, opts: { dryRun?: boole
       const realPerpPrice = perpFill.price;
       if (realPerpFilled > 0) trade.perpQuantity = realPerpFilled;
       if (realPerpPrice > 0) trade.perpPrice = realPerpPrice;
+
+      const spotOpenFee = spotFill.fee > 0 ? spotFill.fee : (tradeSize * 0.001);
+      const perpOpenFee = perpFill.fee > 0 ? perpFill.fee : (tradeSize * 0.0008);
+      trade.feeDetails = {
+        spotOpenFee,
+        perpOpenFee,
+        spotCloseFee: 0,
+        perpCloseFee: 0,
+      };
+      trade.tradingFees = spotOpenFee + perpOpenFee;
 
       trade.status = 'executed';
       await trade.save();

@@ -36,6 +36,14 @@ const PerpArbTradeSchema = new mongoose.Schema({
     timestamp: { type: Date },
     fundingRate: { type: Number }
   }],
+  tradingFees: { type: Number, default: 0 },
+  netPnl: { type: Number, default: 0 },
+  feeDetails: {
+    spotOpenFee: { type: Number, default: 0 },
+    perpOpenFee: { type: Number, default: 0 },
+    spotCloseFee: { type: Number, default: 0 },
+    perpCloseFee: { type: Number, default: 0 },
+  },
   reason: { type: String },
   openedAt: { type: Date },
   errorMessage: { type: String },

@@ -37,6 +37,62 @@ function recordPrice(symbol: string, price: number) {
   }
 }
 
+interface Candle {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  timestamp: number;
+}
+
+const candleHistory = new Map<string, Candle[]>();
+const currentCandleMap = new Map<string, Partial<Candle>>();
+const CANDLE_PERIOD_MS = 60_000; // Velas M1 (1 minuto)
+
+function updateCandles(symbol: string, price: number): Candle[] {
+  const now = Date.now();
+  const currentBucket = Math.floor(now / CANDLE_PERIOD_MS) * CANDLE_PERIOD_MS;
+
+  if (!candleHistory.has(symbol)) {
+    candleHistory.set(symbol, []);
+  }
+  const history = candleHistory.get(symbol)!;
+
+  let current = currentCandleMap.get(symbol);
+  if (!current || current.timestamp !== currentBucket) {
+    if (current && current.close !== undefined) {
+      history.push({
+        open: current.open!,
+        high: current.high!,
+        low: current.low!,
+        close: current.close!,
+        timestamp: current.timestamp!,
+      });
+      if (history.length > 60) history.shift();
+    }
+    current = {
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      timestamp: currentBucket,
+    };
+    currentCandleMap.set(symbol, current);
+  } else {
+    current.high = Math.max(current.high!, price);
+    current.low = Math.min(current.low!, price);
+    current.close = price;
+  }
+
+  return [...history, {
+    open: current.open!,
+    high: current.high!,
+    low: current.low!,
+    close: current.close!,
+    timestamp: current.timestamp!,
+  }];
+}
+
 function calculateEMA(prices: number[], period: number): number {
   if (prices.length < period) return prices[prices.length - 1] || 0;
   const k = 2 / (period + 1);
@@ -63,6 +119,63 @@ function calculateRSI(prices: number[], period: number = 14): number {
   return 100 - (100 / (1 + rs));
 }
 
+function calculateBollingerBands(prices: number[], period: number = 20, multiplier: number = 2.0) {
+  if (prices.length < period) return null;
+  const slice = prices.slice(-period);
+  const sma = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((a, b) => a + Math.pow(b - sma, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+  return {
+    upper: sma + (multiplier * stdDev),
+    middle: sma,
+    lower: sma - (multiplier * stdDev),
+    bandwidth: (stdDev * multiplier * 2) / sma
+  };
+}
+
+function calculateATR(candles: Candle[], period: number = 14): number {
+  if (candles.length < period + 1) return 0;
+  let trSum = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trSum += tr;
+  }
+  return trSum / period;
+}
+
+function calculateADX(candles: Candle[], period: number = 14): number {
+  if (candles.length < period * 2) return 25; // Fallback neutro se faltar amostragem
+  let plusDM = 0;
+  let minusDM = 0;
+  let trSum = 0;
+
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const upMove = candles[i].high - candles[i - 1].high;
+    const downMove = candles[i - 1].low - candles[i].low;
+
+    if (upMove > downMove && upMove > 0) plusDM += upMove;
+    if (downMove > upMove && downMove > 0) minusDM += downMove;
+
+    const tr = Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - candles[i - 1].close),
+      Math.abs(candles[i].low - candles[i - 1].close)
+    );
+    trSum += tr;
+  }
+
+  if (trSum === 0) return 0;
+  const plusDI = (plusDM / trSum) * 100;
+  const minusDI = (minusDM / trSum) * 100;
+  const dxDenominator = plusDI + minusDI;
+  if (dxDenominator === 0) return 0;
+  const dx = (Math.abs(plusDI - minusDI) / dxDenominator) * 100;
+  return dx;
+}
+
 export function analyzeScalpOpportunity(
   symbol: string,
   bid: number,
@@ -70,62 +183,83 @@ export function analyzeScalpOpportunity(
 ): ScalpSignal {
   const currentPrice = (bid + ask) / 2;
   
-  // 1. Filtro de Spread Máximo (Máximo 0.025%)
+  // 1. Filtro de Spread Máximo (Máximo 0.020%)
   const spreadPct = ((ask - bid) / currentPrice) * 100;
-  if (spreadPct > 0.025) {
-    return { symbol, action: 'NEUTRAL', reason: `Spread alto (${spreadPct.toFixed(3)}% > 0.025%)`, price: currentPrice };
+  if (spreadPct > 0.020) {
+    return { symbol, action: 'NEUTRAL', reason: `Spread elevado (${spreadPct.toFixed(4)}% > 0.020%)`, price: currentPrice };
   }
 
-  // 2. Cooldown de 3 minutos após fechar trade no mesmo par
+  // 2. Cooldown Estrito de 5 Minutos (300.000ms) após fechar trade no mesmo par
   const lastTime = lastClosedTradeTime.get(symbol) || 0;
-  if (Date.now() - lastTime < 180000) {
-    const restSec = Math.ceil((180000 - (Date.now() - lastTime)) / 1000);
+  if (Date.now() - lastTime < 300000) {
+    const restSec = Math.ceil((300000 - (Date.now() - lastTime)) / 1000);
     return { symbol, action: 'NEUTRAL', reason: `Em cooldown (${restSec}s restantes)`, price: currentPrice };
   }
 
-  recordPrice(symbol, currentPrice);
-  const history = priceHistory.get(symbol)!;
-  const prices = history.map(h => h.price);
+  const candles = updateCandles(symbol, currentPrice);
+  const closes = candles.map(c => c.close);
 
-  if (prices.length < 20) {
-    return { symbol, action: 'NEUTRAL', reason: 'Aguardando mais amostragem de preços (min. 20 ticks)', price: currentPrice };
+  if (candles.length < 15) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/15)`, price: currentPrice };
   }
 
-  const emaFast = calculateEMA(prices, 5);
-  const emaSlow = calculateEMA(prices, 15);
-  const rsi = calculateRSI(prices, 14);
+  const atr = calculateATR(candles, 14);
+  const minAtrThreshold = currentPrice * 0.00015; // Mínimo de volatilidade ativa
+  if (atr < minAtrThreshold) {
+    return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade/consolidação rasa (ATR=${atr.toFixed(5)})`, price: currentPrice };
+  }
 
-  const prevEmaFast = calculateEMA(prices.slice(0, -1), 5);
-  const prevEmaSlow = calculateEMA(prices.slice(0, -1), 15);
-  const prev2EmaSlow = calculateEMA(prices.slice(0, -3), 15);
+  const adx = calculateADX(candles, 14);
+  if (adx < 20) {
+    return { symbol, action: 'NEUTRAL', reason: `Tendência fraca (ADX=${adx.toFixed(1)} < 20)`, price: currentPrice };
+  }
+
+  const bb = calculateBollingerBands(closes, 20, 2.0);
+  const emaFast = calculateEMA(closes, 5);
+  const emaSlow = calculateEMA(closes, 15);
+  const rsi = calculateRSI(closes, 14);
+
+  const prevCloses = closes.slice(0, -1);
+  const prevEmaFast = calculateEMA(prevCloses, 5);
+  const prevEmaSlow = calculateEMA(prevCloses, 15);
+  const prev2EmaSlow = calculateEMA(closes.slice(0, -3), 15);
 
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
-  // 3. Inclinação da EMA Slow (Tendência do mercado)
+  // Distância mínima entre EMAs para evitar cruzamento falso colado
+  const emaDelta = Math.abs(emaFast - emaSlow);
+  const minEmaDelta = currentPrice * 0.00010;
+  if (emaDelta < minEmaDelta) {
+    return { symbol, action: 'NEUTRAL', reason: `Cruzamento raso (Delta EMA=${emaDelta.toFixed(6)})`, price: currentPrice };
+  }
+
   const emaSlowSlope = emaSlow - prev2EmaSlow;
 
-  // 4. Filtro RSI Estrito para evitar exaustão de tendência
-  // BUY: Cruzamento de Alta + EMA Slow subindo + RSI entre 45 e 62
-  if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 62) {
+  // 3. Condições de Entrada de Alta Precisão (BUY)
+  // Cruzamento de Alta + Slope Positivo + RSI (45-60) + Preço perto da Banda Média/Inferior + ADX > 20
+  const isNearOrBelowUpperBB = bb ? currentPrice <= bb.upper : true;
+  if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 60 && isNearOrBelowUpperBB) {
     return {
       symbol,
       action: 'BUY',
-      reason: `Cruzamento de Alta com Tendência! EMA5 (${emaFast.toFixed(5)}) > EMA15 (${emaSlow.toFixed(5)}), Inclin: +${emaSlowSlope.toFixed(6)}, RSI: ${rsi.toFixed(1)}`,
+      reason: `🎯 CONFLUÊNCIA BUY! EMA5>EMA15 (Delta:${emaDelta.toFixed(5)}), Inclin:+${emaSlowSlope.toFixed(6)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}, ATR:${atr.toFixed(5)}`,
       price: currentPrice
     };
   } 
-  // SELL: Cruzamento de Baixa + EMA Slow caindo + RSI entre 38 e 55
-  else if (crossoverSell && emaSlowSlope < 0 && rsi >= 38 && rsi <= 55) {
+  // 4. Condições de Entrada de Alta Precisão (SELL)
+  // Cruzamento de Baixa + Slope Negativo + RSI (40-55) + Preço perto da Banda Média/Superior + ADX > 20
+  const isNearOrAboveLowerBB = bb ? currentPrice >= bb.lower : true;
+  if (crossoverSell && emaSlowSlope < 0 && rsi >= 40 && rsi <= 55 && isNearOrAboveLowerBB) {
     return {
       symbol,
       action: 'SELL',
-      reason: `Cruzamento de Baixa com Tendência! EMA5 (${emaFast.toFixed(5)}) < EMA15 (${emaSlow.toFixed(5)}), Inclin: ${emaSlowSlope.toFixed(6)}, RSI: ${rsi.toFixed(1)}`,
+      reason: `🎯 CONFLUÊNCIA SELL! EMA5<EMA15 (Delta:${emaDelta.toFixed(5)}), Inclin:${emaSlowSlope.toFixed(6)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}, ATR:${atr.toFixed(5)}`,
       price: currentPrice
     };
   }
 
-  return { symbol, action: 'NEUTRAL', reason: `Sem sinal claro (RSI=${rsi.toFixed(1)}, Slope=${emaSlowSlope.toFixed(6)})`, price: currentPrice };
+  return { symbol, action: 'NEUTRAL', reason: `Sem confluência (RSI=${rsi.toFixed(1)}, ADX=${adx.toFixed(1)}, Slope=${emaSlowSlope.toFixed(6)})`, price: currentPrice };
 }
 
 async function startScalpScanner() {
