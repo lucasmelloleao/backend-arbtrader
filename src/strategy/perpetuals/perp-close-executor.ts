@@ -57,10 +57,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T = null as a
  * Usa o retorno do createOrder e, se o average não vier preenchido
  * (comum na MEXC), consulta a ordem na corretora via fetchOrder.
  */
-async function resolveOrderFill(exchange: any, order: any, symbol: string): Promise<{ filled: number; price: number }> {
+async function resolveOrderFill(exchange: any, order: any, symbol: string): Promise<{ filled: number; price: number; fee: number }> {
+  let feeAmount = 0;
+  if (order?.fee?.cost) {
+    feeAmount = Number(order.fee.cost);
+  } else if (Array.isArray(order?.fees)) {
+    feeAmount = order.fees.reduce((acc: number, f: any) => acc + Number(f.cost || 0), 0);
+  }
+
   const fallback = {
     filled: Number(order?.filled || order?.amount || 0),
     price: Number(order?.average || 0),
+    fee: feeAmount,
   };
   const orderId = String(order?.id || '');
   const isSentinel = !orderId || order?.skipped || orderId === 'ALREADY_CLOSED' || orderId === 'CONSOLIDATED' || orderId === 'RECONCILED';
@@ -85,9 +93,19 @@ async function resolveOrderFill(exchange: any, order: any, symbol: string): Prom
       if (quote > 0) price = quote / filled;
     }
 
+    let fetchedFee = feeAmount;
+    if (fetched?.fee?.cost) {
+      fetchedFee = Number(fetched.fee.cost);
+    } else if (Array.isArray(fetched?.fees)) {
+      fetchedFee = fetched.fees.reduce((acc: number, f: any) => acc + Number(f.cost || 0), 0);
+    } else if (info?.takerFee || info?.fee) {
+      fetchedFee = Math.abs(Number(info.takerFee || info.fee || 0));
+    }
+
     return {
       filled: filled > 0 ? filled : fallback.filled,
       price: price > 0 ? price : fallback.price,
+      fee: fetchedFee > 0 ? fetchedFee : fallback.fee,
     };
   } catch (e: any) {
     log.warn(`⚠️ Não foi possível consultar a ordem ${orderId} (${symbol}) para o preço real de fill: ${e?.message}`);
@@ -362,6 +380,10 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
       realizedPnL = fundingCollected;
     }
 
+    // Recupera fees gravadas na abertura
+    const spotOpenFee = Number(openTrade?.feeDetails?.spotOpenFee ?? (tradeSize * 0.001));
+    const perpOpenFee = Number(openTrade?.feeDetails?.perpOpenFee ?? (tradeSize * 0.0008));
+
     const closeReason = opts.reason || 'Comando Manual (Dashboard / Telegram)';
     const trade: any = await PerpArbTrade.create({
       userId: strat.userId,
@@ -384,6 +406,14 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
       perpPnl: Number(perpPnL.toFixed(4)),
       fundingCollected: Number(fundingCollected.toFixed(4)),
       pnl: Number(realizedPnL.toFixed(4)),
+      tradingFees: Number((spotOpenFee + perpOpenFee + tradeSize * 0.0018).toFixed(4)),
+      netPnl: Number((realizedPnL - (spotOpenFee + perpOpenFee + tradeSize * 0.0018)).toFixed(4)),
+      feeDetails: {
+        spotOpenFee,
+        perpOpenFee,
+        spotCloseFee: tradeSize * 0.001,
+        perpCloseFee: tradeSize * 0.0008,
+      },
       reason: closeReason,
       openedAt: openTrade?.createdAt || strat.positionOpenedAt || undefined,
       fundingHistory: strat.fundingHistory || [],
@@ -614,6 +644,37 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
       const realPerpExitPrice = perpExitFill.price;
       if (realPerpExitQty > 0) trade.perpQuantity = realPerpExitQty;
       if (realPerpExitPrice > 0) trade.perpExitPrice = realPerpExitPrice;
+
+      // Recalcula PnL real com base nos preços reais preenchidos
+      const finalSpotExit = realSpotExitPrice > 0 ? realSpotExitPrice : exitSpotPrice;
+      const finalPerpExit = realPerpExitPrice > 0 ? realPerpExitPrice : exitPerpPrice;
+      let finalSpotPnL = 0;
+      let finalPerpPnL = 0;
+
+      if (entrySpotPrice > 0 && finalSpotExit > 0) {
+        finalSpotPnL = ((finalSpotExit - entrySpotPrice) / entrySpotPrice) * tradeSize;
+      }
+      if (entryPerpPrice > 0 && finalPerpExit > 0) {
+        finalPerpPnL = ((entryPerpPrice - finalPerpExit) / entryPerpPrice) * tradeSize;
+      }
+
+      const finalGrossPnL = finalSpotPnL + finalPerpPnL + fundingCollected;
+      const spotCloseFee = spotExitFill.fee > 0 ? spotExitFill.fee : (tradeSize * 0.001);
+      const perpCloseFee = perpExitFill.fee > 0 ? perpExitFill.fee : (tradeSize * 0.0008);
+      const totalFees = spotOpenFee + perpOpenFee + spotCloseFee + perpCloseFee;
+      const finalNetPnL = finalGrossPnL - totalFees;
+
+      trade.spotPnl = Number(finalSpotPnL.toFixed(4));
+      trade.perpPnl = Number(finalPerpPnL.toFixed(4));
+      trade.pnl = Number(finalGrossPnL.toFixed(4));
+      trade.tradingFees = Number(totalFees.toFixed(4));
+      trade.netPnl = Number(finalNetPnL.toFixed(4));
+      trade.feeDetails = {
+        spotOpenFee,
+        perpOpenFee,
+        spotCloseFee,
+        perpCloseFee,
+      };
 
       trade.status = 'executed';
       await trade.save();

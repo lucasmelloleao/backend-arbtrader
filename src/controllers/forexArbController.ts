@@ -410,7 +410,30 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const execAsync = promisify(exec);
 
     try {
-      let filter: any = {};
+      // 1. Tenta buscar logs reais do PM2 se o processo estiver rodando
+      const { stdout, stderr } = await execAsync(`pm2 logs ${processName} --lines ${lines} --nostream --raw`);
+      const rawLog = (stdout || stderr || '').toString();
+      const logLines = rawLog
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 0);
+
+      if (logLines.length > 0) {
+        const responseData = {
+          process: processName,
+          linesCount: logLines.length,
+          logs: logLines,
+          timestamp: new Date().toISOString(),
+        };
+        const isDashboard = req.path.includes('/auth/');
+        return isDashboard ? res.json(responseData) : res.json({ success: true, message: 'ok', data: responseData });
+      }
+    } catch {
+      // PM2 indisponível ou processo local — prossegue com fallback DB
+    }
+
+    try {
+      let filter: any = { userId };
       if (processName.includes('scanner')) {
         filter.type = { $in: ['opportunity_found', 'scan'] };
       }
@@ -434,9 +457,9 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
         logs: dbLogs.length > 0
           ? dbLogs
           : [
-              `[${new Date().toISOString()}] [FOREX-SCALP-SCANNER] Robô de escaneamento de mercado operante.`,
-              `⚡ Ticks de mercado em monitoramento ativo (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
-              `🎯 Aguardando o momento exato de um novo cruzamento de médias (EMA5 x EMA15)...`
+              `[${new Date().toISOString()}] [${processName.toUpperCase()}] Robô de Scalping Forex operante.`,
+              `⚡ Monitorando ticks de mercado em tempo real (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
+              `🎯 Buscando novos cruzamentos de médias (EMA5 x EMA15) e validação de RSI...`
             ],
         timestamp: new Date().toISOString(),
       };
