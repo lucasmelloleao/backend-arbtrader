@@ -73,6 +73,7 @@ import {
   updateForexSettings,
   updateCtraderCredentials,
   closeForexStrategy,
+  voidCloseForexStrategy,
   closeAllForexStrategies,
   getForexLogs
 } from '../controllers/forexArbController';
@@ -139,6 +140,7 @@ router.get('/forex-arb/settings', authMiddleware as any, getForexSettings as any
 router.post('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.put('/forex-arb/ctrader-credentials', authMiddleware as any, updateCtraderCredentials as any);
 router.post('/forex-arb/close', authMiddleware as any, closeForexStrategy as any);
+router.post('/forex-arb/void-close', authMiddleware as any, voidCloseForexStrategy as any);
 router.post('/forex-arb/close-all', authMiddleware as any, closeAllForexStrategies as any);
 router.get('/forex-arb/logs', authMiddleware as any, getForexLogs as any);
 
@@ -220,6 +222,7 @@ router.get('/auth/forex-arb/settings', authMiddleware as any, getForexSettings a
 router.post('/auth/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.put('/auth/forex-arb/ctrader-credentials', authMiddleware as any, updateCtraderCredentials as any);
 router.post('/auth/forex-arb/close', authMiddleware as any, closeForexStrategy as any);
+router.post('/auth/forex-arb/void-close', authMiddleware as any, voidCloseForexStrategy as any);
 router.post('/auth/forex-arb/close-all', authMiddleware as any, closeAllForexStrategies as any);
 router.get('/auth/forex-arb/logs', authMiddleware as any, getForexLogs as any);
 

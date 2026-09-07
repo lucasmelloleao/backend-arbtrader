@@ -510,6 +510,28 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
   }
 }
 
+export async function voidCloseForexStrategy(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
+
+    const { strategyId } = req.body;
+    if (!strategyId) return res.status(400).json({ success: false, message: 'strategyId é obrigatório.' });
+
+    const strategy = await ForexArbStrategy.findOne({ _id: strategyId, userId });
+    if (!strategy) return res.status(404).json({ success: false, message: 'Estratégia não encontrada.' });
+
+    await ForexArbStrategy.updateOne(
+      { _id: strategyId },
+      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+    );
+
+    return res.json({ success: true, message: 'Posição marcada como encerrada pela corretora.' });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
 export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;

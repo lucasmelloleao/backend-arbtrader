@@ -257,10 +257,10 @@ export async function voidCloseStrategy(req: AuthenticatedRequest, res: Response
 
     let strat: any = null;
     if (targetId && isValidObjectId(targetId)) {
-      strat = await PerpArbStrategy.findOne({ _id: targetId, userId: userObjId });
+      strat = await PerpArbStrategy.findOne({ _id: targetId, userId: userObjId }) || await PerpArbStrategy.findById(targetId);
     }
     if (!strat && perpSymbol) {
-      strat = await PerpArbStrategy.findOne({ perpSymbol, userId: userObjId });
+      strat = await PerpArbStrategy.findOne({ perpSymbol, userId: userObjId }) || await PerpArbStrategy.findOne({ perpSymbol, userId: String(userId) });
     }
 
     if (!strat) {
