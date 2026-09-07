@@ -123,7 +123,8 @@ async function startScalpExecutor() {
                   const posIdNew = posIdReal || orderRes?.id || `pos_${Date.now()}`;
                   const entryPrice = orderRes?.price || leg.price || 0;
                   const volume = Number(orderRes?.amount || 0);
-                  const amountUsd = volume > 0 && entryPrice > 0 ? amountUsdFor(sym, volume, entryPrice) : tradeSize;
+                  const calcVol = volume > 0 ? volume : (tradeSize >= 1000 ? tradeSize : tradeSize * 1000);
+                  const amountUsd = entryPrice > 0 ? amountUsdFor(sym, calcVol, entryPrice) : tradeSize;
                   const volProtoNew = orderRes?.amount ? Math.round(orderRes.amount) : 100;
 
                   activePositions.set(sym, {
