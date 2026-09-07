@@ -168,6 +168,10 @@ router.post('/auth/prediction-arb/increase', authMiddleware as any, increasePred
 router.post('/auth/prediction-arb/void-close', authMiddleware as any, voidClosePredictionStrategy as any);
 router.get('/auth/prediction-arb/manual-scan', authMiddleware as any, manualScanPrediction as any);
 
+router.get('/portfolio/resumo', authMiddleware as any, getPortfolioResumo as any);
+router.get('/portfolio/historico', authMiddleware as any, getPortfolioHistorico as any);
+router.get('/portfolio/live', authMiddleware as any, getPortfolioLive as any);
+
 router.get('/auth/portfolio/resumo', authMiddleware as any, getPortfolioResumo as any);
 router.get('/auth/portfolio/historico', authMiddleware as any, getPortfolioHistorico as any);
 router.get('/auth/portfolio/live', authMiddleware as any, getPortfolioLive as any);
