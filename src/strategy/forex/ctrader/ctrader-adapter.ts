@@ -490,14 +490,17 @@ export class CtraderAdapter {
             ? Number(deal.executionPrice)
             : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
           
-          // cTrader Open API fornece em deal.money (lucro em dinheiro na moeda da conta em centavos)
-          // pos.commission / deal.commission contêm as taxas de abertura e fechamento
-          const grossPnl = deal.money != null ? Number(deal.money) / 100 : undefined;
+          const dealDetail = deal.closePositionDetail || {};
+          const grossPnl = dealDetail.grossProfit != null
+            ? Number(dealDetail.grossProfit) / 100
+            : (deal.money != null ? Number(deal.money) / 100 : undefined);
           const dealComm = deal.commission != null ? Math.abs(Number(deal.commission)) / 100 : 0;
           const posComm = pos.commission != null ? Math.abs(Number(pos.commission)) / 100 : 0;
           const totalCommission = dealComm > 0 && posComm > 0 ? (dealComm + posComm) : (dealComm || posComm || 0);
           const swap = deal.swap != null ? Number(deal.swap) / 100 : (pos.swap != null ? Number(pos.swap) / 100 : 0);
-          const netPnl = grossPnl != null ? (grossPnl - totalCommission + swap) : undefined;
+          const netPnl = dealDetail.netProfit != null
+            ? Number(dealDetail.netProfit) / 100
+            : (grossPnl != null ? (grossPnl - totalCommission + swap) : undefined);
 
           resolve({
             id: String(order.orderId || deal.dealId || ''),

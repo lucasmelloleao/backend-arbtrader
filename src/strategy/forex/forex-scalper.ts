@@ -328,12 +328,19 @@ async function startScalper() {
                         closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
                       }
 
-                      const pnlEst = (pnlPct / 100) * activePos.amount;
                       const closePrice = closeRes?.price || midPrice;
+                      const isGold = sym.includes('XAU');
+                      const contractUnits = isGold ? 1 : 1000;
+                      const diffPrice = activePos.side === 'BUY' ? (closePrice - activePos.entryPrice) : (activePos.entryPrice - closePrice);
+                      const calcPnlUsd = diffPrice * contractUnits;
+                      const finalPnlUsd = closeRes?.realizedPnl != null && !isNaN(Number(closeRes.realizedPnl))
+                        ? Number(closeRes.realizedPnl)
+                        : (activePos.peakPnlUsd && activePos.peakPnlUsd !== 0 ? activePos.peakPnlUsd : calcPnlUsd);
+
                       const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
                       const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
-                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL: $${pnlEst.toFixed(2)} | Resposta:`, closeRes);
+                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Resposta:`, closeRes);
 
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({
@@ -349,7 +356,7 @@ async function startScalper() {
                           existingStrat.trailingStopTriggered = atingiuTrailing;
                           existingStrat.active = false;
                           existingStrat.closedAt = new Date();
-                          existingStrat.pnl = pnlEst;
+                          existingStrat.pnl = finalPnlUsd;
                           await existingStrat.save();
 
                           await ForexArbTrade.create({
@@ -362,7 +369,7 @@ async function startScalper() {
                             amount: closeVolume,
                             volume: closeVolume,
                             amountUsd: closeAmountUsd,
-                            realizedPnl: pnlEst,
+                            realizedPnl: finalPnlUsd,
                             status: 'executed',
                             closedReason: reasonType,
                             trailingStopTriggered: atingiuTrailing,
