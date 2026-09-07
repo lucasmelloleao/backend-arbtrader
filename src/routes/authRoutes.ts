@@ -173,6 +173,11 @@ router.get('/auth/portfolio/historico', authMiddleware as any, getPortfolioHisto
 router.get('/auth/portfolio/live', authMiddleware as any, getPortfolioLive as any);
 
 // --- LATENCY ARB ENDPOINTS ---
+router.get('/latency-arb/settings', authMiddleware as any, getLatencySettings as any);
+router.post('/latency-arb/settings', authMiddleware as any, updateLatencySettings as any);
+router.get('/latency-arb/trades', authMiddleware as any, getLatencyTrades as any);
+router.post('/latency-arb/close', authMiddleware as any, closeLatencyTrade as any);
+
 router.get('/auth/latency-arb/settings', authMiddleware as any, getLatencySettings as any);
 router.post('/auth/latency-arb/settings', authMiddleware as any, updateLatencySettings as any);
 router.get('/auth/latency-arb/trades', authMiddleware as any, getLatencyTrades as any);
