@@ -104,9 +104,15 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         ).catch(() => {});
       }
 
-      const userTrailingTarget = (settings as any).trailingStopPct ?? 0.01;
-      const peak = s.peakProfitPct || 0;
-      const isTrailingActive = livePnlPct >= userTrailingTarget || peak >= userTrailingTarget;
+      const isGold = sym?.includes('XAU');
+      const peakPct = s.peakProfitPct || 0;
+      const peakUsd = Number((s as any).peakProfitUsd || 0);
+      const isTrailing = Boolean((s as any).trailingActive);
+      const trailingFloorUsd = Number((s as any).trailingFloorUsd || 0);
+      const trailingFloorPrice = (s as any).trailingFloorPrice || null;
+      const trailingActivationUsd = Number((s as any).trailingActivationUsd || (isGold ? 0.15 : 0.07));
+      const trailingDistanceUsd = Number((s as any).trailingDistanceUsd || (isGold ? 0.05 : 0.03));
+      const currentAction = (s as any).currentAction || (isTrailing ? `🔒 Trailing Ativo (Piso: +$${trailingFloorUsd.toFixed(2)} USD)` : `⏳ Monitorando mercado`);
 
       formatted.push({
         _id: s._id.toString(),
@@ -132,15 +138,15 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         status: s.status,
         pnl: livePnlUsd,
         pnlPct: livePnlPct,
-        peakProfitPct: peak,
-        peakProfitUsd: (s as any).peakProfitUsd || 0,
-        isTrailingActive: Boolean((s as any).trailingActive || isTrailingActive),
-        trailingActive: Boolean((s as any).trailingActive || isTrailingActive),
-        trailingFloorUsd: (s as any).trailingFloorUsd || 0,
-        trailingFloorPrice: (s as any).trailingFloorPrice || null,
-        trailingActivationUsd: (s as any).trailingActivationUsd || 0.07,
-        trailingDistanceUsd: (s as any).trailingDistanceUsd || 0.03,
-        currentAction: (s as any).currentAction || (isTrailingActive ? 'Trailing Stop Ativado' : 'Monitorando'),
+        peakProfitPct: peakPct,
+        peakProfitUsd: peakUsd,
+        isTrailingActive: isTrailing,
+        trailingActive: isTrailing,
+        trailingFloorUsd: trailingFloorUsd,
+        trailingFloorPrice: trailingFloorPrice,
+        trailingActivationUsd: trailingActivationUsd,
+        trailingDistanceUsd: trailingDistanceUsd,
+        currentAction: currentAction,
         closedAt: s.closedAt,
         createdAt: s.createdAt
       });

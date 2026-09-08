@@ -368,19 +368,29 @@ async function startScalper() {
 
                 if (!activePositions.has(sym)) {
                   const volumeProtocol = Number(pos.tradeData?.volume || 0);
+                  const existingDoc = await ForexArbStrategy.findOne({
+                    userId: settings.userId,
+                    positionOpen: true,
+                    $or: [
+                      { 'legs.symbol': sym },
+                      { 'legs.orderId': new RegExp(posId) },
+                      { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') },
+                    ]
+                  }).lean();
+
                   activePositions.set(sym, {
                     positionId: posId,
                     side,
-                    entryPrice,
+                    entryPrice: entryPrice > 0 ? entryPrice : (existingDoc?.legs?.[0]?.price || 0),
                     amount: amount > 0 ? amount : tradeSize,
                     volumeProtocol: volumeProtocol > 0 ? volumeProtocol : 100,
-                    entryTime: Date.now(),
-                    peakPnlPct: 0,
-                    peakPnlUsd: 0,
-                    trailingFloorUsd: 0,
-                    trailingActive: false,
+                    entryTime: existingDoc?.positionOpenedAt ? new Date(existingDoc.positionOpenedAt).getTime() : Date.now(),
+                    peakPnlPct: existingDoc?.peakProfitPct || 0,
+                    peakPnlUsd: (existingDoc as any)?.peakProfitUsd || 0,
+                    trailingFloorUsd: (existingDoc as any)?.trailingFloorUsd || 0,
+                    trailingActive: Boolean((existingDoc as any)?.trailingActive),
                   });
-                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader para ${sym} (${side})`);
+                  log.info(`🔄 [RECONCILE CTRADER] Posição #${posId} detectada na cTrader para ${sym} (${side}) | Trailing ativo: ${Boolean((existingDoc as any)?.trailingActive)} | Piso: +$${(existingDoc as any)?.trailingFloorUsd || 0}`);
                 }
               }
             }
@@ -493,8 +503,12 @@ async function startScalper() {
                   ForexArbStrategy.updateOne(
                     {
                       userId: settings.userId,
-                      name: `Scalping ${sym} (${activePos.side})`,
                       positionOpen: true,
+                      $or: [
+                        { 'legs.symbol': sym },
+                        { 'legs.orderId': new RegExp(activePos.positionId || '___') },
+                        { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') }
+                      ]
                     },
                     {
                       $set: {
@@ -585,8 +599,12 @@ async function startScalper() {
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({
                           userId: settings.userId,
-                          name: `Scalping ${sym} (${activePos.side})`,
-                          positionOpen: true
+                          positionOpen: true,
+                          $or: [
+                            { 'legs.symbol': sym },
+                            { 'legs.orderId': new RegExp(activePos.positionId || '___') },
+                            { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') }
+                          ]
                         });
 
                         if (existingStrat) {
