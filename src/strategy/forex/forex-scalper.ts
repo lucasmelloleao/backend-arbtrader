@@ -158,6 +158,7 @@ export interface SymbolProfile {
   maxSpreadPct: number;
   trailingActivationUsd: number;
   trailingDistanceUsd: number;
+  minFeeProtectionUsd: number;
   minEmaDeltaRatio: number;
   minAtrRatio: number;
 }
@@ -166,16 +167,18 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
       maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
-      trailingActivationUsd: 0.40,// Trailing ativa com +$0.40
-      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20
+      trailingActivationUsd: 0.15,// Trailing ativa com +$0.15 no ouro
+      trailingDistanceUsd: 0.05,  // Distância de trailing $0.05
+      minFeeProtectionUsd: 0.05,  // Piso mínimo garantido para cobrir taxas do ouro
       minEmaDeltaRatio: 0.00008,
       minAtrRatio: 0.00010,
     };
   }
   return {
     maxSpreadPct: 0.018,          // FX estrito (evita spread dilatado)
-    trailingActivationUsd: 0.15,  // Trailing ativa com +$0.15
-    trailingDistanceUsd: 0.08,    // Distância $0.08
+    trailingActivationUsd: 0.07,  // Trailing ativa exatamente com +$0.07 USD de lucro
+    trailingDistanceUsd: 0.03,    // Distância curta de $0.03 USD para acompanhar de perto
+    minFeeProtectionUsd: 0.035,   // Piso mínimo garantido de +$0.035 USD (assegura o valor das taxas)
     minEmaDeltaRatio: 0.00010,
     minAtrRatio: 0.00008,
   };
@@ -425,14 +428,18 @@ async function startScalper() {
                   if (pnlPct > activePos.peakPnlPct) activePos.peakPnlPct = pnlPct;
                   if (pnlUsd > activePos.peakPnlUsd) activePos.peakPnlUsd = pnlUsd;
 
-                  // Trailing Stop calibrado por ativo (Ajuste 5)
+                  // Trailing Stop calibrado por ativo (Gatilho +$0.07 USD com proteção de taxas)
                   if (!activePos.trailingActive && activePos.peakPnlUsd >= profile.trailingActivationUsd) {
                     activePos.trailingActive = true;
-                    activePos.trailingFloorUsd = Math.max(0, activePos.peakPnlUsd - profile.trailingDistanceUsd);
-                    log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso +$${activePos.trailingFloorUsd.toFixed(2)}`);
+                    activePos.trailingFloorUsd = Math.max(
+                      profile.minFeeProtectionUsd,
+                      activePos.peakPnlUsd - profile.trailingDistanceUsd
+                    );
+                    log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso garantido +$${activePos.trailingFloorUsd.toFixed(2)} (Taxas protegidas)`);
                   } else if (activePos.trailingActive) {
                     activePos.trailingFloorUsd = Math.max(
                       activePos.trailingFloorUsd,
+                      profile.minFeeProtectionUsd,
                       activePos.peakPnlUsd - profile.trailingDistanceUsd,
                     );
                   }
