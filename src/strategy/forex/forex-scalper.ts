@@ -1,5 +1,5 @@
 // Estratégia de Scalping Forex de Alta Frequência
-// Suporta indicadores técnicos: RSI, EMA Fast/Slow e Trailing Stop curto.
+// Suporta indicadores técnicos: RSI, EMA Fast/Slow, M5 Trend Filter, Candle M1 Close, Trailing Stop e Calibração por Ativo.
 import { loadEnv } from '../../utils/env-loader';
 loadEnv();
 import { connectToDatabase } from '../../config/db';
@@ -8,8 +8,6 @@ import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
-import { getSharedFixAdapter, isFixExchange } from './fix/fix-factory';
-import { getSharedDukascopyAdapter, isDukascopyExchange } from './dukascopy/dukascopy-factory';
 
 const getTs = () => `[${new Date().toISOString()}]`;
 const log = {
@@ -25,30 +23,102 @@ export interface ScalpSignal {
   price: number;
 }
 
-export interface PriceCandle {
-  price: number;
-  time: number;
+export interface Candle {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  timestamp: number;
 }
 
-// Histórico de preços em memória para cálculo de indicadores
-const priceHistory = new Map<string, PriceCandle[]>();
+// ─── ESTRUTURAS DE VELAS EM MEMÓRIA (M1 E M5) ──────────────────────────────────
+const candleHistoryM1 = new Map<string, Candle[]>();
+const currentCandleM1 = new Map<string, Partial<Candle>>();
+const candleHistoryM5 = new Map<string, Candle[]>();
+const currentCandleM5 = new Map<string, Partial<Candle>>();
+const justClosedM1Map = new Map<string, boolean>();
 
-export function recordPrice(symbol: string, price: number) {
-  if (!priceHistory.has(symbol)) {
-    priceHistory.set(symbol, []);
+const M1_PERIOD_MS = 60_000;
+const M5_PERIOD_MS = 300_000;
+
+// Trava de tempo mínimo em posição antes de autorizar 'signal_reversal' (60 segundos)
+export const MIN_HOLD_TIME_MS = 60_000;
+
+export function updateCandlesM1(symbol: string, price: number): { history: Candle[]; closed: boolean } {
+  const now = Date.now();
+  const bucket = Math.floor(now / M1_PERIOD_MS) * M1_PERIOD_MS;
+
+  if (!candleHistoryM1.has(symbol)) candleHistoryM1.set(symbol, []);
+  const history = candleHistoryM1.get(symbol)!;
+
+  let current = currentCandleM1.get(symbol);
+  let justClosed = false;
+
+  if (!current || current.timestamp !== bucket) {
+    if (current && current.close !== undefined) {
+      history.push({
+        open: current.open!,
+        high: current.high!,
+        low: current.low!,
+        close: current.close!,
+        timestamp: current.timestamp!,
+      });
+      if (history.length > 80) history.shift();
+      justClosed = true;
+    }
+    current = { open: price, high: price, low: price, close: price, timestamp: bucket };
+    currentCandleM1.set(symbol, current);
+  } else {
+    current.high = Math.max(current.high!, price);
+    current.low = Math.min(current.low!, price);
+    current.close = price;
   }
-  const history = priceHistory.get(symbol)!;
-  history.push({ price, time: Date.now() });
-  if (history.length > 100) {
-    history.shift();
-  }
+
+  justClosedM1Map.set(symbol, justClosed);
+
+  return {
+    history: [...history, { open: current.open!, high: current.high!, low: current.low!, close: current.close!, timestamp: current.timestamp! }],
+    closed: justClosed,
+  };
 }
 
+export function updateCandlesM5(symbol: string, price: number): Candle[] {
+  const now = Date.now();
+  const bucket = Math.floor(now / M5_PERIOD_MS) * M5_PERIOD_MS;
+
+  if (!candleHistoryM5.has(symbol)) candleHistoryM5.set(symbol, []);
+  const history = candleHistoryM5.get(symbol)!;
+
+  let current = currentCandleM5.get(symbol);
+  if (!current || current.timestamp !== bucket) {
+    if (current && current.close !== undefined) {
+      history.push({
+        open: current.open!,
+        high: current.high!,
+        low: current.low!,
+        close: current.close!,
+        timestamp: current.timestamp!,
+      });
+      if (history.length > 60) history.shift();
+    }
+    current = { open: price, high: price, low: price, close: price, timestamp: bucket };
+    currentCandleM5.set(symbol, current);
+  } else {
+    current.high = Math.max(current.high!, price);
+    current.low = Math.min(current.low!, price);
+    current.close = price;
+  }
+
+  return [...history, { open: current.open!, high: current.high!, low: current.low!, close: current.close!, timestamp: current.timestamp! }];
+}
+
+// ─── CÁLCULOS TÉCNICOS (EMA, RSI, ATR) ──────────────────────────────────────────
 export function calculateEMA(prices: number[], period: number): number {
   if (prices.length === 0) return 0;
+  if (prices.length < period) return prices[prices.length - 1] || 0;
   const k = 2 / (period + 1);
-  let ema = prices[0];
-  for (let i = 1; i < prices.length; i++) {
+  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < prices.length; i++) {
     ema = prices[i] * k + ema * (1 - k);
   }
   return ema;
@@ -70,51 +140,140 @@ export function calculateRSI(prices: number[], period = 14): number {
   return 100 - (100 / (1 + rs));
 }
 
-export function analyzeScalpOpportunity(symbol: string, currentPrice: number): ScalpSignal {
-  recordPrice(symbol, currentPrice);
-  const history = priceHistory.get(symbol)!;
-  const prices = history.map(h => h.price);
+export function calculateATR(candles: Candle[], period = 14): number {
+  if (candles.length < period + 1) return 0;
+  let trSum = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trSum += tr;
+  }
+  return trSum / period;
+}
 
-  if (prices.length < 15) {
-    return { symbol, action: 'NEUTRAL', reason: 'Aguardando mais ticks para calcular indicadores', price: currentPrice };
+// ─── PERFIL E CALIBRAÇÃO POR ATIVO (AJUSTE 5) ─────────────────────────────────
+export interface SymbolProfile {
+  maxSpreadPct: number;
+  trailingActivationUsd: number;
+  trailingDistanceUsd: number;
+  minEmaDeltaRatio: number;
+  minAtrRatio: number;
+}
+
+export function getSymbolProfile(symbol: string): SymbolProfile {
+  if (symbol.includes('XAU')) {
+    return {
+      maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
+      trailingActivationUsd: 0.40,// Trailing ativa com +$0.40
+      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20
+      minEmaDeltaRatio: 0.00008,
+      minAtrRatio: 0.00010,
+    };
+  }
+  return {
+    maxSpreadPct: 0.018,          // FX estrito (evita spread dilatado)
+    trailingActivationUsd: 0.15,  // Trailing ativa com +$0.15
+    trailingDistanceUsd: 0.08,    // Distância $0.08
+    minEmaDeltaRatio: 0.00010,
+    minAtrRatio: 0.00008,
+  };
+}
+
+// ─── ANÁLISE DE OPORTUNIDADES (AJUSTES 1, 4 E 5) ──────────────────────────────
+export function analyzeScalpOpportunity(
+  symbol: string,
+  bid: number,
+  ask: number
+): ScalpSignal {
+  const currentPrice = (bid + ask) / 2;
+  const profile = getSymbolProfile(symbol);
+
+  // 1. Filtro Estrito de Spread
+  const spreadPct = ((ask - bid) / currentPrice) * 100;
+  if (spreadPct > profile.maxSpreadPct) {
+    return { symbol, action: 'NEUTRAL', reason: `Spread elevado (${spreadPct.toFixed(4)}% > ${profile.maxSpreadPct}%)`, price: currentPrice };
   }
 
-  const emaFast = calculateEMA(prices, 5);
-  const emaSlow = calculateEMA(prices, 15);
-  const rsi = calculateRSI(prices, 14);
+  // 2. Atualização de Velas M1 e M5
+  const { history: candlesM1 } = updateCandlesM1(symbol, currentPrice);
+  const candlesM5 = updateCandlesM5(symbol, currentPrice);
 
-  const prevEmaFast = calculateEMA(prices.slice(0, -1), 5);
-  const prevEmaSlow = calculateEMA(prices.slice(0, -1), 15);
+  if (candlesM1.length < 15) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (${candlesM1.length}/15)`, price: currentPrice };
+  }
 
-  // Exige CRUZAMENTO REAL (crossover no último tick):
-  // COMPRA: No tick anterior EMA5 <= EMA15, e no tick atual EMA5 > EMA15 com RSI < 65
-  // VENDA: No tick anterior EMA5 >= EMA15, e no tick atual EMA5 < EMA15 com RSI > 35
+  const closesM1 = candlesM1.map(c => c.close);
+  const closesM5 = candlesM5.map(c => c.close);
+
+  // 3. Filtro de Tendência Maior no M5 (Ajuste 4)
+  let m5Trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  if (closesM5.length >= 20) {
+    const ema20M5 = calculateEMA(closesM5, 20);
+    const ema50M5 = calculateEMA(closesM5, Math.min(50, closesM5.length));
+    if (ema20M5 > ema50M5 && currentPrice >= ema20M5 * 0.9998) {
+      m5Trend = 'BULLISH';
+    } else if (ema20M5 < ema50M5 && currentPrice <= ema20M5 * 1.0002) {
+      m5Trend = 'BEARISH';
+    }
+  }
+
+  // 4. Indicadores M1
+  const emaFast = calculateEMA(closesM1, 5);
+  const emaSlow = calculateEMA(closesM1, 15);
+  const rsi = calculateRSI(closesM1, 14);
+  const atr = calculateATR(candlesM1, 14);
+
+  // Filtro de Volatilidade Mínima (ATR)
+  if (atr > 0 && atr < currentPrice * profile.minAtrRatio) {
+    return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
+  }
+
+  // Crossover M1
+  const prevCloses = closesM1.slice(0, -1);
+  const prevEmaFast = calculateEMA(prevCloses, 5);
+  const prevEmaSlow = calculateEMA(prevCloses, 15);
+
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
-  if (crossoverBuy && rsi < 65) {
+  // Distância mínima entre EMAs para evitar cruzamento falso colado
+  const emaDelta = Math.abs(emaFast - emaSlow);
+  if (emaDelta < currentPrice * profile.minEmaDeltaRatio) {
+    return { symbol, action: 'NEUTRAL', reason: `Cruzamento raso (Delta EMA=${emaDelta.toFixed(6)})`, price: currentPrice };
+  }
+
+  // 5. Confluência BUY (Cruzamento M1 + RSI saudável + Tendência M5 alinhada)
+  if (crossoverBuy && rsi >= 42 && rsi <= 62) {
+    if (m5Trend === 'BEARISH') {
+      return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 em baixa`, price: currentPrice };
+    }
     return {
       symbol,
       action: 'BUY',
-      reason: `Cruzamento de Alta! EMA5 (${emaFast.toFixed(5)}) cruzou acima de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) < 65`,
-      price: currentPrice
-    };
-  } else if (crossoverSell && rsi > 35) {
-    return {
-      symbol,
-      action: 'SELL',
-      reason: `Cruzamento de Baixa! EMA5 (${emaFast.toFixed(5)}) cruzou abaixo de EMA15 (${emaSlow.toFixed(5)}) e RSI (${rsi.toFixed(1)}) > 35`,
+      reason: `🎯 CONFLUÊNCIA BUY! EMA5>EMA15 (Delta:${emaDelta.toFixed(5)}), RSI:${rsi.toFixed(1)}, M5:${m5Trend}`,
       price: currentPrice
     };
   }
 
-  return { symbol, action: 'NEUTRAL', reason: 'Sem sinal claro de cruzamento', price: currentPrice };
+  // 6. Confluência SELL (Cruzamento M1 + RSI saudável + Tendência M5 alinhada)
+  if (crossoverSell && rsi >= 38 && rsi <= 58) {
+    if (m5Trend === 'BULLISH') {
+      return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 em alta`, price: currentPrice };
+    }
+    return {
+      symbol,
+      action: 'SELL',
+      reason: `🎯 CONFLUÊNCIA SELL! EMA5<EMA15 (Delta:${emaDelta.toFixed(5)}), RSI:${rsi.toFixed(1)}, M5:${m5Trend}`,
+      price: currentPrice
+    };
+  }
+
+  return { symbol, action: 'NEUTRAL', reason: 'Sem confluência de entrada', price: currentPrice };
 }
 
-const TRAILING_ACTIVATION_USD = 0.15;
-const TRAILING_DISTANCE_USD = 0.08;
-
-// PnL do trailing é líquido e vem da cTrader, não do tradeSize configurado.
+// ─── GESTÃO DE POSIÇÕES ATIVAS ────────────────────────────────────────────────
 const activePositions = new Map<string, {
   positionId?: string;
   side: 'BUY' | 'SELL';
@@ -169,7 +328,7 @@ export function decidePositionClose(input: {
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
-  log.info('✅ Conectado ao MongoDB - Forex Scalper Bot');
+  log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
 
@@ -184,9 +343,9 @@ async function startScalper() {
 
         if (ctraderKey) {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
-          const tradeSize = settings.tradeSize || 100; // Tamanho padrão da ordem em unidades base
+          const tradeSize = settings.tradeSize || 100;
 
-          // Sincroniza posições reais da cTrader por símbolo
+          // 1. Sincroniza posições reais da cTrader por símbolo
           try {
             const accountId = Number(ctraderKey.accountId);
             const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
@@ -236,7 +395,7 @@ async function startScalper() {
             try {
               livePnlBySymbol = await (adapter as any).getPositionsPnL();
             } catch {
-              // Usa o cálculo por preço como fallback neste ciclo.
+              // fallback
             }
 
             const tickers = await (adapter as any).fetchTickers(symbols);
@@ -244,15 +403,15 @@ async function startScalper() {
               const ticker = tickers[sym];
               if (ticker && ticker.bid && ticker.ask) {
                 const midPrice = (ticker.bid + ticker.ask) / 2;
-                const signal = analyzeScalpOpportunity(sym, midPrice);
+                const profile = getSymbolProfile(sym);
+                const signal = analyzeScalpOpportunity(sym, ticker.bid, ticker.ask);
+                const isM1Closed = justClosedM1Map.get(sym) || false;
 
-                // --- 1. AVALIAÇÃO DE FECHAMENTO (TAKE PROFIT / STOP LOSS / TRAILING STOP) PARA POSIÇÃO EXISTENTE ---
+                // --- 1. GESTÃO DE SAÍDA (TP, SL, TRAILING E REVERSÃO FILTRADA) ---
                 const activePos = activePositions.get(sym);
 
                 if (activePos) {
-                  if (activePos.entryPrice === 0) {
-                    activePos.entryPrice = midPrice; // Ajusta preço base de referência se veio da cTrader
-                  }
+                  if (activePos.entryPrice === 0) activePos.entryPrice = midPrice;
 
                   const pnlPct = activePos.side === 'BUY'
                     ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
@@ -262,38 +421,44 @@ async function startScalper() {
                     ? Number(livePnlUsd)
                     : (pnlPct / 100) * tradeSize;
 
-                  // Atualiza pico de ganho da posição (Peak PnL %)
-                  if (pnlPct > activePos.peakPnlPct) {
-                    activePos.peakPnlPct = pnlPct;
-                  }
-                  if (pnlUsd > activePos.peakPnlUsd) {
-                    activePos.peakPnlUsd = pnlUsd;
-                  }
-                  if (!activePos.trailingActive && activePos.peakPnlUsd >= TRAILING_ACTIVATION_USD) {
+                  // Atualiza picos de ganho
+                  if (pnlPct > activePos.peakPnlPct) activePos.peakPnlPct = pnlPct;
+                  if (pnlUsd > activePos.peakPnlUsd) activePos.peakPnlUsd = pnlUsd;
+
+                  // Trailing Stop calibrado por ativo (Ajuste 5)
+                  if (!activePos.trailingActive && activePos.peakPnlUsd >= profile.trailingActivationUsd) {
                     activePos.trailingActive = true;
-                    activePos.trailingFloorUsd = 0;
-                    log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso $0,00`);
+                    activePos.trailingFloorUsd = Math.max(0, activePos.peakPnlUsd - profile.trailingDistanceUsd);
+                    log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso +$${activePos.trailingFloorUsd.toFixed(2)}`);
                   } else if (activePos.trailingActive) {
                     activePos.trailingFloorUsd = Math.max(
                       activePos.trailingFloorUsd,
-                      activePos.peakPnlUsd - TRAILING_DISTANCE_USD,
+                      activePos.peakPnlUsd - profile.trailingDistanceUsd,
                     );
                   }
 
                   const takeProfitTarget = settings.takeProfitPct ?? 0.20;
                   const stopLossTarget = Math.abs(settings.stopLossPct ?? 0.10);
+
                   const atingiuTP = pnlPct >= takeProfitTarget;
                   const atingiuSL = pnlPct <= -stopLossTarget;
-                  // Trailing stop: ativa no percentual configurado e fecha no recuo configurado.
-                  const atingiuTrailing =
-                    activePos.trailingActive &&
-                    pnlUsd <= activePos.trailingFloorUsd;
-                  const reversaoSinal =
-                    !activePos.trailingActive &&
-                    signal.action !== 'NEUTRAL' &&
-                    signal.action !== activePos.side;
+                  const atingiuTrailing = activePos.trailingActive && pnlUsd <= activePos.trailingFloorUsd;
 
-                  if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinal) {
+                  // AJUSTES 1, 2 E 3: Reversão só é autorizada se:
+                  // 1) Posição aberta há pelo menos MIN_HOLD_TIME_MS (60s)
+                  // 2) Vela M1 fechou confirmando o sinal contrário
+                  // 3) Trailing stop não estiver já no controle
+                  const tempoAbertoMs = Date.now() - activePos.entryTime;
+                  const tempoMinimoPassou = tempoAbertoMs >= MIN_HOLD_TIME_MS;
+                  const sinalContrario = signal.action !== 'NEUTRAL' && signal.action !== activePos.side;
+                  
+                  const reversaoSinalValida =
+                    !activePos.trailingActive &&
+                    sinalContrario &&
+                    tempoMinimoPassou &&
+                    isM1Closed;
+
+                  if (atingiuTP || atingiuSL || atingiuTrailing || reversaoSinalValida) {
                     const reasonType = atingiuTrailing
                       ? 'trailing_stop'
                       : atingiuTP
@@ -308,7 +473,7 @@ async function startScalper() {
                         ? `Take Profit atingido (+${pnlPct.toFixed(3)}%)`
                         : atingiuSL
                           ? `Stop Loss atingido (${pnlPct.toFixed(3)}%)`
-                          : `Reversão de sinal para ${signal.action}`;
+                          : `Reversão de sinal confirmada no M1 (${Math.round(tempoAbertoMs / 1000)}s)`;
 
                     const closeDecision = decidePositionClose({
                       positionId: activePos.positionId,
@@ -318,7 +483,7 @@ async function startScalper() {
                       symbol: sym,
                     });
                     const closeSide: 'buy' | 'sell' = closeDecision.closeSide ?? (activePos.side === 'BUY' ? 'sell' : 'buy');
-                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando posição de ${activePos.side} em ${sym}. Motivo: ${motivoFechar} | Modo: ${closeDecision.mode}`);
+                    log.info(`🔄 [AUTO-SCALPER CLOSE] Encerrando ${activePos.side} em ${sym}. Motivo: ${motivoFechar} | Modo: ${closeDecision.mode}`);
 
                     try {
                       let closeRes;
@@ -340,7 +505,7 @@ async function startScalper() {
                       const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
                       const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
-                      log.info(`✅ [POSIÇÃO ENCERRADA COM SUCESSO] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Resposta:`, closeRes);
+                      log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Motivo: ${reasonType}`);
 
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({
@@ -385,8 +550,7 @@ async function startScalper() {
                   }
                 }
 
-                // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÕES ABERTAS PARA O SÍMBOLO ---
-                // Trava estrita de 1 posição ativa por par (Verifica memória + Mongo DB):
+                // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÕES ABERTAS ---
                 const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                   userId: settings.userId,
                   name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
@@ -425,7 +589,7 @@ async function startScalper() {
                       trailingFloorUsd: 0,
                       trailingActive: false,
                     });
-                    log.info(`✅ [ORDEM ABERTA COM SUCESSO] #${posIdNew} ${sym} ${signal.action}! ID/Result:`, orderRes);
+                    log.info(`✅ [ORDEM ABERTA] #${posIdNew} ${sym} ${signal.action}!`);
 
                     try {
                       const stratDoc = await ForexArbStrategy.create({
@@ -468,7 +632,7 @@ async function startScalper() {
                 }
               }
             }
-          } catch { /* ignora erro de fetch */ }
+          } catch { /* erro no ciclo */ }
         }
       }
     } catch (err: any) {

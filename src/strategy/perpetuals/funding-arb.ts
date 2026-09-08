@@ -440,7 +440,7 @@ async function main() {
               if (reconciled) continue;
             }
             
-            const isFundingNegative = fundingPct <= 0;
+            const isFundingNegative = fundingPct <= -0.05;
             let spreadExitProfitPct = 0;
             if (perpAsk && spotBid) {
               spreadExitProfitPct = (spotBid - perpAsk) / perpAsk * 100;
@@ -497,12 +497,13 @@ async function main() {
             if (spotBid && perpAsk && openSpotPrice > 0 && openPerpPrice > 0) {
               const spotPnL = ((spotBid - openSpotPrice) / openSpotPrice) * realPosSize;
               const perpPnL = ((openPerpPrice - perpAsk) / openPerpPrice) * realPosSize;
-              const tradingFees = realPosSize * 0.0012;
+              // Taxas reais de ida e volta (Spot Taker 0.10% + Perp Taker 0.08% na entrada e saída = ~0.36%)
+              const tradingFees = realPosSize * 0.0036;
               const netReturnUsd = spotPnL + perpPnL + realFundingCollected - tradingFees;
               estimatedNetReturnPct = realPosSize > 0 ? (netReturnUsd / realPosSize) * 100 : 0;
             }
 
-            log.info(`   └ Funding=${fundingPct.toFixed(4)}% | Spread=${spreadExitProfitPct.toFixed(4)}% | Retorno Líquido=${estimatedNetReturnPct.toFixed(2)}% (TP Alvo=${targetProfitPct.toFixed(1)}%)`);
+            log.info(`   └ Funding=${fundingPct.toFixed(4)}% | Spread=${spreadExitProfitPct.toFixed(4)}% | Retorno Líquido Real=${estimatedNetReturnPct.toFixed(2)}% (TP Alvo=${targetProfitPct.toFixed(1)}%)`);
 
             const profitTrailingDropPct = Number(cs.profitTrailingDropPct ?? 10);
             const dbPeak = Number(strat.peakProfitPct ?? 0);
@@ -524,7 +525,7 @@ async function main() {
               
               // Dispara fechamento se recuar a porcentagem do limite OU se o retorno cair abaixo do Alvo Mínimo de TP
               const dropThresholdMet = profitDropFromPeak >= profitTrailingDropPct || absDropPct >= (profitTrailingDropPct / 10);
-              const fellBelowTarget = estimatedNetReturnPct < targetProfitPct * 0.5;
+              const fellBelowTarget = estimatedNetReturnPct < targetProfitPct * 0.7;
 
               if (dropThresholdMet || fellBelowTarget) {
                 const reasonStr = fellBelowTarget
@@ -555,12 +556,12 @@ async function main() {
             const spreadMet = spreadExitProfitPct >= effectiveSpreadThreshold;
 
             if (isFundingNegative) {
-              log.info(`🚨 [FECHAMENTO ACIONADO] [${strat.name}] Motivo: Funding <= 0`);
+              log.info(`🚨 [FECHAMENTO ACIONADO] [${strat.name}] Motivo: Funding Severamente Negativo (<= -0.05%)`);
               peakSpreadMap.delete(sKey);
               trailingActiveMap.delete(sKey);
               if ((strat as any).autoExecute) {
                 const closeExec = await import('./perp-close-executor');
-                closeExec.closeStrategy(String(strat._id), { dryRun: false, reason: 'Funding <= 0 (Proteção Automática)' }).catch((e: any) => {
+                closeExec.closeStrategy(String(strat._id), { dryRun: false, reason: 'Funding Severamente Negativo (<= -0.05%)' }).catch((e: any) => {
                   log.error(`❌ Erro no auto-fechamento [${strat.name}]:`, e.message);
                 });
               }

@@ -9,14 +9,14 @@ const log = {
 };
 
 export const SCANNER_CONFIG = {
-  minFundingPct8h: 0.002,
-  minVolume24hUSD: 50000,
+  minFundingPct8h: 0.002, // Mínimo 0.20% por ciclo de 8h
+  minVolume24hUSD: 150000, // Mínimo $150k de volume 24h para evitar books vazios
   targetSpotBuyUSD: 300,
   scanIntervalMs: 2 * 60 * 1000,
   maxStrategiesPerScan: 10,
   reuseExisting: true,
   maxPerpScan: 50,
-  minFundingRatePct: 0.001,
+  minFundingRatePct: 0.002,
 };
 
 export type ScannerOpportunity = {
@@ -158,8 +158,9 @@ export async function scanExchangeFunding(exchangeId: string, config: any): Prom
     const perpMarket = markets[symbol];
 
     const spotTakerFee = spotMarket.taker ?? 0.001;
-    const perpTakerFee = perpMarket.taker ?? 0.0006;
-    const roundTripFeePct = (spotTakerFee + perpTakerFee) * 100;
+    const perpTakerFee = perpMarket.taker ?? 0.0008;
+    // Custo real de Ida e Volta (Entrada Spot+Perp + Saída Spot+Perp)
+    const roundTripFeePct = (spotTakerFee + perpTakerFee) * 2 * 100;
 
     const netFundingPct = fundingPct + spreadPct - roundTripFeePct;
 
@@ -187,8 +188,10 @@ export async function scanExchangeFunding(exchangeId: string, config: any): Prom
   ).join('\n'));
 
   const minEntrySpread = config.minEntrySpreadPct ?? 0;
+  const minRequiredFunding = (config.minFundingRatePct ?? 0.002) * 100;
   const profitableOpps = rawOpportunities.filter(op =>
-    op.netFundingPct >= config.minFundingRatePct &&
+    op.fundingPct >= minRequiredFunding &&
+    op.netFundingPct >= 0 &&
     (op as any).spreadPct >= minEntrySpread
   );
 

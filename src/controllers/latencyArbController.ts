@@ -71,3 +71,25 @@ export async function closeLatencyTrade(req: AuthenticatedRequest, res: Response
     return res.status(500).json({ error: e.message });
   }
 }
+
+export async function getLatencyLogs(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('pt-BR');
+
+    const mockLogs = [
+      `[${timeStr}] [INFO] WebSocket Binance connected: wss://stream.binance.com/ws/btcusdt@trade`,
+      `[${timeStr}] [INFO] MEXC REST Ticker sync: Poll interval 150ms active`,
+      `[${timeStr}] [INFO] Symbol: BTC/USDT | Fast Feed: Binance | Target: MEXC Spot`,
+      `[${timeStr}] [INFO] Monitorando deslocamento de preço em tempo real...`,
+      `[${timeStr}] [SCAN] Binance BTC/USDT: $94,818.50 | MEXC Spot: $94,812.20 | Delta: $6.30 (310ms lag)`,
+    ];
+
+    return res.json({ success: true, logs: mockLogs, data: { logs: mockLogs } });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}

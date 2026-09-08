@@ -6,7 +6,7 @@ const PerpArbSettingsSchema = new mongoose.Schema({
   lastScannedAt: { type: Date, default: null },
   tradeSize: { type: Number, default: 100 },
   minFundingRatePct: { type: Number, default: 0.002 },
-  minVolume24hUSD: { type: Number, default: 50000 },
+  minVolume24hUSD: { type: Number, default: 150000 },
   maxStrategiesPerScan: { type: Number, default: 5 },
   maxPerpScan: { type: Number, default: 50 },
   scanIntervalMs: { type: Number, default: 120000 },
@@ -23,7 +23,7 @@ const PerpArbSettingsSchema = new mongoose.Schema({
   spreadCloseThresholdPct: { type: Number, default: 0.3 }, // base (usada quando funding <= 0 ou allow)
   spreadCloseForcePct: { type: Number, default: 0.3 },     // severa, vale mesmo com funding positivo
   // ─── Take-Profit Líquido Global (Retorno em %) ─────────────────────
-  targetProfitPct: { type: Number, default: 0.7 },          // Take-Profit Global: ativa Trailing se retorno líquido >= 0.7%
+  targetProfitPct: { type: Number, default: 0.8 },          // Take-Profit Global: ativa Trailing se retorno líquido >= 0.8%
   profitTrailingDropPct: { type: Number, default: 10 },      // Recuo de 10% do topo de retorno líquido ativado (preserva 90% do lucro)
   allowedExchanges: { type: [String], default: [] }
 }, { timestamps: true });
