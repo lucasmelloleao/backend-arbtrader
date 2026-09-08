@@ -71,7 +71,6 @@ export async function closeLatencyTrade(req: AuthenticatedRequest, res: Response
     return res.status(500).json({ error: e.message });
   }
 }
-
 export async function getLatencyLogs(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
