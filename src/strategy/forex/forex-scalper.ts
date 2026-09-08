@@ -378,6 +378,40 @@ async function startScalper() {
                     ]
                   }).lean();
 
+                  if (!existingDoc) {
+                    const finalAmount = amount > 0 ? amount : tradeSize;
+                    const amountUsd = entryPrice > 0 ? amountUsdFor(sym, finalAmount, entryPrice) : tradeSize;
+                    try {
+                      await ForexArbStrategy.create({
+                        userId: settings.userId,
+                        exchangeKeyId: ctraderKey._id,
+                        name: `Scalping ${sym} (${side})`,
+                        exchangeId: 'ctrader',
+                        type: 'simple',
+                        legs: [{
+                          symbol: sym,
+                          side: side === 'BUY' ? 'buy' : 'sell',
+                          price: entryPrice,
+                          amount: finalAmount,
+                          volume: finalAmount,
+                          amountUsd,
+                          orderId: `Pos #${posId}`,
+                        }],
+                        tradeSize: amountUsd,
+                        positionOpen: true,
+                        positionOpenedAt: new Date(),
+                        positionSize: tradeSize,
+                        positionVolume: finalAmount,
+                        positionAmountUsd: amountUsd,
+                        status: 'open',
+                        active: true,
+                      });
+                      log.info(`📝 [RECONCILE] Posição #${posId} (${sym}) auto-registrada no MongoDB!`);
+                    } catch (dbErr: any) {
+                      log.error(`⚠️ Erro ao auto-registrar posição no reconcile: ${dbErr.message}`);
+                    }
+                  }
+
                   activePositions.set(sym, {
                     positionId: posId,
                     side,
