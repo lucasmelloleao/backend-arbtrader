@@ -671,10 +671,12 @@ async function startScalper() {
                       ? Math.max(1, Math.round((tradeSize / (market.lotSize || 100000)) * 100))
                       : 1;
 
+                    const execPrice = orderRes?.price && Number(orderRes.price) > 0 ? Number(orderRes.price) : midPrice;
+
                     activePositions.set(sym, {
                       positionId: String(posIdNew),
                       side: signal.action,
-                      entryPrice: midPrice,
+                      entryPrice: execPrice,
                       amount: tradeSize,
                       volumeProtocol,
                       entryTime: Date.now(),
@@ -683,7 +685,7 @@ async function startScalper() {
                       trailingFloorUsd: 0,
                       trailingActive: false,
                     });
-                    log.info(`✅ [ORDEM ABERTA] #${posIdNew} ${sym} ${signal.action}!`);
+                    log.info(`✅ [ORDEM ABERTA] #${posIdNew} ${sym} ${signal.action} @${execPrice}!`);
 
                     try {
                       const stratDoc = await ForexArbStrategy.create({
@@ -692,7 +694,7 @@ async function startScalper() {
                         name: `Scalping ${sym} (${signal.action})`,
                         exchangeId: 'ctrader',
                         type: 'simple',
-                        legs: [{ symbol: sym, side, price: midPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                        legs: [{ symbol: sym, side, price: execPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
                         tradeSize,
                         positionOpen: true,
                         positionOpenedAt: new Date(),
@@ -709,7 +711,7 @@ async function startScalper() {
                         strategyName: stratDoc.name,
                         exchangeId: 'ctrader',
                         type: 'execution',
-                        legs: [{ symbol: sym, side, price: midPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
+                        legs: [{ symbol: sym, side, price: execPrice, amount: volume || tradeSize, volume: volume || null, amountUsd, orderId: orderRes?.id ? `Order #${orderRes.id} | Pos #${posIdNew}` : String(posIdNew) }],
                         amount: volume || tradeSize,
                         volume: volume || null,
                         amountUsd,
