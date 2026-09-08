@@ -631,13 +631,21 @@ export class CtraderAdapter {
     for (const row of (res.positionUnrealizedPnL || []) as any[]) {
       const meta = positionToSymbol.get(String(row.positionId));
       if (!meta) continue;
-      out.set(meta.symbol, {
+      const data = {
         positionId: String(row.positionId),
         netPnl: Number(row.netUnrealizedPnL || 0) / div,
         grossPnl: Number(row.grossUnrealizedPnL || 0) / div,
         volume: meta.volume,
         side: meta.side,
-      });
+      };
+      out.set(meta.symbol, data);
+      out.set(String(row.positionId), data);
+      if (meta.symbol.includes('/')) {
+        out.set(meta.symbol.replace('/', ''), data);
+      } else {
+        const m = meta.symbol.match(/^([A-Z]{3})([A-Z]{3})$/);
+        if (m) out.set(`${m[1]}/${m[2]}`, data);
+      }
     }
     return out;
   }
