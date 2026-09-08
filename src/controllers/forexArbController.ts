@@ -133,7 +133,14 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         pnl: livePnlUsd,
         pnlPct: livePnlPct,
         peakProfitPct: peak,
-        isTrailingActive,
+        peakProfitUsd: (s as any).peakProfitUsd || 0,
+        isTrailingActive: Boolean((s as any).trailingActive || isTrailingActive),
+        trailingActive: Boolean((s as any).trailingActive || isTrailingActive),
+        trailingFloorUsd: (s as any).trailingFloorUsd || 0,
+        trailingFloorPrice: (s as any).trailingFloorPrice || null,
+        trailingActivationUsd: (s as any).trailingActivationUsd || 0.07,
+        trailingDistanceUsd: (s as any).trailingDistanceUsd || 0.03,
+        currentAction: (s as any).currentAction || (isTrailingActive ? 'Trailing Stop Ativado' : 'Monitorando'),
         closedAt: s.closedAt,
         createdAt: s.createdAt
       });

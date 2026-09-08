@@ -450,6 +450,7 @@ async function startScalper() {
                   if (pnlUsd > activePos.peakPnlUsd) activePos.peakPnlUsd = pnlUsd;
 
                   // Trailing Stop calibrado por ativo (Gatilho +$0.07 USD com proteção de taxas)
+                  const prevFloor = activePos.trailingFloorUsd;
                   if (!activePos.trailingActive && activePos.peakPnlUsd >= profile.trailingActivationUsd) {
                     activePos.trailingActive = true;
                     activePos.trailingFloorUsd = Math.max(
@@ -458,12 +459,58 @@ async function startScalper() {
                     );
                     log.info(`🔒 [TRAILING USD ATIVADO] ${sym}: pico +$${activePos.peakPnlUsd.toFixed(2)}; piso garantido +$${activePos.trailingFloorUsd.toFixed(2)} (Taxas protegidas)`);
                   } else if (activePos.trailingActive) {
-                    activePos.trailingFloorUsd = Math.max(
+                    const novoPiso = Math.max(
                       activePos.trailingFloorUsd,
                       profile.minFeeProtectionUsd,
                       activePos.peakPnlUsd - profile.trailingDistanceUsd,
                     );
+                    if (novoPiso > prevFloor) {
+                      log.info(`📈 [TRAILING PISO ELEVADO] ${sym}: novo piso +$${novoPiso.toFixed(2)} (pico +$${activePos.peakPnlUsd.toFixed(2)})`);
+                    }
+                    activePos.trailingFloorUsd = novoPiso;
                   }
+
+                  const isGoldPair = sym.includes('XAU');
+                  const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
+                  const unitMult = isGoldPair ? 1 : (isJpyPair && midPrice > 0 ? 1000 / midPrice : 1000);
+                  const trailingFloorPrice = activePos.trailingActive && activePos.trailingFloorUsd > 0
+                    ? (activePos.side === 'BUY'
+                        ? activePos.entryPrice + (activePos.trailingFloorUsd / unitMult)
+                        : activePos.entryPrice - (activePos.trailingFloorUsd / unitMult))
+                    : null;
+
+                  let currentAction = '⏳ Monitorando mercado';
+                  if (activePos.trailingActive) {
+                    const retracao = activePos.peakPnlUsd - pnlUsd;
+                    currentAction = retracao > 0.01
+                      ? `⚠️ Retração em andamento: PnL $${pnlUsd.toFixed(2)} | Piso fechamento: +$${activePos.trailingFloorUsd.toFixed(2)} USD`
+                      : `🔒 Trailing Ativo: Pico +$${activePos.peakPnlUsd.toFixed(2)} | Piso fechamento: +$${activePos.trailingFloorUsd.toFixed(2)} USD`;
+                  } else {
+                    currentAction = `⏳ Monitorando: PnL $${pnlUsd.toFixed(2)} USD (Ativa em +$${profile.trailingActivationUsd.toFixed(2)} USD)`;
+                  }
+
+                  // Sincroniza em tempo real com o MongoDB para o Frontend
+                  ForexArbStrategy.updateOne(
+                    {
+                      userId: settings.userId,
+                      name: `Scalping ${sym} (${activePos.side})`,
+                      positionOpen: true,
+                    },
+                    {
+                      $set: {
+                        pnl: pnlUsd,
+                        pnlPct: pnlPct,
+                        peakProfitPct: activePos.peakPnlPct,
+                        peakProfitUsd: activePos.peakPnlUsd,
+                        trailingActive: activePos.trailingActive,
+                        trailingFloorUsd: activePos.trailingFloorUsd,
+                        trailingFloorPrice: trailingFloorPrice,
+                        trailingActivationUsd: profile.trailingActivationUsd,
+                        trailingDistanceUsd: profile.trailingDistanceUsd,
+                        currentAction: currentAction,
+                      }
+                    }
+                  ).catch(() => {});
 
                   const takeProfitTarget = settings.takeProfitPct ?? 0.20;
                   const stopLossTarget = Math.abs(settings.stopLossPct ?? 0.10);

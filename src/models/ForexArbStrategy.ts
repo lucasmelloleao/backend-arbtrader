@@ -39,6 +39,13 @@ const ForexArbStrategySchema = new mongoose.Schema({
   status: { type: String, default: 'open' },            // 'open' | 'closed' | 'failed'
   closedReason: { type: String, default: null },        // 'trailing_stop' | 'take_profit' | 'stop_loss' | 'signal_reversal' | 'manual'
   trailingStopTriggered: { type: Boolean, default: false },
+  trailingActive: { type: Boolean, default: false },
+  trailingFloorUsd: { type: Number, default: 0 },
+  trailingFloorPrice: { type: Number, default: null },
+  peakProfitUsd: { type: Number, default: 0 },
+  trailingActivationUsd: { type: Number, default: 0.07 },
+  trailingDistanceUsd: { type: Number, default: 0.03 },
+  currentAction: { type: String, default: 'Monitorando' },
   pnl: { type: Number, default: 0 },
   commission: { type: Number, default: 0 },
   swap: { type: Number, default: 0 },
