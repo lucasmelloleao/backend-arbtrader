@@ -63,7 +63,7 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # Baixar o docker-compose.yml atualizado do repositorio
-            curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml -o docker-compose.yml
+            curl -sSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml -o docker-compose.yml
 
             MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose pull
             MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose down --remove-orphans
