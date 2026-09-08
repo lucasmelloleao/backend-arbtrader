@@ -57,12 +57,8 @@ import {
   getLatencySettings,
   updateLatencySettings,
   getLatencyTrades,
-<<<<<<< HEAD
   closeLatencyTrade,
   getLatencyLogs
-=======
-  closeLatencyTrade
->>>>>>> e43bfd250e0e875bc95d97a5c0e07a557477bcfc
 } from '../controllers/latencyArbController';
 import {
   closeStrategy as closePerpStrategy,
