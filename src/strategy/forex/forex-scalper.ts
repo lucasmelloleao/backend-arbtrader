@@ -394,7 +394,7 @@ async function startScalper() {
           } catch { /* erro transitório no reconcile */ }
 
           try {
-            let livePnlBySymbol = new Map<string, { netPnl: number }>();
+            let livePnlBySymbol = new Map<string, { positionId?: string; netPnl: number }>();
             try {
               livePnlBySymbol = await (adapter as any).getPositionsPnL();
             } catch {
@@ -419,10 +419,31 @@ async function startScalper() {
                   const pnlPct = activePos.side === 'BUY'
                     ? ((midPrice - activePos.entryPrice) / activePos.entryPrice) * 100
                     : ((activePos.entryPrice - midPrice) / activePos.entryPrice) * 100;
-                  const livePnlUsd = livePnlBySymbol.get(sym)?.netPnl;
+
+                  // Busca PnL em tempo real por símbolo normalizado ou positionId
+                  let livePnlUsd: number | undefined = livePnlBySymbol.get(sym)?.netPnl;
+                  if (livePnlUsd === undefined) {
+                    const rawSym = sym.replace('/', '');
+                    livePnlUsd = livePnlBySymbol.get(rawSym)?.netPnl;
+                  }
+                  if (livePnlUsd === undefined && activePos.positionId) {
+                    for (const row of livePnlBySymbol.values()) {
+                      if (row.positionId === activePos.positionId) {
+                        livePnlUsd = row.netPnl;
+                        break;
+                      }
+                    }
+                  }
+
+                  // Cálculo do PnL USD (usa PnL real da corretora ou calcula com base no volume/lote)
+                  const priceDiff = activePos.side === 'BUY'
+                    ? (midPrice - activePos.entryPrice)
+                    : (activePos.entryPrice - midPrice);
                   const pnlUsd = Number.isFinite(livePnlUsd)
                     ? Number(livePnlUsd)
-                    : (pnlPct / 100) * tradeSize;
+                    : (activePos.amount && activePos.amount > 0
+                        ? priceDiff * activePos.amount
+                        : (pnlPct / 100) * tradeSize);
 
                   // Atualiza picos de ganho
                   if (pnlPct > activePos.peakPnlPct) activePos.peakPnlPct = pnlPct;
