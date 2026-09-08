@@ -27,8 +27,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       let livePnlUsd = s.pnl || 0;
 
       const isGold = sym?.includes('XAU');
-      const peakPct = s.peakProfitPct || 0;
-      const peakUsd = Number((s as any).peakProfitUsd || 0);
+      const peakPct = Math.max(s.peakProfitPct || 0, livePnlPct > 0 ? livePnlPct : 0);
+      const peakUsd = Math.max(Number((s as any).peakProfitUsd || 0), livePnlUsd > 0 ? livePnlUsd : 0);
       const isTrailing = Boolean((s as any).trailingActive);
       const trailingFloorUsd = Number((s as any).trailingFloorUsd || 0);
       const trailingFloorPrice = (s as any).trailingFloorPrice || null;
