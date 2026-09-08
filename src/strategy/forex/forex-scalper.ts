@@ -288,6 +288,7 @@ const activePositions = new Map<string, {
   peakPnlUsd: number;
   trailingFloorUsd: number;
   trailingActive: boolean;
+  lastSyncedFloorPrice?: number;
 }>();
 
 function amountUsdFor(symbol: string, volume: number, price: number): number {
@@ -522,6 +523,24 @@ async function startScalper() {
                         ? activePos.entryPrice + (activePos.trailingFloorUsd / unitMult)
                         : activePos.entryPrice - (activePos.trailingFloorUsd / unitMult))
                     : null;
+
+                  // Sincroniza o Trailing Stop Loss diretamente nos servidores da cTrader (server-side execution)
+                  if (
+                    trailingFloorPrice &&
+                    activePos.positionId &&
+                    !activePos.positionId.startsWith('pos_') &&
+                    trailingFloorPrice !== activePos.lastSyncedFloorPrice
+                  ) {
+                    activePos.lastSyncedFloorPrice = trailingFloorPrice;
+                    if (typeof (adapter as any).amendPositionSLTP === 'function') {
+                      const market = (adapter as any).marketsBySymbol?.get(sym);
+                      const digits = market?.digits ?? (isGoldPair ? 2 : (isJpyPair ? 3 : 5));
+                      const roundedFloorPrice = Number(trailingFloorPrice.toFixed(digits));
+                      (adapter as any).amendPositionSLTP(activePos.positionId, roundedFloorPrice).catch((err: any) => {
+                        log.warn(`⚠️ [CTRADER-SLTP] Erro ao sincronizar Stop Loss na cTrader (${sym}): ${err.message}`);
+                      });
+                    }
+                  }
 
                   let currentAction = '⏳ Monitorando mercado';
                   if (activePos.trailingActive) {

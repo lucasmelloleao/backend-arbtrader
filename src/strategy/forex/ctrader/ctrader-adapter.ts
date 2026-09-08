@@ -522,6 +522,33 @@ export class CtraderAdapter {
     });
   }
 
+  /**
+   * Altera o Stop Loss e/ou Take Profit de uma posição existente diretamente
+   * nos servidores da cTrader via ProtoOAAmendPositionSLTPReq.
+   * Permite que o Trailing Stop seja executado server-side pela própria corretora.
+   */
+  async amendPositionSLTP(positionId: string | number, stopLossPrice?: number | null, takeProfitPrice?: number | null): Promise<void> {
+    await this.connect();
+    const accountId = Number(this.creds.accountId);
+    const payload: any = {
+      ctidTraderAccountId: accountId,
+      positionId: Number(positionId),
+    };
+    if (stopLossPrice !== undefined && stopLossPrice !== null && Number(stopLossPrice) > 0) {
+      payload.stopLoss = Number(stopLossPrice);
+    }
+    if (takeProfitPrice !== undefined && takeProfitPrice !== null && Number(takeProfitPrice) > 0) {
+      payload.takeProfit = Number(takeProfitPrice);
+    }
+
+    log.info(`📤 [CTRADER-ADAPTER] Atualizando SL/TP na cTrader posId=${positionId}: SL=${payload.stopLoss ?? 'none'}, TP=${payload.takeProfit ?? 'none'}`);
+    this.client.sendFireAndForget(
+      PAYLOAD_TYPE.PROTO_OA_AMEND_POSITION_SLTP_REQ,
+      'ProtoOAAmendPositionSLTPReq',
+      payload,
+    );
+  }
+
   async fetchOrderBook(symbol: string, limit = 1): Promise<any> {
     const t = await this.fetchTicker(symbol);
     return {
