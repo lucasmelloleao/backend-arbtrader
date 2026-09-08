@@ -534,15 +534,16 @@ async function startScalper() {
                   const atingiuTrailing = activePos.trailingActive && pnlUsd <= activePos.trailingFloorUsd;
 
                   // AJUSTES 1, 2 E 3: Reversão só é autorizada se:
-                  // 1) Posição aberta há pelo menos MIN_HOLD_TIME_MS (60s)
-                  // 2) Vela M1 fechou confirmando o sinal contrário
-                  // 3) Trailing stop não estiver já no controle
+                  // 1) Trailing Stop NÃO foi acionado E o pico não atingiu a ativação de trailing
+                  // 2) Posição aberta há pelo menos MIN_HOLD_TIME_MS (60s)
+                  // 3) Vela M1 fechou confirmando o sinal contrário
                   const tempoAbertoMs = Date.now() - activePos.entryTime;
                   const tempoMinimoPassou = tempoAbertoMs >= MIN_HOLD_TIME_MS;
                   const sinalContrario = signal.action !== 'NEUTRAL' && signal.action !== activePos.side;
                   
                   const reversaoSinalValida =
                     !activePos.trailingActive &&
+                    activePos.peakPnlUsd < profile.trailingActivationUsd &&
                     sinalContrario &&
                     tempoMinimoPassou &&
                     isM1Closed;

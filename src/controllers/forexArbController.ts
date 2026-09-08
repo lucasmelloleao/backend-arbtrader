@@ -17,48 +17,14 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
 
     const settings = await ForexArbSettings.findOne({ userId }).lean() || {};
 
-    // Busca preços de ticker para exibição rápida sem bloquear ou concorrer no socket
-    let currentPrices = new Map<string, number>();
-    try {
-      const keys = await ExchangeKey.find({ userId, active: true }).lean();
-      const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
-      if (ctraderKey) {
-        const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
-        const adapter = await getSharedCtraderAdapter(ctraderKey as any);
-        const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
-        const tickers = await (adapter as any).fetchTickers(symbols);
-        for (const sym of symbols) {
-          if (tickers[sym]?.bid && tickers[sym]?.ask) {
-            currentPrices.set(sym, (tickers[sym].bid + tickers[sym].ask) / 2);
-          }
-        }
-      }
-    } catch {}
-
+    // Projeção 100% orientada ao MongoDB para evitar qualquer latência ou concorrência no socket do robô
     const formatted: any[] = [];
 
     for (const s of strategies) {
       const leg = s.legs && s.legs[0];
-      const entryPrice = leg?.price || 0;
       const sym = leg?.symbol;
-      const side = leg?.side?.toUpperCase();
-      const curPrice = sym ? currentPrices.get(sym) : null;
       let livePnlPct = s.pnlPct || 0;
       let livePnlUsd = s.pnl || 0;
-
-      if (curPrice && entryPrice > 0 && livePnlUsd === 0) {
-        const diff = side === 'BUY' ? (curPrice - entryPrice) : (entryPrice - curPrice);
-        livePnlPct = (diff / entryPrice) * 100;
-        const isGold = sym?.includes('XAU');
-        const isJpy = sym?.endsWith('/JPY') || sym?.endsWith('JPY');
-        const lotFraction = (s.positionSize || s.tradeSize || 100) / 10000;
-        const contractUnits = isGold ? lotFraction * 100 : lotFraction * 100000;
-        let pnlUsdRaw = diff * contractUnits;
-        if (isJpy && curPrice > 0) {
-          pnlUsdRaw = pnlUsdRaw / curPrice;
-        }
-        livePnlUsd = pnlUsdRaw;
-      }
 
       const isGold = sym?.includes('XAU');
       const peakPct = s.peakProfitPct || 0;
