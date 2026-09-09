@@ -777,6 +777,30 @@ async function startScalper() {
                     });
                     log.info(`✅ [ORDEM ABERTA] #${posIdNew} ${sym} ${signal.action} @${execPrice}!`);
 
+                    // Ativa proteções iniciais (SL e TP) na corretora logo na entrada
+                    const isGoldPair = sym.includes('XAU');
+                    const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
+                    const digits = market?.digits ?? (isGoldPair ? 2 : (isJpyPair ? 3 : 5));
+                    const stopLossPct = Math.abs(settings.stopLossPct ?? 0.10);
+                    const takeProfitPct = settings.takeProfitPct ?? 0.20;
+
+                    const initialSL = signal.action === 'BUY'
+                      ? execPrice * (1 - stopLossPct / 100)
+                      : execPrice * (1 + stopLossPct / 100);
+
+                    const initialTP = signal.action === 'BUY'
+                      ? execPrice * (1 + takeProfitPct / 100)
+                      : execPrice * (1 - takeProfitPct / 100);
+
+                    const roundedSL = Number(initialSL.toFixed(digits));
+                    const roundedTP = Number(initialTP.toFixed(digits));
+
+                    if (posIdNew && !String(posIdNew).startsWith('pos_') && typeof (adapter as any).amendPositionSLTP === 'function') {
+                      (adapter as any).amendPositionSLTP(posIdNew, roundedSL, roundedTP).catch((err: any) => {
+                        log.warn(`⚠️ [CTRADER-INITIAL-SLTP] Erro ao registrar SL/TP inicial na cTrader (${sym}): ${err.message}`);
+                      });
+                    }
+
                     try {
                       const stratDoc = await ForexArbStrategy.create({
                         userId: settings.userId,
