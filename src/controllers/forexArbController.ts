@@ -253,7 +253,7 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
       };
     });
 
-    return res.json(formatted);
+    return res.json({ success: true, message: 'ok', data: formatted });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -282,7 +282,7 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
       createdAt: t.createdAt
     }));
 
-    return res.json(formatted);
+    return res.json({ success: true, message: 'ok', data: formatted });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
