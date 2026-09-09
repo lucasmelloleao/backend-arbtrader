@@ -573,6 +573,7 @@ async function startScalper() {
                   let brokerSwap = openStrat.swap || 0;
 
                   // Consulta os deals da corretora para obter o PnL exato liquidado
+                  let updatedLegs: any[] = openStrat.legs || [];
                   try {
                     let deals: any[] = [];
                     if (posId && typeof (adapter as any).fetchPositionDeals === 'function') {
@@ -598,13 +599,21 @@ async function startScalper() {
                       log.info(`🎯 [RECONCILE PNL REAL] ${stratSym} (Pos #${posId || '?'}) -> PnL Real Broker: $${brokerPnl.toFixed(2)} USD | Comm: -$${brokerCommission.toFixed(2)} USD | Fechamento: ${closePrice || '?'}`);
                     }
 
-                    var updatedLegs = (openStrat.legs || []).map((leg: any) => ({
-                      ...leg,
-                      price: closePrice || leg.price || 0,
-                    }));
+                    const entryPrice = openStrat.legs?.[0]?.price || 0;
+                    updatedLegs = [
+                      ...(openStrat.legs || []).map((leg: any) => ({ ...leg, entryPrice: leg.price || entryPrice })),
+                      {
+                        symbol: stratSym,
+                        side: openStrat.legs?.[0]?.side === 'buy' ? 'sell' : 'buy',
+                        price: closePrice || 0,
+                        closePrice: closePrice || 0,
+                        entryPrice,
+                        amount: openStrat.legs?.[0]?.amount || 0,
+                        volume: openStrat.legs?.[0]?.volume || 0,
+                      }
+                    ];
                   } catch (dealErr: any) {
                     log.warn(`⚠️ [RECONCILE PNL] Não foi possível consultar deals de ${stratSym}: ${dealErr.message}`);
-                    var updatedLegs = openStrat.legs || [];
                   }
 
                   openStrat.positionOpen = false;
@@ -706,13 +715,13 @@ async function startScalper() {
 
                   const isGoldPair = sym.includes('XAU');
                   const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                  // Identifica o volume/unidades base reais (ex: 5000 para 0.05 lote no EUR/USD = $0.30 comissão total)
+                  // Identifica o volume/unidades base reais (ex: 5000 unidades = 0.05 lote = 5x 0.01 = $0.30 | 4000 unidades = 0.04 lote = 4x 0.01 = $0.24)
                   const rawUnits = activePos.amount && activePos.amount > 0 ? activePos.amount : (isGoldPair ? 1 : tradeSize || 1000);
                   const lotesReais = isGoldPair
                     ? rawUnits
                     : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
                   const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
-                  const estimatedComm = (isGoldPair ? 0.16 : 0.06) * numLotes001;
+                  const estimatedComm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 
                   const rawPnlUsd = rawUnits > 0
                     ? (isGoldPair
@@ -887,7 +896,7 @@ async function startScalper() {
                       const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
                       const totalComm = closeRes?.commission != null && Number(closeRes.commission) > 0
                         ? Number(closeRes.commission)
-                        : (isGold ? 0.32 : 0.06) * numLotes001;
+                        : (isGold ? 0.08 : 0.06) * numLotes001;
 
                       const diffPrice = activePos.side === 'BUY' ? (closePrice - activePos.entryPrice) : (activePos.entryPrice - closePrice);
                       const calcGross = isGold
@@ -931,7 +940,10 @@ async function startScalper() {
                             strategyName: existingStrat.name,
                             exchangeId: 'ctrader',
                             type: 'close',
-                            legs: [{ symbol: sym, side: closeSide, price: closePrice, amount: closeVolume, volume: closeVolume, amountUsd: closeAmountUsd, orderId: closeRes?.id }],
+                            legs: [
+                              ...(existingStrat.legs || []).map((l: any) => ({ ...l, entryPrice: l.price })),
+                              { symbol: sym, side: closeSide, price: closePrice, closePrice, entryPrice: activePos.entryPrice, amount: closeVolume, volume: closeVolume, amountUsd: closeAmountUsd, orderId: closeRes?.id }
+                            ],
                             amount: closeVolume,
                             volume: closeVolume,
                             amountUsd: closeAmountUsd,
