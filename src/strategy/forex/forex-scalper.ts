@@ -112,6 +112,52 @@ export function updateCandlesM5(symbol: string, price: number): Candle[] {
   return [...history, { open: current.open!, high: current.high!, low: current.low!, close: current.close!, timestamp: current.timestamp! }];
 }
 
+let historicalPreloaded = false;
+
+/** Pré-carrega o histórico de velas M1 e M5 via cTrader Open API na inicialização. */
+export async function preloadHistoricalCandles(adapter: any, symbols: string[]) {
+  if (historicalPreloaded || !adapter || typeof adapter.fetchTrendbars !== 'function') return;
+  log.info('⏳ [PRE-WARM] Carregando histórico de velas M1 e M5 via cTrader Open API...');
+
+  for (const sym of symbols) {
+    try {
+      // 1. Carrega M1 (últimas 50 velas)
+      const barsM1 = await adapter.fetchTrendbars(sym, 1, 50);
+      if (barsM1 && barsM1.length > 0) {
+        const now = Date.now();
+        const currentBucketM1 = Math.floor(now / M1_PERIOD_MS) * M1_PERIOD_MS;
+        const closedM1 = barsM1.filter((b: Candle) => b.timestamp < currentBucketM1);
+        candleHistoryM1.set(sym, closedM1.slice(-80));
+
+        const inProgressM1 = barsM1.find((b: Candle) => b.timestamp === currentBucketM1);
+        if (inProgressM1) {
+          currentCandleM1.set(sym, { ...inProgressM1 });
+        }
+        log.info(`📊 [PRE-WARM] ${sym}: ${closedM1.length} velas M1 carregadas.`);
+      }
+
+      // 2. Carrega M5 (últimas 30 velas)
+      const barsM5 = await adapter.fetchTrendbars(sym, 5, 30);
+      if (barsM5 && barsM5.length > 0) {
+        const now = Date.now();
+        const currentBucketM5 = Math.floor(now / M5_PERIOD_MS) * M5_PERIOD_MS;
+        const closedM5 = barsM5.filter((b: Candle) => b.timestamp < currentBucketM5);
+        candleHistoryM5.set(sym, closedM5.slice(-60));
+
+        const inProgressM5 = barsM5.find((b: Candle) => b.timestamp === currentBucketM5);
+        if (inProgressM5) {
+          currentCandleM5.set(sym, { ...inProgressM5 });
+        }
+        log.info(`📊 [PRE-WARM] ${sym}: ${closedM5.length} velas M5 carregadas.`);
+      }
+    } catch (e: any) {
+      log.warn(`⚠️ [PRE-WARM] Falha ao carregar velas de ${sym}: ${e.message}`);
+    }
+  }
+  historicalPreloaded = true;
+  log.info('🚀 [PRE-WARM] Histórico de velas aquecido com sucesso! Zero tempo de espera.');
+}
+
 // ─── CÁLCULOS TÉCNICOS (EMA, RSI, ATR) ──────────────────────────────────────────
 export function calculateEMA(prices: number[], period: number): number {
   if (prices.length === 0) return 0;
@@ -383,6 +429,7 @@ async function startScalper() {
 
         if (ctraderKey) {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
+          await preloadHistoricalCandles(adapter, symbols);
           const tradeSize = settings.tradeSize || 100;
 
           // 1. Sincroniza posições reais da cTrader por símbolo

@@ -721,16 +721,59 @@ export class CtraderAdapter {
     return out;
   }
 
-  /** PnL realizado recente (últimas N horas) via deals, em moeda da conta. */
-  async fetchRecentDealsPnl(hours = 24): Promise<{ pnl: number; count: number }> {
-    const toTs = Date.now();
-    const fromTs = toTs - hours * 3600 * 1000;
-    const deals = await this.fetchDeals(fromTs, toTs, 500);
-    // O fechamento de uma posição gera deals que se compensam; o pnl líquido
-    // aproximado é a soma das comissões (negativo) + variação de preço das pernas.
-    // Para reconciliação, retornamos a soma das comissões e o volume total.
-    const totalFee = deals.reduce((acc, d) => acc + (d.fee || 0), 0);
-    return { pnl: -totalFee, count: deals.length };
+  /** Busca histórico de velas (trendbars) de um símbolo. Period: 1 (M1), 5 (M5), etc. */
+  async fetchTrendbars(
+    symbol: string,
+    period: number = 1,
+    count: number = 60,
+  ): Promise<Array<{ open: number; high: number; low: number; close: number; timestamp: number }>> {
+    await this.connect();
+    await this.loadMarkets();
+    const market = this.resolveSymbol(symbol);
+    if (!market) {
+      log.warn(`⚠️ CtraderAdapter: símbolo ${symbol} não encontrado para fetchTrendbars`);
+      return [];
+    }
+    const periodMinutes = period === 5 ? 5 : (period === 1 ? 1 : period);
+    const toTimestamp = Date.now();
+    const fromTimestamp = toTimestamp - count * periodMinutes * 60_000 * 2;
+
+    try {
+      const res = await this.client.sendRequest(
+        PAYLOAD_TYPE.PROTO_OA_GET_TRENDBARS_REQ,
+        'ProtoOAGetTrendbarsReq',
+        {
+          ctidTraderAccountId: Number(this.creds.accountId),
+          symbolId: Number(market.id),
+          period,
+          fromTimestamp,
+          toTimestamp,
+          count,
+        },
+        15000,
+      );
+
+      if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
+        log.warn(`⚠️ CtraderAdapter: erro ao buscar trendbars para ${symbol}: ${res.errorCode} ${res.description || ''}`);
+        return [];
+      }
+
+      const trendbars = (res.trendbar || []) as any[];
+      const candles = trendbars.map((tb: any) => {
+        const low = Number(tb.low || 0) / PRICE_DIVISOR;
+        const open = (Number(tb.low || 0) + Number(tb.deltaOpen || 0)) / PRICE_DIVISOR;
+        const high = (Number(tb.low || 0) + Number(tb.deltaHigh || 0)) / PRICE_DIVISOR;
+        const close = (Number(tb.low || 0) + Number(tb.deltaClose || 0)) / PRICE_DIVISOR;
+        const timestamp = Number(tb.utcTimestampInMinutes || 0) * 60_000;
+        return { open, high, low, close, timestamp };
+      });
+
+      candles.sort((a, b) => a.timestamp - b.timestamp);
+      return candles;
+    } catch (err: any) {
+      log.warn(`⚠️ CtraderAdapter: falha na requisição de trendbars para ${symbol}: ${err.message}`);
+      return [];
+    }
   }
 
   async destroy() {
