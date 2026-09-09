@@ -187,6 +187,39 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
     if (!trades || trades.length === 0) {
       trades = await ForexArbTrade.find({ type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
     }
+
+    // Se a coleção de trades estiver vazia (ex: banco limpo/reiniciado), busca na coleção ForexPosition
+    if (!trades || trades.length === 0) {
+      const closedPositions = await ForexPosition.find({
+        status: { $in: ['CLOSED', 'FECHADO', 'CLOSED_PROFIT', 'CLOSED_LOSS', 'CLOSED_MANUAL'] }
+      }).sort({ closedAt: -1, updatedAt: -1, createdAt: -1 }).limit(100);
+
+      trades = closedPositions.map((p: any) => ({
+        _id: p._id,
+        strategyId: p._id,
+        strategyName: `Scalping ${p.symbol} (${p.side})`,
+        exchangeId: p.exchange || 'ctrader',
+        type: p.side || 'close',
+        status: p.status || 'closed',
+        legs: [{
+          symbol: p.symbol,
+          side: p.side,
+          price: p.entryPrice,
+          entryPrice: p.entryPrice,
+          closePrice: p.closePrice || p.exitPrice,
+          volume: p.volume,
+          amount: p.volume,
+          orderId: p.orderId || p.positionId
+        }],
+        amount: p.volume,
+        volume: p.volume,
+        realizedPnl: p.realizedPnl || p.pnl || 0,
+        commission: p.commission || 0,
+        swap: p.swap || 0,
+        reason: p.closeReason,
+        createdAt: p.closedAt || p.updatedAt || p.createdAt
+      }));
+    }
     const formatted = trades.map((t: any) => {
       const legs = t.legs || [];
       const primaryLeg = legs[0] || {};
