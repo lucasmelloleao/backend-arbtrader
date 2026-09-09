@@ -9,6 +9,7 @@ import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import BotStatus from '../../models/BotStatus';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
+import { recordClosedTrade, syncClosedTradeCooldowns } from './forex-scalp-scanner';
 
 const getTs = () => `[${new Date().toISOString()}]`;
 const log = {
@@ -414,6 +415,7 @@ export function decidePositionClose(input: {
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
+  await syncClosedTradeCooldowns();
   log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
@@ -911,6 +913,7 @@ async function startScalper() {
                       const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
                       const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
+                      recordClosedTrade(sym);
                       log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real cTrader: $${finalPnlUsd.toFixed(2)} | Preço Fechamento: ${closePrice} | Motivo: ${reasonType}`);
 
                       try {
@@ -941,7 +944,7 @@ async function startScalper() {
                             exchangeId: 'ctrader',
                             type: 'close',
                             legs: [
-                              ...(existingStrat.legs || []).map((l: any) => ({ ...l, entryPrice: l.price })),
+                              ...(existingStrat.legs || []).map((l: any) => ({ ...l, entryPrice: activePos.entryPrice || l.entryPrice || l.price, closePrice })),
                               { symbol: sym, side: closeSide, price: closePrice, closePrice, entryPrice: activePos.entryPrice, amount: closeVolume, volume: closeVolume, amountUsd: closeAmountUsd, orderId: closeRes?.id }
                             ],
                             amount: closeVolume,

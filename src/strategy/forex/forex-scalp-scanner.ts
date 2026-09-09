@@ -26,6 +26,31 @@ export interface ScalpSignal {
 const priceHistory = new Map<string, Array<{ price: number; timestamp: number }>>();
 const lastClosedTradeTime = new Map<string, number>();
 
+export function recordClosedTrade(symbol: string, timestamp: number = Date.now()) {
+  lastClosedTradeTime.set(symbol, timestamp);
+}
+
+export async function syncClosedTradeCooldowns() {
+  try {
+    const closedStrats = await ForexArbStrategy.find({
+      positionOpen: false,
+      closedAt: { $exists: true }
+    }).sort({ closedAt: -1 }).select('legs closedAt').lean();
+
+    for (const strat of closedStrats) {
+      const sym = (strat as any).legs?.[0]?.symbol;
+      if (sym && (strat as any).closedAt) {
+        const closedTime = new Date((strat as any).closedAt).getTime();
+        if (!lastClosedTradeTime.has(sym) || closedTime > (lastClosedTradeTime.get(sym) || 0)) {
+          lastClosedTradeTime.set(sym, closedTime);
+        }
+      }
+    }
+  } catch (e: any) {
+    // ignore
+  }
+}
+
 function recordPrice(symbol: string, price: number) {
   if (!priceHistory.has(symbol)) {
     priceHistory.set(symbol, []);
@@ -193,7 +218,7 @@ export function analyzeScalpOpportunity(
   const lastTime = lastClosedTradeTime.get(symbol) || 0;
   if (Date.now() - lastTime < 300000) {
     const restSec = Math.ceil((300000 - (Date.now() - lastTime)) / 1000);
-    return { symbol, action: 'NEUTRAL', reason: `Em cooldown (${restSec}s restantes)`, price: currentPrice };
+    return { symbol, action: 'NEUTRAL', reason: `Em cooldown de 5 min após fechamento (${restSec}s restantes)`, price: currentPrice };
   }
 
   const candles = updateCandles(symbol, currentPrice);

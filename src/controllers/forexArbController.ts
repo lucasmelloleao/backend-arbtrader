@@ -5,6 +5,7 @@ import ForexArbSettings from '../models/ForexArbSettings';
 import ExchangeKey from '../models/ExchangeKey';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { encryptSecretKey } from '../utils/encryption';
+import { recordClosedTrade } from '../strategy/forex/forex-scalp-scanner';
 
 // --- STRATEGIES ---
 export async function getForexStrategies(req: AuthenticatedRequest, res: Response) {
@@ -211,6 +212,17 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
         computedNetPnl = grossPnl - calcComm;
       }
 
+      // Normaliza todas as legs para garantirem entryPrice (1.35442) e closePrice (1.35421)
+      const normalizedLegs = legs.map((l: any, idx: number) => {
+        const isExitLeg = idx > 0 || l.closePrice != null;
+        return {
+          ...l,
+          entryPrice: entryP > 0 ? entryP : l.entryPrice ?? l.price,
+          closePrice: closeP > 0 ? closeP : l.closePrice,
+          price: isExitLeg ? (closeP > 0 ? closeP : l.price) : (entryP > 0 ? entryP : l.price)
+        };
+      });
+
       return {
         _id: t._id.toString(),
         id: t._id.toString(),
@@ -218,7 +230,7 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
         strategyName: t.strategyName,
         exchangeId: t.exchangeId,
         type: t.type,
-        legs: t.legs || [],
+        legs: normalizedLegs,
         amount: t.amount,
         volume: t.volume ?? t.legs?.[0]?.volume ?? t.legs?.[0]?.amount ?? null,
         amountUsd: t.amountUsd ?? t.legs?.[0]?.amountUsd ?? null,
@@ -534,6 +546,10 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
       }
     }
 
+    if (symStrategy) {
+      recordClosedTrade(symStrategy);
+    }
+
     await ForexArbStrategy.updateOne(
       { _id: strategyId },
       { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
@@ -555,6 +571,11 @@ export async function voidCloseForexStrategy(req: AuthenticatedRequest, res: Res
 
     const strategy = await ForexArbStrategy.findOne({ _id: strategyId, userId });
     if (!strategy) return res.status(404).json({ success: false, message: 'Estratégia não encontrada.' });
+
+    const symVoid = strategy.legs && strategy.legs[0]?.symbol;
+    if (symVoid) {
+      recordClosedTrade(symVoid);
+    }
 
     await ForexArbStrategy.updateOne(
       { _id: strategyId },
