@@ -418,6 +418,18 @@ async function startScalper() {
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
 
+  // Atualização retroativa para a posição 240794176 (lucro real de 3.07 USD)
+  try {
+    await ForexArbTrade.updateMany(
+      { $or: [{ 'legs.orderId': /240794176/ }, { reason: /240794176/ }] },
+      { $set: { realizedPnl: 3.07, status: 'executed' } }
+    );
+    await ForexArbStrategy.updateMany(
+      { $or: [{ 'legs.orderId': /240794176/ }, { name: /240794176/ }] },
+      { $set: { pnl: 3.07, status: 'closed', positionOpen: false } }
+    );
+  } catch {}
+
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
@@ -544,11 +556,49 @@ async function startScalper() {
               for (const openStrat of openMongoStrats) {
                 const stratSym = openStrat.legs?.[0]?.symbol;
                 if (stratSym && !cTraderOpenSymbols.has(stratSym)) {
+                  // Extrai o positionId se existir nas pernas
+                  const posIdMatch = (openStrat.legs?.[0]?.orderId || '').match(/(\d+)/);
+                  const posId = posIdMatch ? posIdMatch[1] : undefined;
+
+                  let brokerPnl = openStrat.pnl || 0;
+                  let brokerCommission = openStrat.commission || 0;
+                  let brokerSwap = openStrat.swap || 0;
+
+                  // Consulta os deals da corretora para obter o PnL exato liquidado
+                  try {
+                    let deals: any[] = [];
+                    if (posId && typeof (adapter as any).fetchPositionDeals === 'function') {
+                      deals = await (adapter as any).fetchPositionDeals(posId);
+                    }
+                    if (!deals.length && typeof (adapter as any).fetchDeals === 'function') {
+                      const now = Date.now();
+                      deals = await (adapter as any).fetchDeals(now - 1000 * 60 * 60 * 2, now, 50);
+                      if (posId) {
+                        deals = deals.filter(d => String(d.positionId) === String(posId));
+                      } else {
+                        deals = deals.filter(d => d.symbol === stratSym);
+                      }
+                    }
+
+                    const closeDeal = deals.find(d => d.hasCloseDetail) || deals[deals.length - 1];
+                    if (closeDeal && closeDeal.realizedPnl !== undefined && !isNaN(Number(closeDeal.realizedPnl))) {
+                      brokerPnl = Number(closeDeal.realizedPnl);
+                      brokerCommission = Number(closeDeal.commission || 0);
+                      brokerSwap = Number(closeDeal.swap || 0);
+                      log.info(`🎯 [RECONCILE PNL REAL] ${stratSym} (Pos #${posId || '?'}) -> PnL Real Broker: $${brokerPnl.toFixed(2)} USD | Comm: -$${brokerCommission.toFixed(2)} USD`);
+                    }
+                  } catch (dealErr: any) {
+                    log.warn(`⚠️ [RECONCILE PNL] Não foi possível consultar deals de ${stratSym}: ${dealErr.message}`);
+                  }
+
                   openStrat.positionOpen = false;
                   openStrat.status = 'closed';
                   openStrat.closedReason = 'broker_close';
                   openStrat.active = false;
                   openStrat.closedAt = new Date();
+                  openStrat.pnl = brokerPnl;
+                  openStrat.commission = brokerCommission;
+                  openStrat.swap = brokerSwap;
                   await openStrat.save();
 
                   await ForexArbTrade.create({
@@ -558,12 +608,18 @@ async function startScalper() {
                     exchangeId: 'ctrader',
                     type: 'close',
                     legs: openStrat.legs || [],
-                    pnl: openStrat.pnl || 0,
+                    amount: openStrat.legs?.[0]?.amount || openStrat.positionVolume || 0,
+                    volume: openStrat.legs?.[0]?.volume || openStrat.positionVolume || 0,
+                    amountUsd: openStrat.legs?.[0]?.amountUsd || openStrat.positionAmountUsd || 0,
+                    realizedPnl: brokerPnl,
+                    commission: brokerCommission,
+                    swap: brokerSwap,
                     status: 'executed',
                     closedReason: 'broker_close',
-                    executedAt: new Date(),
+                    reason: 'Fechamento confirmado pela corretora cTrader',
+                    createdAt: new Date(),
                   });
-                  log.info(`✅ [RECONCILE MONGO] Estratégia órfã ${openStrat.name} (${stratSym}) encerrada pois não existe na cTrader!`);
+                  log.info(`✅ [RECONCILE MONGO] Estratégia ${openStrat.name} (${stratSym}) encerrada com PnL Real: $${brokerPnl.toFixed(2)} USD!`);
                 }
               }
             } catch (orphanErr: any) {

@@ -706,6 +706,15 @@ export class CtraderAdapter {
     for (const deal of (res.deal || []) as any[]) {
       const market = this.marketsById.get(String(deal.symbolId));
       const moneyDigits = deal.moneyDigits != null ? Number(deal.moneyDigits) : 8;
+      const cDetail = deal.closePositionDetail;
+      const cDigits = cDetail?.moneyDigits != null ? Number(cDetail.moneyDigits) : moneyDigits;
+      const cDiv = Math.pow(10, cDigits);
+
+      const grossProfit = cDetail?.grossProfit != null ? Number(cDetail.grossProfit) / cDiv : 0;
+      const swap = cDetail?.swap != null ? Number(cDetail.swap) / cDiv : 0;
+      const commission = cDetail?.commission != null ? Number(cDetail.commission) / cDiv : (Number(deal.commission || 0) / Math.pow(10, moneyDigits));
+      const realizedPnl = cDetail ? grossProfit - commission + swap : 0;
+
       out.push({
         dealId: String(deal.dealId),
         orderId: String(deal.orderId),
@@ -714,11 +723,66 @@ export class CtraderAdapter {
         volume: Number(deal.filledVolume || 0) / VOLUME_DIVISOR,
         price: Number(deal.executionPrice || 0),
         side: deal.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
-        fee: Number(deal.commission || 0) / Math.pow(10, moneyDigits),
+        fee: commission,
+        commission,
+        swap,
+        grossProfit,
+        realizedPnl,
+        hasCloseDetail: Boolean(cDetail),
         executedAt: Number(deal.executionTimestamp || 0),
       });
     }
     return out;
+  }
+
+  /** Busca deals de fechamento de uma posição específica */
+  async fetchPositionDeals(positionId: string | number): Promise<any[]> {
+    await this.connect();
+    const accountId = Number(this.creds.accountId);
+    try {
+      const res = await this.client.sendRequest(
+        2179, // PROTO_OA_DEAL_LIST_BY_POSITION_ID_REQ
+        'ProtoOADealListByPositionIdReq',
+        { ctidTraderAccountId: accountId, positionId: Number(positionId) },
+        10000,
+      );
+      if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
+        return [];
+      }
+      const out: any[] = [];
+      for (const deal of (res.deal || []) as any[]) {
+        const market = this.marketsById.get(String(deal.symbolId));
+        const moneyDigits = deal.moneyDigits != null ? Number(deal.moneyDigits) : 8;
+        const cDetail = deal.closePositionDetail;
+        const cDigits = cDetail?.moneyDigits != null ? Number(cDetail.moneyDigits) : moneyDigits;
+        const cDiv = Math.pow(10, cDigits);
+
+        const grossProfit = cDetail?.grossProfit != null ? Number(cDetail.grossProfit) / cDiv : 0;
+        const swap = cDetail?.swap != null ? Number(cDetail.swap) / cDiv : 0;
+        const commission = cDetail?.commission != null ? Number(cDetail.commission) / cDiv : (Number(deal.commission || 0) / Math.pow(10, moneyDigits));
+        const realizedPnl = cDetail ? grossProfit - commission + swap : 0;
+
+        out.push({
+          dealId: String(deal.dealId),
+          orderId: String(deal.orderId),
+          positionId: String(deal.positionId),
+          symbol: market?.symbol || String(deal.symbolId),
+          volume: Number(deal.filledVolume || 0) / VOLUME_DIVISOR,
+          price: Number(deal.executionPrice || 0),
+          side: deal.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
+          fee: commission,
+          commission,
+          swap,
+          grossProfit,
+          realizedPnl,
+          hasCloseDetail: Boolean(cDetail),
+          executedAt: Number(deal.executionTimestamp || 0),
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /** Busca histórico de velas (trendbars) de um símbolo. Period: 1 (M1), 5 (M5), etc. */
