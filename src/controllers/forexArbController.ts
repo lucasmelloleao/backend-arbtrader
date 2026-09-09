@@ -117,7 +117,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       });
     }
 
-    return res.json(formatted);
+    return res.json({ success: true, message: 'ok', data: formatted });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
