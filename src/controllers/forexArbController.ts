@@ -52,7 +52,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
             ? rawUnits
             : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
           const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
-          const comm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
+          const comm = (isGoldPair ? 0.16 : 0.06) * numLotes001;
 
           if (isGoldPair) {
             livePnlUsd = (diff * rawUnits) - comm;
