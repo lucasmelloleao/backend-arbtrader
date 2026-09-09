@@ -124,6 +124,7 @@ export async function preloadHistoricalCandles(adapter: any, symbols: string[]) 
     try {
       // 1. Carrega M1 (últimas 50 velas)
       const barsM1 = await adapter.fetchTrendbars(sym, 1, 50);
+      await new Promise(r => setTimeout(r, 200));
       if (barsM1 && barsM1.length > 0) {
         const now = Date.now();
         const currentBucketM1 = Math.floor(now / M1_PERIOD_MS) * M1_PERIOD_MS;
@@ -139,6 +140,7 @@ export async function preloadHistoricalCandles(adapter: any, symbols: string[]) 
 
       // 2. Carrega M5 (últimas 30 velas)
       const barsM5 = await adapter.fetchTrendbars(sym, 5, 30);
+      await new Promise(r => setTimeout(r, 200));
       if (barsM5 && barsM5.length > 0) {
         const now = Date.now();
         const currentBucketM5 = Math.floor(now / M5_PERIOD_MS) * M5_PERIOD_MS;
