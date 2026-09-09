@@ -48,12 +48,13 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
                 ? s.positionVolume
                 : (s.tradeSize || 1000);
 
+          const comm = isGoldPair ? 0.08 : 0.06;
           if (isGoldPair) {
-            livePnlUsd = diff * units;
+            livePnlUsd = (diff * units) - comm;
           } else if (isJpyPair && curPrice > 0) {
-            livePnlUsd = (diff * units) / curPrice;
+            livePnlUsd = ((diff * units) / curPrice) - comm;
           } else {
-            livePnlUsd = diff * units;
+            livePnlUsd = (diff * units) - comm;
           }
         }
       }

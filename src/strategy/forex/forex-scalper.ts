@@ -690,15 +690,27 @@ async function startScalper() {
                     }
                   }
 
-                  // Cálculo do PnL USD (usa PnL real da corretora ou calcula com base no volume/lote)
+                  // Cálculo do PnL USD considerando Bid/Ask exatos e comissão do broker
+                  const closePrice = activePos.side === 'BUY' ? ticker.bid : ticker.ask;
                   const priceDiff = activePos.side === 'BUY'
-                    ? (midPrice - activePos.entryPrice)
-                    : (activePos.entryPrice - midPrice);
+                    ? (closePrice - activePos.entryPrice)
+                    : (activePos.entryPrice - closePrice);
+
+                  const isGoldPair = sym.includes('XAU');
+                  const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
+                  const estimatedComm = isGoldPair ? 0.08 : 0.06;
+
+                  const rawPnlUsd = activePos.amount && activePos.amount > 0
+                    ? (isGoldPair
+                        ? priceDiff * activePos.amount
+                        : isJpyPair && closePrice > 0
+                          ? (priceDiff * activePos.amount) / closePrice
+                          : priceDiff * activePos.amount)
+                    : (pnlPct / 100) * tradeSize;
+
                   const pnlUsd = Number.isFinite(livePnlUsd)
                     ? Number(livePnlUsd)
-                    : (activePos.amount && activePos.amount > 0
-                        ? priceDiff * activePos.amount
-                        : (pnlPct / 100) * tradeSize);
+                    : (rawPnlUsd - estimatedComm);
 
                   // Atualiza picos de ganho
                   if (pnlPct > activePos.peakPnlPct) activePos.peakPnlPct = pnlPct;
