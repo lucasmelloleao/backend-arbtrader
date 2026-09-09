@@ -698,17 +698,20 @@ async function startScalper() {
 
                   const isGoldPair = sym.includes('XAU');
                   const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                  const unitsCount = activePos.amount && activePos.amount > 0 ? activePos.amount : 1;
-                  const lotesCount = isGoldPair ? unitsCount : unitsCount / 100000;
-                  const numLotes001 = Math.max(1, lotesCount / 0.01);
+                  // Identifica o volume/unidades base reais (ex: 4000 para 0.04 lote no GBP/USD, ou 1 para 0.01 oz no Ouro)
+                  const rawUnits = activePos.amount && activePos.amount > 0 ? activePos.amount : (isGoldPair ? 1 : tradeSize || 1000);
+                  const lotesReais = isGoldPair
+                    ? rawUnits
+                    : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
+                  const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
                   const estimatedComm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 
-                  const rawPnlUsd = activePos.amount && activePos.amount > 0
+                  const rawPnlUsd = rawUnits > 0
                     ? (isGoldPair
-                        ? priceDiff * activePos.amount
+                        ? priceDiff * rawUnits
                         : isJpyPair && closePrice > 0
-                          ? (priceDiff * activePos.amount) / closePrice
-                          : priceDiff * activePos.amount)
+                          ? (priceDiff * rawUnits) / closePrice
+                          : priceDiff * rawUnits)
                     : (pnlPct / 100) * tradeSize;
 
                   const pnlUsd = Number.isFinite(livePnlUsd)

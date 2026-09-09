@@ -40,7 +40,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         if (livePnlUsd === 0) {
           const isGoldPair = sym?.includes('XAU');
           const isJpyPair = sym?.includes('JPY');
-          const units = (leg.amount && leg.amount > 0)
+          const rawUnits = (leg.amount && leg.amount > 0)
             ? leg.amount
             : (leg.volume && leg.volume > 0)
               ? leg.volume
@@ -48,16 +48,18 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
                 ? s.positionVolume
                 : (s.tradeSize || 1000);
 
-          const lotesCount = isGoldPair ? units : units / 100000;
-          const numLotes001 = Math.max(1, lotesCount / 0.01);
+          const lotesReais = isGoldPair
+            ? rawUnits
+            : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
+          const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
           const comm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 
           if (isGoldPair) {
-            livePnlUsd = (diff * units) - comm;
+            livePnlUsd = (diff * rawUnits) - comm;
           } else if (isJpyPair && curPrice > 0) {
-            livePnlUsd = ((diff * units) / curPrice) - comm;
+            livePnlUsd = ((diff * rawUnits) / curPrice) - comm;
           } else {
-            livePnlUsd = (diff * units) - comm;
+            livePnlUsd = (diff * rawUnits) - comm;
           }
         }
       }
