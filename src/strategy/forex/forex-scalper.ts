@@ -533,6 +533,42 @@ async function startScalper() {
                 activePositions.delete(sym);
               }
             }
+
+            // Reconcilia todas as estratégias abertas no MongoDB que não existem mais na cTrader
+            try {
+              const openMongoStrats = await ForexArbStrategy.find({
+                userId: settings.userId,
+                positionOpen: true,
+              });
+
+              for (const openStrat of openMongoStrats) {
+                const stratSym = openStrat.legs?.[0]?.symbol;
+                if (stratSym && !cTraderOpenSymbols.has(stratSym)) {
+                  openStrat.positionOpen = false;
+                  openStrat.status = 'closed';
+                  openStrat.closedReason = 'broker_close';
+                  openStrat.active = false;
+                  openStrat.closedAt = new Date();
+                  await openStrat.save();
+
+                  await ForexArbTrade.create({
+                    userId: settings.userId,
+                    strategyId: openStrat._id,
+                    strategyName: openStrat.name,
+                    exchangeId: 'ctrader',
+                    type: 'close',
+                    legs: openStrat.legs || [],
+                    pnl: openStrat.pnl || 0,
+                    status: 'executed',
+                    closedReason: 'broker_close',
+                    executedAt: new Date(),
+                  });
+                  log.info(`✅ [RECONCILE MONGO] Estratégia órfã ${openStrat.name} (${stratSym}) encerrada pois não existe na cTrader!`);
+                }
+              }
+            } catch (orphanErr: any) {
+              log.warn(`⚠️ [RECONCILE MONGO] Erro ao reconciliar estratégias órfãs: ${orphanErr.message}`);
+            }
           } catch { /* erro transitório no reconcile */ }
 
           try {
@@ -669,6 +705,8 @@ async function startScalper() {
                     },
                     {
                       $set: {
+                        currentPrice: midPrice,
+                        [`lastLegPrices.${sym}`]: midPrice,
                         pnl: pnlUsd,
                         pnlPct: pnlPct,
                         peakProfitPct: activePos.peakPnlPct,
