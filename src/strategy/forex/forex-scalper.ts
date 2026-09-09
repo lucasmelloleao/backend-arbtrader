@@ -220,8 +220,8 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
       trailingActivationUsd: 0.20,// Trailing ativa com +$0.20 no ouro
       trailingDistanceUsd: 0.05,  // Distância de trailing $0.05
       minFeeProtectionUsd: 0.08,  // Piso mínimo garantido para cobrir taxas do ouro
-      minEmaDeltaRatio: 0.00008,
-      minAtrRatio: 0.00010,
+      minEmaDeltaRatio: 0.00002,
+      minAtrRatio: 0.00002,
       defaultTradeSize: 1,        // 0.01 lote (1 oz) ≈ $21,79 de margem
     };
   }
@@ -231,8 +231,8 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
       trailingActivationUsd: 0.25, // Ativação calibrada para 0.05 lote
       trailingDistanceUsd: 0.10,
       minFeeProtectionUsd: 0.15,
-      minEmaDeltaRatio: 0.00010,
-      minAtrRatio: 0.00008,
+      minEmaDeltaRatio: 0.00002,
+      minAtrRatio: 0.00002,
       defaultTradeSize: 5000,     // 0.05 lote = 5.000 EUR ≈ $29,06 de margem
     };
   }
@@ -242,8 +242,8 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
       trailingActivationUsd: 0.25, // Ativação calibrada para 0.04 lote
       trailingDistanceUsd: 0.10,
       minFeeProtectionUsd: 0.15,
-      minEmaDeltaRatio: 0.00010,
-      minAtrRatio: 0.00008,
+      minEmaDeltaRatio: 0.00002,
+      minAtrRatio: 0.00002,
       defaultTradeSize: 4000,     // 0.04 lote = 4.000 GBP ≈ $27,08 de margem
     };
   }
@@ -253,8 +253,8 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
       trailingActivationUsd: 0.25, // Ativação calibrada para 0.06 lote
       trailingDistanceUsd: 0.10,
       minFeeProtectionUsd: 0.15,
-      minEmaDeltaRatio: 0.00010,
-      minAtrRatio: 0.00008,
+      minEmaDeltaRatio: 0.00002,
+      minAtrRatio: 0.00002,
       defaultTradeSize: 6000,     // 0.06 lote = 6.000 USD ≈ $30,00 de margem
     };
   }
@@ -263,8 +263,8 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
     trailingActivationUsd: 0.15,
     trailingDistanceUsd: 0.05,
     minFeeProtectionUsd: 0.08,
-    minEmaDeltaRatio: 0.00010,
-    minAtrRatio: 0.00008,
+    minEmaDeltaRatio: 0.00002,
+    minAtrRatio: 0.00002,
     defaultTradeSize: 1000,
   };
 }
@@ -313,27 +313,24 @@ export function analyzeScalpOpportunity(
   const rsi = calculateRSI(closesM1, 14);
   const atr = calculateATR(candlesM1, 14);
 
-  // Filtro de Volatilidade Mínima (ATR)
+  // Filtro de Volatilidade Mínima (ATR - apenas descarta mercado totalmente parado)
   if (atr > 0 && atr < currentPrice * profile.minAtrRatio) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
   }
 
-  // Crossover M1
+  // Crossover e Momentum M1
   const prevCloses = closesM1.slice(0, -1);
   const prevEmaFast = calculateEMA(prevCloses, 5);
   const prevEmaSlow = calculateEMA(prevCloses, 15);
 
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
-
-  // Distância mínima entre EMAs para evitar cruzamento falso colado
+  const isBullishTrend = emaFast > emaSlow && currentPrice >= emaSlow * 0.9999;
+  const isBearishTrend = emaFast < emaSlow && currentPrice <= emaSlow * 1.0001;
   const emaDelta = Math.abs(emaFast - emaSlow);
-  if (emaDelta < currentPrice * profile.minEmaDeltaRatio) {
-    return { symbol, action: 'NEUTRAL', reason: `Cruzamento raso (Delta EMA=${emaDelta.toFixed(6)})`, price: currentPrice };
-  }
 
-  // 5. Confluência BUY (Cruzamento M1 + RSI saudável + Tendência M5 alinhada)
-  if (crossoverBuy && rsi >= 42 && rsi <= 62) {
+  // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável + Tendência M5 favorável)
+  if ((crossoverBuy || isBullishTrend) && rsi >= 38 && rsi <= 68) {
     if (m5Trend === 'BEARISH') {
       return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 em baixa`, price: currentPrice };
     }
@@ -345,8 +342,8 @@ export function analyzeScalpOpportunity(
     };
   }
 
-  // 6. Confluência SELL (Cruzamento M1 + RSI saudável + Tendência M5 alinhada)
-  if (crossoverSell && rsi >= 38 && rsi <= 58) {
+  // 6. Confluência SELL (Cruzamento M1 ou Momentum de Baixa + RSI saudável + Tendência M5 favorável)
+  if ((crossoverSell || isBearishTrend) && rsi >= 32 && rsi <= 62) {
     if (m5Trend === 'BULLISH') {
       return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 em alta`, price: currentPrice };
     }
