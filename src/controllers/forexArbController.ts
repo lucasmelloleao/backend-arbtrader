@@ -2,6 +2,7 @@ import { Response } from 'express';
 import ForexArbStrategy from '../models/ForexArbStrategy';
 import ForexArbTrade from '../models/ForexArbTrade';
 import ForexArbSettings from '../models/ForexArbSettings';
+import ForexPosition from '../models/ForexPosition';
 import ExchangeKey from '../models/ExchangeKey';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { encryptSecretKey } from '../utils/encryption';
