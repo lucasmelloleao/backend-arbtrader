@@ -641,6 +641,19 @@ async function startScalper() {
               if (ticker && ticker.bid && ticker.ask) {
                 const midPrice = (ticker.bid + ticker.ask) / 2;
                 const profile = getSymbolProfile(sym);
+
+                // Atualiza o preço atual de mercado em tempo real em todas as estratégias abertas deste par no MongoDB
+                ForexArbStrategy.updateMany(
+                  { userId: settings.userId, positionOpen: true, 'legs.symbol': sym },
+                  {
+                    $set: {
+                      currentPrice: midPrice,
+                      [`lastLegPrices.${sym}`]: midPrice,
+                      'legs.0.currentPrice': midPrice,
+                    }
+                  }
+                ).catch(() => {});
+
                 const signal = analyzeScalpOpportunity(sym, ticker.bid, ticker.ask);
                 const isM1Closed = justClosedM1Map.get(sym) || false;
 
