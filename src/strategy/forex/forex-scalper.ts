@@ -672,19 +672,25 @@ async function startScalper() {
                         closeRes = await adapter.createMarketOrder(sym, closeSide, activePos.amount);
                       }
 
-                      const closePrice = closeRes?.price || midPrice;
+                      const closePrice = closeRes?.price && Number(closeRes.price) > 0 ? Number(closeRes.price) : midPrice;
                       const isGold = sym.includes('XAU');
-                      const contractUnits = isGold ? 1 : 1000;
+                      const isJpy = sym.endsWith('/JPY') || sym.endsWith('JPY');
+                      const vol = activePos.amount || (isGold ? 1 : 1000);
                       const diffPrice = activePos.side === 'BUY' ? (closePrice - activePos.entryPrice) : (activePos.entryPrice - closePrice);
-                      const calcPnlUsd = diffPrice * contractUnits;
-                      const finalPnlUsd = closeRes?.realizedPnl != null && !isNaN(Number(closeRes.realizedPnl))
+                      const calcGross = isGold
+                        ? diffPrice * (vol > 10 ? vol / 100 : vol)
+                        : (isJpy && closePrice > 0 ? (diffPrice * vol) / closePrice : diffPrice * vol);
+                      const comm = closeRes?.commission != null && Number(closeRes.commission) > 0 ? Number(closeRes.commission) : (isGold ? 0.08 : 0.06);
+                      const calcNet = calcGross - comm;
+
+                      const finalPnlUsd = closeRes?.realizedPnl != null && !isNaN(Number(closeRes.realizedPnl)) && Math.abs(Number(closeRes.realizedPnl)) < 100000
                         ? Number(closeRes.realizedPnl)
-                        : (activePos.peakPnlUsd && activePos.peakPnlUsd !== 0 ? activePos.peakPnlUsd : calcPnlUsd);
+                        : calcNet;
 
                       const closeVolume = Number(closeRes?.amount || activePos.amount || 0);
                       const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
-                      log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real: $${finalPnlUsd.toFixed(2)} | Motivo: ${reasonType}`);
+                      log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real cTrader: $${finalPnlUsd.toFixed(2)} | Preço Fechamento: ${closePrice} | Motivo: ${reasonType}`);
 
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({

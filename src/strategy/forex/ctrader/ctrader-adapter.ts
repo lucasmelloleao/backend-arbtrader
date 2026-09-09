@@ -489,22 +489,33 @@ export class CtraderAdapter {
             : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
           
           const dealDetail = deal.closePositionDetail || {};
+          const moneyDigits = dealDetail.moneyDigits != null
+            ? Number(dealDetail.moneyDigits)
+            : (deal.moneyDigits != null ? Number(deal.moneyDigits) : 2);
+          const div = Math.pow(10, moneyDigits);
+
           const grossPnl = dealDetail.grossProfit != null
-            ? Number(dealDetail.grossProfit) / 100
-            : (deal.money != null ? Number(deal.money) / 100 : undefined);
-          const dealComm = deal.commission != null ? Math.abs(Number(deal.commission)) / 100 : 0;
-          const posComm = pos.commission != null ? Math.abs(Number(pos.commission)) / 100 : 0;
-          const totalCommission = dealComm > 0 && posComm > 0 ? (dealComm + posComm) : (dealComm || posComm || 0);
-          const swap = deal.swap != null ? Number(deal.swap) / 100 : (pos.swap != null ? Number(pos.swap) / 100 : 0);
+            ? Number(dealDetail.grossProfit) / div
+            : (deal.money != null ? Number(deal.money) / div : undefined);
+
+          const dealComm = deal.commission != null ? Math.abs(Number(deal.commission)) / div : 0;
+          const posComm = pos.commission != null
+            ? Math.abs(Number(pos.commission)) / div
+            : (dealDetail.commission != null ? Math.abs(Number(dealDetail.commission)) / div : 0);
+          const totalCommission = (dealComm + posComm) || 0;
+          const swap = dealDetail.swap != null
+            ? Number(dealDetail.swap) / div
+            : (deal.swap != null ? Number(deal.swap) / div : (pos.swap != null ? Number(pos.swap) / div : 0));
+
           const netPnl = dealDetail.netProfit != null
-            ? Number(dealDetail.netProfit) / 100
+            ? Number(dealDetail.netProfit) / div
             : (grossPnl != null ? (grossPnl - totalCommission + swap) : undefined);
 
           resolve({
             id: String(order.orderId || deal.dealId || ''),
             positionId,
             price: closePrice,
-            amount: Number(deal.filledVolume || 0),
+            amount: Number(deal.filledVolume || 0) / VOLUME_DIVISOR,
             realizedPnl: netPnl,
             grossPnl,
             commission: totalCommission,
