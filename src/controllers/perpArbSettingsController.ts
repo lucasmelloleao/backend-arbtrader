@@ -18,9 +18,13 @@ export async function getBotStatus(req: AuthenticatedRequest, res: Response) {
 
     const isScanningEnabled = settings ? (settings as any).isScanningEnabled === true : false;
     
-    // Busca o heartbeat do robo gravado pelo loop-scanner-robot / forex-arb
-    const botStatusDoc = await (BotStatus as any).findOne({ botName }).lean()
-      || await (BotStatus as any).findOne({ userId: String(userId), botName }).lean();
+    // Busca o heartbeat do robo gravado pelo loop-scanner-robot / forex-scalper
+    const botNameList = (botName === 'forex-arb' || botName === 'forex-scalper')
+      ? ['forex-scalper', 'forex-arb']
+      : [botName];
+
+    const botStatusDoc = await (BotStatus as any).findOne({ botName: { $in: botNameList } }).sort({ lastHeartbeat: -1 }).lean()
+      || await (BotStatus as any).findOne({ userId: String(userId), botName: { $in: botNameList } }).sort({ lastHeartbeat: -1 }).lean();
 
     let isOnline = false;
     

@@ -7,6 +7,7 @@ import ForexArbSettings from '../../models/ForexArbSettings';
 import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
+import BotStatus from '../../models/BotStatus';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
 
 const getTs = () => `[${new Date().toISOString()}]`;
@@ -422,6 +423,20 @@ async function startScalper() {
     try {
       const settings = await ForexArbSettings.findOne().lean();
       if (settings) {
+        // Atualiza heartbeat do robô no MongoDB para o frontend exibir ONLINE
+        try {
+          await (BotStatus as any).updateOne(
+            { userId: settings.userId, botName: 'forex-scalper' },
+            { $set: { lastHeartbeat: new Date() } },
+            { upsert: true }
+          );
+          await (BotStatus as any).updateOne(
+            { userId: settings.userId, botName: 'forex-arb' },
+            { $set: { lastHeartbeat: new Date() } },
+            { upsert: true }
+          );
+        } catch { /* ignora erro de heartbeat */ }
+
         log.info('⚡ [FOREX-SCALPER] Monitorando mercado para Scalping HFT...');
 
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
