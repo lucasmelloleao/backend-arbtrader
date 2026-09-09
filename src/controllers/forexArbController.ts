@@ -49,8 +49,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
                 : (s.tradeSize || 1000);
 
           const lotesReais = isGoldPair
-            ? rawUnits
-            : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
+            ? (rawUnits >= 100 ? rawUnits / 100 : rawUnits * 0.01)
+            : (rawUnits >= 1000 ? rawUnits / 100000 : rawUnits);
           const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
           const comm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 

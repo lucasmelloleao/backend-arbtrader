@@ -718,14 +718,14 @@ async function startScalper() {
                   // Identifica o volume/unidades base reais (ex: 5000 unidades = 0.05 lote = 5x 0.01 = $0.30 | 4000 unidades = 0.04 lote = 4x 0.01 = $0.24)
                   const rawUnits = activePos.amount && activePos.amount > 0 ? activePos.amount : (isGoldPair ? 1 : tradeSize || 1000);
                   const lotesReais = isGoldPair
-                    ? rawUnits
-                    : rawUnits >= 1000 ? rawUnits / 100000 : rawUnits;
+                    ? (rawUnits >= 100 ? rawUnits / 100 : rawUnits * 0.01)
+                    : (rawUnits >= 1000 ? rawUnits / 100000 : rawUnits);
                   const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
                   const estimatedComm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 
                   const rawPnlUsd = rawUnits > 0
                     ? (isGoldPair
-                        ? priceDiff * rawUnits
+                        ? priceDiff * (rawUnits >= 100 ? rawUnits : rawUnits)
                         : isJpyPair && closePrice > 0
                           ? (priceDiff * rawUnits) / closePrice
                           : priceDiff * rawUnits)
@@ -892,7 +892,7 @@ async function startScalper() {
                       const isGold = sym.includes('XAU');
                       const isJpy = sym.endsWith('/JPY') || sym.endsWith('JPY');
                       const vol = activePos.amount || (isGold ? 1 : tradeSize || 1000);
-                      const lotesReais = isGold ? vol : (vol >= 1000 ? vol / 100000 : vol);
+                      const lotesReais = isGold ? (vol >= 100 ? vol / 100 : vol * 0.01) : (vol >= 1000 ? vol / 100000 : vol);
                       const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
                       const totalComm = closeRes?.commission != null && Number(closeRes.commission) > 0
                         ? Number(closeRes.commission)
