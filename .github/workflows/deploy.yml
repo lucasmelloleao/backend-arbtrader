@@ -62,10 +62,31 @@ jobs:
             cd ~/backend-arbtrader
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Baixar o docker-compose.yml atualizado do repositorio
-            curl -sSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://raw.githubusercontent.com/${{ github.repository }}/main/docker-compose.yml -o docker-compose.yml
+            cat << 'EOF' > docker-compose.yml
+services:
+  backend-arbtrader:
+    image: ghcr.io/lucasmelloleao/backend-arbtrader:latest
+    pull_policy: always
+    container_name: backend-arbtrader
+    network_mode: "host"
+    command: pm2-runtime ecosystem.config.js
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MASTER_PASSWORD=${MASTER_PASSWORD}
+    mem_limit: 4g
+    memswap_limit: 4g
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+EOF
 
-            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose pull
-            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose down --remove-orphans
-            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose up -d --remove-orphans
+            docker pull ghcr.io/lucasmelloleao/backend-arbtrader:latest
+            docker stop backend-arbtrader || true
+            docker rm -f backend-arbtrader || true
+            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose down --remove-orphans || true
+            MASTER_PASSWORD="${{ secrets.MASTER_PASSWORD }}" docker compose up -d --force-recreate --remove-orphans
             docker image prune -f
