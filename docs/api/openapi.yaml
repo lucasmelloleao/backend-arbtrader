@@ -2522,7 +2522,7 @@ components:
           type: string
         type:
           type: string
-          enum: [opportunity_found, execution, close, error]
+          enum: [opportunity_found, execution, close, closed, BUY, SELL, error]
         legs:
           type: array
           items:
@@ -2537,7 +2537,7 @@ components:
           type: number
         status:
           type: string
-          enum: [detected, executed, simulated, failed, skipped]
+          enum: [detected, executed, simulated, failed, skipped, CLOSED, CLOSED_PROFIT, CLOSED_LOSS, CLOSED_MANUAL]
         reason:
           type: string
           nullable: true

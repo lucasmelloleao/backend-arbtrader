@@ -274,11 +274,10 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
       createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : '',
     }));
 
-    if (isDashboard(req)) return res.json(formatted);
     return res.json({ success: true, message: 'ok', data: formatted });
   } catch (e: any) {
     console.error('❌ [GET PredictionTrades] Error:', e.message);
-    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+    return res.status(500).json({ success: false, message: e.message });
   }
 }
 
