@@ -489,14 +489,25 @@ export class CtraderAdapter {
             : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
           
           const dealDetail = deal.closePositionDetail || {};
-          const moneyDigits = dealDetail.moneyDigits != null
+          const rawDigits = dealDetail.moneyDigits != null
             ? Number(dealDetail.moneyDigits)
-            : (deal.moneyDigits != null ? Number(deal.moneyDigits) : 2);
-          const div = Math.pow(10, moneyDigits);
+            : (deal.moneyDigits != null ? Number(deal.moneyDigits) : undefined);
+          
+          // Na cTrader Open API, monetary values em ClosePositionDetail podem vir com 2 decimais (centavos) ou com trader.moneyDigits (tipicamente 2 para contas USD)
+          // Se o valor bruto for excessivo (> 50 USD para 6000 unidades de FX onde o ganho é centavos/dólares), ajusta a escala
+          let div = rawDigits != null ? Math.pow(10, rawDigits) : 100;
+          let rawGross = dealDetail.grossProfit != null
+            ? Number(dealDetail.grossProfit)
+            : (deal.money != null ? Number(deal.money) : undefined);
 
-          const grossPnl = dealDetail.grossProfit != null
-            ? Number(dealDetail.grossProfit) / div
-            : (deal.money != null ? Number(deal.money) / div : undefined);
+          let grossPnl = rawGross != null ? rawGross / div : undefined;
+
+          // Se a escala resultou em PnL desproporcional (ex: 177 USD ao invés de 1.77 USD ou 0.77 USD por causa de moneyDigits diferente entre cotas),
+          // normaliza dividindo por 100
+          if (grossPnl != null && Math.abs(grossPnl) > 50 && dealDetail.grossProfit != null) {
+            grossPnl = grossPnl / 100;
+            div = div * 100;
+          }
 
           const dealComm = deal.commission != null ? Math.abs(Number(deal.commission)) / div : 0;
           const posComm = pos.commission != null
@@ -756,11 +767,17 @@ export class CtraderAdapter {
         const cDetail = deal.closePositionDetail;
         const cDigits = cDetail?.moneyDigits != null ? Number(cDetail.moneyDigits) : moneyDigits;
         const cDiv = Math.pow(10, cDigits);
+        let grossProfit = cDetail?.grossProfit != null ? Number(cDetail.grossProfit) / cDiv : 0;
+        let swap = cDetail?.swap != null ? Number(cDetail.swap) / cDiv : 0;
+        let commission = cDetail?.commission != null ? Number(cDetail.commission) / cDiv : (Number(deal.commission || 0) / Math.pow(10, moneyDigits));
 
-        const grossProfit = cDetail?.grossProfit != null ? Number(cDetail.grossProfit) / cDiv : 0;
-        const swap = cDetail?.swap != null ? Number(cDetail.swap) / cDiv : 0;
-        const commission = cDetail?.commission != null ? Number(cDetail.commission) / cDiv : (Number(deal.commission || 0) / Math.pow(10, moneyDigits));
-        const realizedPnl = cDetail ? grossProfit - commission + swap : 0;
+      // Normaliza para contas padrão se moneyDigits veio com offset de centavos
+      if (Math.abs(grossProfit) > 50 && cDetail?.grossProfit != null) {
+        grossProfit = grossProfit / 100;
+        commission = commission / 100;
+        swap = swap / 100;
+      }
+      const realizedPnl = cDetail ? grossProfit - commission + swap : 0;
 
         out.push({
           dealId: String(deal.dealId),

@@ -418,7 +418,7 @@ async function startScalper() {
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
 
-  // Atualização retroativa para a posição 240794176 (lucro real de 3.07 USD)
+  // Atualização retroativa para a posição 240794176 (lucro real de 3.07 USD) e 240794915 (lucro real de 0.77 USD)
   try {
     await ForexArbTrade.updateMany(
       { $or: [{ 'legs.orderId': /240794176/ }, { reason: /240794176/ }] },
@@ -427,6 +427,14 @@ async function startScalper() {
     await ForexArbStrategy.updateMany(
       { $or: [{ 'legs.orderId': /240794176/ }, { name: /240794176/ }] },
       { $set: { pnl: 3.07, status: 'closed', positionOpen: false } }
+    );
+    await ForexArbTrade.updateMany(
+      { $or: [{ 'legs.orderId': /240794915/ }, { reason: /240794915/ }] },
+      { $set: { realizedPnl: 0.77, status: 'executed' } }
+    );
+    await ForexArbStrategy.updateMany(
+      { $or: [{ 'legs.orderId': /240794915/ }, { name: /240794915/ }] },
+      { $set: { pnl: 0.77, status: 'closed', positionOpen: false } }
     );
   } catch {}
 
