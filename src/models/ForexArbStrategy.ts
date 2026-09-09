@@ -51,6 +51,7 @@ const ForexArbStrategySchema = new mongoose.Schema({
   swap: { type: Number, default: 0 },
   closedAt: { type: Date, default: null },
   peakProfitPct: { type: Number, default: 0 },
+  currentPrice: { type: Number, default: null },
   lastLegPrices: { type: Map, of: Number, default: {} }, // symbol -> último preço visto
 }, { timestamps: true, collection: 'forexarbstrategies' });
 

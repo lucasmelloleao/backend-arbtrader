@@ -69,6 +69,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         trailingActivationUsd: trailingActivationUsd,
         trailingDistanceUsd: trailingDistanceUsd,
         currentAction: currentAction,
+        currentPrice: (s as any).currentPrice || null,
+        lastLegPrices: (s as any).lastLegPrices || {},
         closedAt: s.closedAt,
         createdAt: s.createdAt
       });
