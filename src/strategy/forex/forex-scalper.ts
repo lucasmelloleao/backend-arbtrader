@@ -589,14 +589,22 @@ async function startScalper() {
                     }
 
                     const closeDeal = deals.find(d => d.hasCloseDetail) || deals[deals.length - 1];
+                    let closePrice = closeDeal?.price && Number(closeDeal.price) > 0 ? Number(closeDeal.price) : undefined;
+
                     if (closeDeal && closeDeal.realizedPnl !== undefined && !isNaN(Number(closeDeal.realizedPnl))) {
                       brokerPnl = Number(closeDeal.realizedPnl);
                       brokerCommission = Number(closeDeal.commission || 0);
                       brokerSwap = Number(closeDeal.swap || 0);
-                      log.info(`🎯 [RECONCILE PNL REAL] ${stratSym} (Pos #${posId || '?'}) -> PnL Real Broker: $${brokerPnl.toFixed(2)} USD | Comm: -$${brokerCommission.toFixed(2)} USD`);
+                      log.info(`🎯 [RECONCILE PNL REAL] ${stratSym} (Pos #${posId || '?'}) -> PnL Real Broker: $${brokerPnl.toFixed(2)} USD | Comm: -$${brokerCommission.toFixed(2)} USD | Fechamento: ${closePrice || '?'}`);
                     }
+
+                    var updatedLegs = (openStrat.legs || []).map((leg: any) => ({
+                      ...leg,
+                      price: closePrice || leg.price || 0,
+                    }));
                   } catch (dealErr: any) {
                     log.warn(`⚠️ [RECONCILE PNL] Não foi possível consultar deals de ${stratSym}: ${dealErr.message}`);
+                    var updatedLegs = openStrat.legs || [];
                   }
 
                   openStrat.positionOpen = false;
@@ -615,7 +623,7 @@ async function startScalper() {
                     strategyName: openStrat.name,
                     exchangeId: 'ctrader',
                     type: 'close',
-                    legs: openStrat.legs || [],
+                    legs: updatedLegs,
                     amount: openStrat.legs?.[0]?.amount || openStrat.positionVolume || 0,
                     volume: openStrat.legs?.[0]?.volume || openStrat.positionVolume || 0,
                     amountUsd: openStrat.legs?.[0]?.amountUsd || openStrat.positionAmountUsd || 0,
@@ -874,13 +882,18 @@ async function startScalper() {
                       const closePrice = closeRes?.price && Number(closeRes.price) > 0 ? Number(closeRes.price) : midPrice;
                       const isGold = sym.includes('XAU');
                       const isJpy = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                      const vol = activePos.amount || (isGold ? 1 : 1000);
+                      const vol = activePos.amount || (isGold ? 1 : tradeSize || 1000);
+                      const lotesReais = isGold ? vol : (vol >= 1000 ? vol / 100000 : vol);
+                      const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
+                      const totalComm = closeRes?.commission != null && Number(closeRes.commission) > 0
+                        ? Number(closeRes.commission)
+                        : (isGold ? 0.32 : 0.06) * numLotes001;
+
                       const diffPrice = activePos.side === 'BUY' ? (closePrice - activePos.entryPrice) : (activePos.entryPrice - closePrice);
                       const calcGross = isGold
                         ? diffPrice * (vol > 10 ? vol / 100 : vol)
                         : (isJpy && closePrice > 0 ? (diffPrice * vol) / closePrice : diffPrice * vol);
-                      const comm = closeRes?.commission != null && Number(closeRes.commission) > 0 ? Number(closeRes.commission) : (isGold ? 0.08 : 0.06);
-                      const calcNet = calcGross - comm;
+                      const calcNet = calcGross - totalComm;
 
                       const finalPnlUsd = closeRes?.realizedPnl != null && !isNaN(Number(closeRes.realizedPnl)) && Math.abs(Number(closeRes.realizedPnl)) < 100000
                         ? Number(closeRes.realizedPnl)
@@ -923,6 +936,7 @@ async function startScalper() {
                             volume: closeVolume,
                             amountUsd: closeAmountUsd,
                             realizedPnl: finalPnlUsd,
+                            commission: totalComm,
                             status: 'executed',
                             closedReason: reasonType,
                             trailingStopTriggered: atingiuTrailing,
