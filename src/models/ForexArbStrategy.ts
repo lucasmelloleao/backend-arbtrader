@@ -47,6 +47,7 @@ const ForexArbStrategySchema = new mongoose.Schema({
   trailingDistanceUsd: { type: Number, default: 0.03 },
   currentAction: { type: String, default: 'Monitorando' },
   pnl: { type: Number, default: 0 },
+  pnlPct: { type: Number, default: 0 },
   commission: { type: Number, default: 0 },
   swap: { type: Number, default: 0 },
   closedAt: { type: Date, default: null },

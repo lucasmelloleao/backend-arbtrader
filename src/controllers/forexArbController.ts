@@ -23,8 +23,40 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
     for (const s of strategies) {
       const leg = s.legs && s.legs[0];
       const sym = leg?.symbol;
+      const curPrice = (s as any).currentPrice || (leg as any)?.currentPrice || ((s as any).lastLegPrices && sym ? (s as any).lastLegPrices.get ? (s as any).lastLegPrices.get(sym) : (s as any).lastLegPrices[sym] : null);
+      
       let livePnlPct = s.pnlPct || 0;
       let livePnlUsd = s.pnl || 0;
+
+      // Se temos o preço atual e o preço de entrada da perna, calcula os dados em tempo real se pnl for 0 ou desatualizado
+      if (curPrice && leg && leg.price && leg.price > 0) {
+        const sideUpper = (leg.side || 'BUY').toUpperCase();
+        const diff = sideUpper === 'BUY' ? (curPrice - leg.price) : (leg.price - curPrice);
+        const calculatedPct = (diff / leg.price) * 100;
+        if (!livePnlPct || livePnlPct === 0) {
+          livePnlPct = calculatedPct;
+        }
+
+        if (livePnlUsd === 0) {
+          const isGoldPair = sym?.includes('XAU');
+          const isJpyPair = sym?.includes('JPY');
+          const units = (leg.amount && leg.amount > 0)
+            ? leg.amount
+            : (leg.volume && leg.volume > 0)
+              ? leg.volume
+              : (s.positionVolume && s.positionVolume > 0)
+                ? s.positionVolume
+                : (s.tradeSize || 1000);
+
+          if (isGoldPair) {
+            livePnlUsd = diff * units;
+          } else if (isJpyPair && curPrice > 0) {
+            livePnlUsd = (diff * units) / curPrice;
+          } else {
+            livePnlUsd = diff * units;
+          }
+        }
+      }
 
       const isGold = sym?.includes('XAU');
       const peakPct = Math.max(s.peakProfitPct || 0, livePnlPct > 0 ? livePnlPct : 0);
