@@ -734,9 +734,7 @@ export class CtraderAdapter {
       log.warn(`⚠️ CtraderAdapter: símbolo ${symbol} não encontrado para fetchTrendbars`);
       return [];
     }
-    const periodMinutes = period === 5 ? 5 : (period === 1 ? 1 : period);
     const toTimestamp = Date.now();
-    const fromTimestamp = toTimestamp - count * periodMinutes * 60_000 * 2;
 
     try {
       const res = await this.client.sendRequest(
@@ -746,7 +744,6 @@ export class CtraderAdapter {
           ctidTraderAccountId: Number(this.creds.accountId),
           symbolId: Number(market.id),
           period,
-          fromTimestamp,
           toTimestamp,
           count,
         },
