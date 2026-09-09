@@ -182,26 +182,56 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
     const trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
-    const formatted = trades.map((t: any) => ({
-      _id: t._id.toString(),
-      id: t._id.toString(),
-      strategyId: t.strategyId ? t.strategyId.toString() : null,
-      strategyName: t.strategyName,
-      exchangeId: t.exchangeId,
-      type: t.type,
-      legs: t.legs || [],
-      amount: t.amount,
-      volume: t.volume ?? t.legs?.[0]?.volume ?? t.legs?.[0]?.amount ?? null,
-      amountUsd: t.amountUsd ?? t.legs?.[0]?.amountUsd ?? null,
-      expectedProfitPct: t.expectedProfitPct,
-      realizedPnl: t.realizedPnl,
-      commission: t.commission || 0,
-      swap: t.swap || 0,
-      status: t.status,
-      reason: t.reason,
-      errorMessage: t.errorMessage,
-      createdAt: t.createdAt
-    }));
+    const formatted = trades.map((t: any) => {
+      const legs = t.legs || [];
+      const primaryLeg = legs[0] || {};
+      const closeLeg = legs.find((l: any) => l.closePrice != null || (l.price != null && l !== primaryLeg)) || legs[1] || primaryLeg;
+
+      const sym = primaryLeg.symbol || t.strategyName || '';
+      const isGold = sym.includes('XAU');
+      const isJpy = sym.endsWith('/JPY') || sym.endsWith('JPY');
+
+      const entryP = Number(primaryLeg.entryPrice ?? primaryLeg.price ?? 0);
+      const closeP = Number(closeLeg.closePrice ?? (closeLeg !== primaryLeg ? closeLeg.price : 0));
+      const side = String(primaryLeg.side || 'BUY').toUpperCase();
+
+      const vol = Number(t.volume ?? t.amount ?? primaryLeg.volume ?? primaryLeg.amount ?? 1000);
+      const lotesReais = isGold ? (vol >= 100 ? vol / 100 : vol * 0.01) : (vol >= 1000 ? vol / 100000 : vol);
+      const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
+      const calcComm = (isGold ? 0.08 : 0.06) * numLotes001;
+
+      let computedNetPnl = t.realizedPnl;
+      if (entryP > 0 && closeP > 0 && entryP !== closeP) {
+        const priceDiff = side === 'BUY' ? (closeP - entryP) : (entryP - closeP);
+        const grossPnl = isGold
+          ? priceDiff * vol
+          : isJpy && closeP > 0
+            ? (priceDiff * vol) / closeP
+            : priceDiff * vol;
+        computedNetPnl = grossPnl - calcComm;
+      }
+
+      return {
+        _id: t._id.toString(),
+        id: t._id.toString(),
+        strategyId: t.strategyId ? t.strategyId.toString() : null,
+        strategyName: t.strategyName,
+        exchangeId: t.exchangeId,
+        type: t.type,
+        legs: t.legs || [],
+        amount: t.amount,
+        volume: t.volume ?? t.legs?.[0]?.volume ?? t.legs?.[0]?.amount ?? null,
+        amountUsd: t.amountUsd ?? t.legs?.[0]?.amountUsd ?? null,
+        expectedProfitPct: t.expectedProfitPct,
+        realizedPnl: computedNetPnl ?? t.realizedPnl,
+        commission: t.commission && t.commission > 0 ? t.commission : calcComm,
+        swap: t.swap || 0,
+        status: t.status,
+        reason: t.reason,
+        errorMessage: t.errorMessage,
+        createdAt: t.createdAt
+      };
+    });
 
     const isDashboard = req.path.includes('/auth/');
     return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
