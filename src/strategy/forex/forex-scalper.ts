@@ -690,7 +690,7 @@ async function startScalper() {
                     }
                   }
 
-                  // Cálculo do PnL USD considerando Bid/Ask exatos e comissão do broker
+                  // Cálculo do PnL USD considerando Bid/Ask exatos e comissão do broker por lote (0.01 lote = 1 oz / 1000 un)
                   const closePrice = activePos.side === 'BUY' ? ticker.bid : ticker.ask;
                   const priceDiff = activePos.side === 'BUY'
                     ? (closePrice - activePos.entryPrice)
@@ -698,7 +698,10 @@ async function startScalper() {
 
                   const isGoldPair = sym.includes('XAU');
                   const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                  const estimatedComm = isGoldPair ? 0.08 : 0.06;
+                  const unitsCount = activePos.amount && activePos.amount > 0 ? activePos.amount : 1;
+                  const lotesCount = isGoldPair ? unitsCount : unitsCount / 100000;
+                  const numLotes001 = Math.max(1, lotesCount / 0.01);
+                  const estimatedComm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
 
                   const rawPnlUsd = activePos.amount && activePos.amount > 0
                     ? (isGoldPair
@@ -737,8 +740,6 @@ async function startScalper() {
                     activePos.trailingFloorUsd = novoPiso;
                   }
 
-                  const isGoldPair = sym.includes('XAU');
-                  const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
                   // amount = unidades base (ex: 5000 EUR, 4000 GBP, 6000 USD, 1 oz Ouro)
                   // USD = (deltaPrice * amount) no EUR/USD e GBP/USD. Logo deltaPrice = USD / amount.
                   const units = activePos.amount && activePos.amount > 0 ? activePos.amount : 1000;

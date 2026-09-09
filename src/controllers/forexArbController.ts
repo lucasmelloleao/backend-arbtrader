@@ -48,7 +48,10 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
                 ? s.positionVolume
                 : (s.tradeSize || 1000);
 
-          const comm = isGoldPair ? 0.08 : 0.06;
+          const lotesCount = isGoldPair ? units : units / 100000;
+          const numLotes001 = Math.max(1, lotesCount / 0.01);
+          const comm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
+
           if (isGoldPair) {
             livePnlUsd = (diff * units) - comm;
           } else if (isJpyPair && curPrice > 0) {
