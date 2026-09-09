@@ -339,10 +339,8 @@ export class CtraderAdapter {
     if (!market) throw new Error(`CtraderAdapter: símbolo desconhecido: ${symbol}`);
     const accountId = Number(this.creds.accountId);
 
-    // volumeProtocol = quantidade em 1/100 de lote
-    // amount é em unidades base; lotSize é unidades base por lote.
-    let volumeProtocol = Math.round((amount / market.lotSize) * VOLUME_DIVISOR);
-    if (volumeProtocol < 1) volumeProtocol = 1; // mínimo 0.01 lote
+    // volumeProtocol = quantidade em 1/100 de unidade base (cents de unidade)
+    let volumeProtocol = Math.round(amount * VOLUME_DIVISOR);
     // Respeita limites do símbolo
     const minProto = Math.max(1, Math.round(market.minVolume * VOLUME_DIVISOR));
     const maxProto = Math.round(market.maxVolume * VOLUME_DIVISOR);
@@ -351,7 +349,7 @@ export class CtraderAdapter {
 
     const clientOrderId = `fa_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} ${volumeProtocol} / 100 de lote)...`);
+    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} volumeProtocol=${volumeProtocol} | ${amount} unidades | ${(volumeProtocol / (market.lotSize * 100)).toFixed(2)} lote)...`);
 
     // A cTrader Open API NÃO responde ao NewOrderReq com uma resposta
     // correlacionada por clientMsgId: a confirmação chega como
@@ -415,7 +413,7 @@ export class CtraderAdapter {
             clientOrderId,
             symbol,
             price,
-            amount: filledVolume / VOLUME_DIVISOR * 100, // filledVolume é em 1/100 lote; converte p/ unidades
+            amount: filledVolume / VOLUME_DIVISOR, // filledVolume é em cents de unidade; divide por 100 p/ unidades
             positionId: evt.position?.positionId != null ? String(evt.position.positionId) : undefined,
             side: order.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
           });
