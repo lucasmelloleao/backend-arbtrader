@@ -161,26 +161,62 @@ export interface SymbolProfile {
   minFeeProtectionUsd: number;
   minEmaDeltaRatio: number;
   minAtrRatio: number;
+  defaultTradeSize: number; // unidades base calibradas para ~$30 USD de margem (1:200)
 }
 
 export function getSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
       maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
-      trailingActivationUsd: 0.15,// Trailing ativa com +$0.15 no ouro
+      trailingActivationUsd: 0.20,// Trailing ativa com +$0.20 no ouro
       trailingDistanceUsd: 0.05,  // Distância de trailing $0.05
-      minFeeProtectionUsd: 0.05,  // Piso mínimo garantido para cobrir taxas do ouro
+      minFeeProtectionUsd: 0.08,  // Piso mínimo garantido para cobrir taxas do ouro
       minEmaDeltaRatio: 0.00008,
       minAtrRatio: 0.00010,
+      defaultTradeSize: 1,        // 0.01 lote (1 oz) ≈ $21,79 de margem
+    };
+  }
+  if (symbol.includes('EUR/USD') || symbol.includes('EURUSD')) {
+    return {
+      maxSpreadPct: 0.018,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.05 lote
+      trailingDistanceUsd: 0.10,
+      minFeeProtectionUsd: 0.15,
+      minEmaDeltaRatio: 0.00010,
+      minAtrRatio: 0.00008,
+      defaultTradeSize: 5000,     // 0.05 lote = 5.000 EUR ≈ $29,06 de margem
+    };
+  }
+  if (symbol.includes('GBP/USD') || symbol.includes('GBPUSD')) {
+    return {
+      maxSpreadPct: 0.018,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.04 lote
+      trailingDistanceUsd: 0.10,
+      minFeeProtectionUsd: 0.15,
+      minEmaDeltaRatio: 0.00010,
+      minAtrRatio: 0.00008,
+      defaultTradeSize: 4000,     // 0.04 lote = 4.000 GBP ≈ $27,08 de margem
+    };
+  }
+  if (symbol.includes('USD/JPY') || symbol.includes('USDJPY')) {
+    return {
+      maxSpreadPct: 0.018,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.06 lote
+      trailingDistanceUsd: 0.10,
+      minFeeProtectionUsd: 0.15,
+      minEmaDeltaRatio: 0.00010,
+      minAtrRatio: 0.00008,
+      defaultTradeSize: 6000,     // 0.06 lote = 6.000 USD ≈ $30,00 de margem
     };
   }
   return {
-    maxSpreadPct: 0.018,          // FX estrito (evita spread dilatado)
-    trailingActivationUsd: 0.07,  // Trailing ativa exatamente com +$0.07 USD de lucro
-    trailingDistanceUsd: 0.03,    // Distância curta de $0.03 USD para acompanhar de perto
-    minFeeProtectionUsd: 0.035,   // Piso mínimo garantido de +$0.035 USD (assegura o valor das taxas)
+    maxSpreadPct: 0.018,
+    trailingActivationUsd: 0.15,
+    trailingDistanceUsd: 0.05,
+    minFeeProtectionUsd: 0.08,
     minEmaDeltaRatio: 0.00010,
     minAtrRatio: 0.00008,
+    defaultTradeSize: 1000,
   };
 }
 
@@ -713,15 +749,16 @@ async function startScalper() {
                 ) {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                   const side = signal.action === 'BUY' ? 'buy' : 'sell';
-                  log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${tradeSize} unidades)...`);
+                  const targetTradeSize = profile.defaultTradeSize || tradeSize;
+                  log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${targetTradeSize} unidades)...`);
                   try {
-                    const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
+                    const orderRes = await adapter.createMarketOrder(sym, side, targetTradeSize);
                     const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
                     const volume = Number(orderRes?.amount || 0);
-                    const amountUsd = volume > 0 && midPrice > 0 ? amountUsdFor(sym, volume, midPrice) : tradeSize;
+                    const amountUsd = volume > 0 && midPrice > 0 ? amountUsdFor(sym, volume, midPrice) : targetTradeSize;
                     const market = (adapter as any).marketsBySymbol.get(sym);
                     const volumeProtocol = market
-                      ? Math.max(1, Math.round((tradeSize / (market.lotSize || 100000)) * 100))
+                      ? Math.max(1, Math.round((targetTradeSize / (market.lotSize || 100000)) * 100))
                       : 1;
 
                     const execPrice = orderRes?.price && Number(orderRes.price) > 0 ? Number(orderRes.price) : midPrice;
@@ -730,7 +767,7 @@ async function startScalper() {
                       positionId: String(posIdNew),
                       side: signal.action,
                       entryPrice: execPrice,
-                      amount: tradeSize,
+                      amount: targetTradeSize,
                       volumeProtocol,
                       entryTime: Date.now(),
                       peakPnlPct: 0,
