@@ -614,11 +614,18 @@ async function startScalper() {
 
                   const isGoldPair = sym.includes('XAU');
                   const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                  const unitMult = isGoldPair ? 1 : (isJpyPair && midPrice > 0 ? 1000 / midPrice : 1000);
+                  // amount = unidades base (ex: 5000 EUR, 4000 GBP, 6000 USD, 1 oz Ouro)
+                  // USD = (deltaPrice * amount) no EUR/USD e GBP/USD. Logo deltaPrice = USD / amount.
+                  const units = activePos.amount && activePos.amount > 0 ? activePos.amount : 1000;
+                  const pricePerUsd = isGoldPair
+                    ? (1 / units)
+                    : isJpyPair && midPrice > 0
+                      ? (midPrice / units)
+                      : (1 / units);
                   const trailingFloorPrice = activePos.trailingActive && activePos.trailingFloorUsd > 0
                     ? (activePos.side === 'BUY'
-                        ? activePos.entryPrice + (activePos.trailingFloorUsd / unitMult)
-                        : activePos.entryPrice - (activePos.trailingFloorUsd / unitMult))
+                        ? activePos.entryPrice + (activePos.trailingFloorUsd * pricePerUsd)
+                        : activePos.entryPrice - (activePos.trailingFloorUsd * pricePerUsd))
                     : null;
 
                   // Sincroniza o Trailing Stop Loss diretamente nos servidores da cTrader (server-side execution)
