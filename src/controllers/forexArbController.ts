@@ -115,8 +115,7 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       });
     }
 
-    const isDashboard = req.path.includes('/auth/');
-    return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
+    return res.json(formatted);
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -182,7 +181,10 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
+    let trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
+    if (!trades || trades.length === 0) {
+      trades = await ForexArbTrade.find({ type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
+    }
     const formatted = trades.map((t: any) => {
       const legs = t.legs || [];
       const primaryLeg = legs[0] || {};
@@ -223,6 +225,10 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
         };
       });
 
+      const finalRealizedPnl = (computedNetPnl != null && !isNaN(Number(computedNetPnl)))
+        ? Number(computedNetPnl)
+        : Number(t.realizedPnl || 0);
+
       return {
         _id: t._id.toString(),
         id: t._id.toString(),
@@ -235,7 +241,7 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
         volume: t.volume ?? t.legs?.[0]?.volume ?? t.legs?.[0]?.amount ?? null,
         amountUsd: t.amountUsd ?? t.legs?.[0]?.amountUsd ?? null,
         expectedProfitPct: t.expectedProfitPct,
-        realizedPnl: computedNetPnl ?? t.realizedPnl,
+        realizedPnl: finalRealizedPnl,
         commission: t.commission && t.commission > 0 ? t.commission : calcComm,
         swap: t.swap || 0,
         status: t.status,
@@ -245,8 +251,7 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
       };
     });
 
-    const isDashboard = req.path.includes('/auth/');
-    return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
+    return res.json(formatted);
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -275,8 +280,7 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
       createdAt: t.createdAt
     }));
 
-    const isDashboard = req.path.includes('/auth/');
-    return isDashboard ? res.json(formatted) : res.json({ success: true, message: 'ok', data: formatted });
+    return res.json(formatted);
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
