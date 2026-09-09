@@ -848,8 +848,8 @@ async function startScalper() {
                 // --- 2. ABERTURA DE NOVA POSIÇÃO QUANDO NÃO HÁ POSIÇÕES ABERTAS ---
                 const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                   userId: settings.userId,
-                  name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
-                  positionOpen: true
+                  'legs.symbol': sym,
+                  positionOpen: true,
                 });
 
                 if (
