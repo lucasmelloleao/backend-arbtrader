@@ -332,12 +332,15 @@ export async function updateCtraderCredentials(req: AuthenticatedRequest, res: R
 
 // --- LOGS ---
 export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
-  let processName = 'forex-scalp-executor';
+  let processName = 'forex-scalper';
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    processName = (req.query.process as string) || 'forex-scalp-executor';
+    processName = (req.query.process as string) || 'forex-scalper';
+    if (['forex-scalp-executor', 'forex-scalp-scanner', 'forex-arb', 'forex-scanner'].includes(processName)) {
+      processName = 'forex-scalper';
+    }
     const lines = (req.query.lines as string) || '150';
 
     const { exec } = require('child_process');
