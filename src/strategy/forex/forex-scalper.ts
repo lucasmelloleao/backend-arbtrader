@@ -1132,9 +1132,13 @@ async function startScalper() {
                     const volume = Number(orderRes?.amount || 0);
                     const amountUsd = volume > 0 && midPrice > 0 ? amountUsdFor(sym, volume, midPrice) : targetTradeSize;
                     const market = (adapter as any).marketsBySymbol.get(sym);
-                    const volumeProtocol = market
-                      ? Math.max(1, Math.round((targetTradeSize / (market.lotSize || 100000)) * 100))
-                      : 1;
+                    // volumeProtocol DEVE usar a mesma unidade que o createMarketOrder
+                    // envia: centésimos de unidade (amount * 100). Antes calculávamos
+                    // `(targetTradeSize/lotSize)*100`, que retornava ~5 para FX e fazia o
+                    // closePosition enviar volume 100000x menor, nunca fechando a posição.
+                    const volumeProtocol = volume > 0
+                      ? Math.round(volume * 100)
+                      : Math.round(targetTradeSize * 100);
 
                     const execPrice = orderRes?.price && Number(orderRes.price) > 0 ? Number(orderRes.price) : midPrice;
 
