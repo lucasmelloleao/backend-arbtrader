@@ -246,16 +246,16 @@ export interface SymbolProfile {
 function baseSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
-      enabled: false, // Ouro desativado: perdas grandes concentradas nesse par.
-      maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
-      trailingActivationUsd: 0.60,// Trailing ativa com +$0.60 no ouro (alvo ≥ 2x o custo)
-      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20 (deixa o vencedor correr)
-      minFeeProtectionUsd: 0.15,  // Piso mínimo garantido para cobrir taxas do ouro
-      minEmaDeltaRatio: 0.00002,
-      minAtrRatio: 0.00002,
+      enabled: true,
+      maxSpreadPct: 0.045,        // Ouro aceita spread até 0.045%
+      trailingActivationUsd: 0.50,// Trailing ativa com +$0.50 no ouro
+      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20
+      minFeeProtectionUsd: 0.15,  
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
       takeProfitPct: 0.30,
-      stopLossPct: 0.12,
-      requireM5Trend: true,
+      stopLossPct: 0.15,
+      requireM5Trend: false,
     };
   }
   if (symbol.includes('EUR/USD') || symbol.includes('EURUSD')) {

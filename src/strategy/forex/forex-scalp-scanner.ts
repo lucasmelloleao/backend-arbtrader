@@ -232,10 +232,10 @@ export function analyzeScalpOpportunity(
   const priceHistoryList = priceHistory.get(symbol)?.map(p => p.price) || [currentPrice];
   
   // 1. Modelagem de Fricção e Microestrutura (Custo Total C_t e Fator de Cobertura k)
-  const expectedTargetPips = 6.0;
+  const expectedTargetPips = 5.0;
   const pipSize = symbol.includes('JPY') ? 0.01 : (symbol.includes('XAU') ? 0.1 : 0.0001);
-  const minCoverageK = symbol.includes('XAU') ? 1.3 : 1.4; // Afrouxado para 1.3x / 1.4x
-  const friction = calculateFrictionCost(bid, ask, expectedTargetPips, pipSize, 100000, 6.0, 0.2, minCoverageK);
+  const minCoverageK = symbol.includes('XAU') ? 1.1 : 1.2; // Afrouxado para alta frequência
+  const friction = calculateFrictionCost(bid, ask, expectedTargetPips, pipSize, 100000, 5.0, 0.2, minCoverageK);
 
   if (!friction.isViable) {
     return {
@@ -253,18 +253,18 @@ export function analyzeScalpOpportunity(
     microPriceStr = ` | OBI: ${micro.obi.toFixed(2)} MicroP: ${micro.microPrice.toFixed(5)}`;
   }
 
-  // 2. Cooldown Flexibilizado para 2 Minutos (120.000ms)
+  // 2. Cooldown Reduzido para 45 Segundos (45.000ms)
   const lastTime = lastClosedTradeTime.get(symbol) || 0;
-  if (Date.now() - lastTime < 120000) {
-    const restSec = Math.ceil((120000 - (Date.now() - lastTime)) / 1000);
-    return { symbol, action: 'NEUTRAL', reason: `Em cooldown de 2 min após fechamento (${restSec}s restantes)`, price: currentPrice };
+  if (Date.now() - lastTime < 45000) {
+    const restSec = Math.ceil((45000 - (Date.now() - lastTime)) / 1000);
+    return { symbol, action: 'NEUTRAL', reason: `Em cooldown após fechamento (${restSec}s restantes)`, price: currentPrice };
   }
 
   const candles = updateCandles(symbol, currentPrice);
   const closes = candles.map(c => c.close);
 
-  if (candles.length < 10) {
-    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/10)`, price: currentPrice };
+  if (candles.length < 5) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/5)`, price: currentPrice };
   }
 
   // 3. Análise de Série Temporal Tick & Log-Returns
@@ -275,13 +275,13 @@ export function analyzeScalpOpportunity(
   const gkVol = calculateGarmanKlassVolatility(candles);
   
   const atr = calculateATR(candles, 14);
-  const minAtrThreshold = currentPrice * 0.00005; // Afrouxado para capturar micro-movimentos
+  const minAtrThreshold = currentPrice * 0.00002;
   if (atr < minAtrThreshold) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade/consolidação rasa (ATR=${atr.toFixed(5)})`, price: currentPrice };
   }
 
   const tickVolumes = candles.map(c => c.close > 0 ? 1 : 0);
-  const lastPriceDeltaPips = Math.abs(closes[closes.length - 1] - closes[closes.length - 2]) / pipSize;
+  const lastPriceDeltaPips = Math.abs(closes[closes.length - 1] - (closes[closes.length - 2] || closes[closes.length - 1])) / pipSize;
   const absorption = detectVolumeAbsorption(tickVolumes, lastPriceDeltaPips);
 
   const adx = calculateADX(candles, 14);
@@ -298,7 +298,7 @@ export function analyzeScalpOpportunity(
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
   const emaDelta = Math.abs(emaFast - emaSlow);
-  const minEmaDelta = currentPrice * 0.00002; // Calibrado: 0.2 pips de distância mínima
+  const minEmaDelta = currentPrice * 0.00001; 
   if (emaDelta < minEmaDelta) {
     return { symbol, action: 'NEUTRAL', reason: `Cruzamento raso (Delta EMA=${emaDelta.toFixed(6)})`, price: currentPrice };
   }
@@ -309,20 +309,20 @@ export function analyzeScalpOpportunity(
     const ouHalfLife = calculateOrnsteinUhlenbeckHalfLife(priceHistoryList);
     const ouStr = ouHalfLife.isValid ? ` | OU t1/2: ${ouHalfLife.halfLifeSeconds}s` : '';
 
-    // Z-Score afrouxado para 1.35 (82% de confiança) e faixas de RSI flexíveis (48 / 52)
-    if (zScore < -1.35 && rsi < 48) {
+    // Z-Score afrouxado para 1.10 e faixas de RSI flexíveis (46 / 54)
+    if (zScore < -1.10 && rsi < 50) {
       return {
         symbol,
         action: 'BUY',
-        reason: `🎯 QUANT MEAN-REVERSION BUY! Z-Score:${zScore.toFixed(2)} < -1.35, Hurst:${hurst.toFixed(2)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        reason: `🎯 QUANT MEAN-REVERSION BUY! Z-Score:${zScore.toFixed(2)} < -1.10, Hurst:${hurst.toFixed(2)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
         price: currentPrice
       };
     }
-    if (zScore > 1.35 && rsi > 52) {
+    if (zScore > 1.10 && rsi > 50) {
       return {
         symbol,
         action: 'SELL',
-        reason: `🎯 QUANT MEAN-REVERSION SELL! Z-Score:${zScore.toFixed(2)} > +1.35, Hurst:${hurst.toFixed(2)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        reason: `🎯 QUANT MEAN-REVERSION SELL! Z-Score:${zScore.toFixed(2)} > +1.10, Hurst:${hurst.toFixed(2)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
         price: currentPrice
       };
     }
