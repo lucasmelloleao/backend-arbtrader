@@ -399,7 +399,7 @@ export function analyzeScalpOpportunity(
   const atr = calculateATR(candlesM1, 14);
 
   // Filtro de Volatilidade Mínima (ATR - apenas descarta mercado totalmente parado)
-  if (atr > 0 && atr < currentPrice * effectiveProfile.minAtrRatio) {
+  if (atr > 0 && atr < currentPrice * effectiveProfile.maxSpreadPct) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
   }
 
@@ -414,14 +414,20 @@ export function analyzeScalpOpportunity(
   const isBearishTrend = emaFast < emaSlow && currentPrice <= emaSlow * 1.0001;
   const emaDelta = Math.abs(emaFast - emaSlow);
 
+  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 38 && rsi <= 68;
+  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 32 && rsi <= 62;
+
   // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável + Tendência M5 favorável)
-  if ((crossoverBuy || isBullishTrend) && rsi >= 38 && rsi <= 68) {
+  if (buyConditions) {
     if (m5Trend === 'BEARISH') {
+      log.info(`🚫 [${symbol}] Compra BLOQUEADA: M5 em baixa | RSI:${rsi.toFixed(1)} M5:${m5Trend} Delta:${emaDelta.toFixed(5)} spread:${spreadPct.toFixed(4)}% atr:${atr.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 em baixa`, price: currentPrice };
     }
     if (effectiveProfile.requireM5Trend && m5Trend !== 'BULLISH') {
+      log.info(`🚫 [${symbol}] Compra BLOQUEADA: M5 não confirmada (${m5Trend}) | RSI:${rsi.toFixed(1)} Delta:${emaDelta.toFixed(5)} spread:${spreadPct.toFixed(4)}% atr:${atr.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 não confirmada (${m5Trend})`, price: currentPrice };
     }
+    log.info(`✅ [${symbol}] SINAL BUY! EMA5>EMA15 Delta:${emaDelta.toFixed(5)} RSI:${rsi.toFixed(1)} M5:${m5Trend}`);
     return {
       symbol,
       action: 'BUY',
@@ -431,13 +437,16 @@ export function analyzeScalpOpportunity(
   }
 
   // 6. Confluência SELL (Cruzamento M1 ou Momentum de Baixa + RSI saudável + Tendência M5 favorável)
-  if ((crossoverSell || isBearishTrend) && rsi >= 32 && rsi <= 62) {
+  if (sellConditions) {
     if (m5Trend === 'BULLISH') {
+      log.info(`🚫 [${symbol}] Venda BLOQUEADA: M5 em alta | RSI:${rsi.toFixed(1)} M5:${m5Trend} Delta:${emaDelta.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 em alta`, price: currentPrice };
     }
     if (effectiveProfile.requireM5Trend && m5Trend !== 'BEARISH') {
+      log.info(`🚫 [${symbol}] Venda BLOQUEADA: M5 não confirmada (${m5Trend}) | RSI:${rsi.toFixed(1)} Delta:${emaDelta.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 não confirmada (${m5Trend})`, price: currentPrice };
     }
+    log.info(`✅ [${symbol}] SINAL SELL! EMA5<EMA15 Delta:${emaDelta.toFixed(5)} RSI:${rsi.toFixed(1)} M5:${m5Trend}`);
     return {
       symbol,
       action: 'SELL',
@@ -445,6 +454,14 @@ export function analyzeScalpOpportunity(
       price: currentPrice
     };
   }
+
+  // Nenhum dos lados teve confluência M1+RSI — loga o motivo
+  const m1Reason = (!crossoverBuy && !isBullishTrend && !crossoverSell && !isBearishTrend)
+    ? 'sem cruzamento/momentum M1'
+    : (rsi < 32 || rsi > 68)
+      ? `RSI fora da faixa (${rsi.toFixed(1)})`
+      : `RSI borderline`;
+  log.info(`⏳ [${symbol}] NEUTRAL: ${m1Reason} | RSI:${rsi.toFixed(1)} M5:${m5Trend} Delta:${emaDelta.toFixed(5)} spread:${spreadPct.toFixed(4)}% atr:${atr.toFixed(5)} candlesM1:${candlesM1.length}`);
 
   return { symbol, action: 'NEUTRAL', reason: 'Sem confluência de entrada', price: currentPrice };
 }
