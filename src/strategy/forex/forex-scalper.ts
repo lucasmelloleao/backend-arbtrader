@@ -412,6 +412,53 @@ export function decidePositionClose(input: {
   };
 }
 
+// Loop leve e independente: apenas mantém o preço atual das posições abertas
+// atualizado no MongoDB com alta frequência, sem depender do ciclo pesado de
+// trading (reconcile, PnL, sinais). Assim o "Preço Atual" do frontend se move
+// de forma fluida mesmo quando o ciclo principal está ocupado.
+async function refreshOpenPricesLoop() {
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+  let refreshing = false;
+  while (true) {
+    try {
+      if (!refreshing) {
+        refreshing = true;
+        try {
+          const settings = await ForexArbSettings.findOne().lean();
+          if (settings) {
+            const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
+            const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+            if (ctraderKey) {
+              const adapter = await getSharedCtraderAdapter(ctraderKey);
+              const tickers = await adapter.fetchTickers(symbols);
+              for (const sym of symbols) {
+                const t = tickers[sym];
+                if (!t || !t.bid || !t.ask) continue;
+                const midPrice = (t.bid + t.ask) / 2;
+                await ForexArbStrategy.updateMany(
+                  { userId: settings.userId, positionOpen: true, 'legs.symbol': sym },
+                  {
+                    $set: {
+                      currentPrice: midPrice,
+                      [`lastLegPrices.${sym}`]: midPrice,
+                      'legs.0.currentPrice': midPrice,
+                    },
+                  },
+                );
+              }
+            }
+          }
+        } finally {
+          refreshing = false;
+        }
+      }
+    } catch {
+      // erro transitório: segue no próximo tick
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
@@ -419,6 +466,9 @@ async function startScalper() {
   log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+
+  // Inicia a atualização frequente de preço em paralelo ao loop principal.
+  refreshOpenPricesLoop().catch((e) => log.error('❌ Erro no loop de preço:', e.message));
 
   // Atualização retroativa para a posição 240794176 (lucro real de 3.07 USD) e 240794915 (lucro real de 0.77 USD)
   try {
