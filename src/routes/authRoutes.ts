@@ -82,7 +82,8 @@ import {
   closeForexStrategy,
   voidCloseForexStrategy,
   closeAllForexStrategies,
-  getForexLogs
+  getForexLogs,
+  getForexLivePrices
 } from '../controllers/forexArbController';
 import {
   getPredictionStrategies,
@@ -158,6 +159,7 @@ router.post('/forex-arb/close', authMiddleware as any, closeForexStrategy as any
 router.post('/forex-arb/void-close', authMiddleware as any, voidCloseForexStrategy as any);
 router.post('/forex-arb/close-all', authMiddleware as any, closeAllForexStrategies as any);
 router.get('/forex-arb/logs', authMiddleware as any, getForexLogs as any);
+router.get('/forex-arb/live-prices', authMiddleware as any, getForexLivePrices as any);
 
 router.get('/bot-status', authMiddleware as any, getBotStatus as any);
 router.get('/auth/bot-status', authMiddleware as any, getBotStatus as any);

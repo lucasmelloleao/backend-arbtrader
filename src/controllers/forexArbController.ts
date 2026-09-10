@@ -698,3 +698,37 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
   }
 }
 
+// --- LIVE PRICES (read-only, sem gravação no banco) ---
+// Serve os preços atuais dos pares monitorados direto do cache de spots da
+// cTrader (WebSocket, em memória) para o frontend animar o "Preço Atual" sem
+// que o robô precise persistir ticker no MongoDB a cada segundo.
+export async function getForexLivePrices(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
+
+    const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+    const keys = await ExchangeKey.find({ userId, active: true }).lean();
+    const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+    if (!ctraderKey) {
+      return res.json({ success: true, message: 'ok', data: {} });
+    }
+
+    const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
+    const adapter = await getSharedCtraderAdapter(ctraderKey);
+    const tickers = await adapter.fetchTickers(symbols);
+
+    const data: Record<string, { bid: number; ask: number; mid: number }> = {};
+    for (const sym of symbols) {
+      const t = tickers[sym];
+      if (t && t.bid > 0 && t.ask > 0) {
+        data[sym] = { bid: t.bid, ask: t.ask, mid: (t.bid + t.ask) / 2 };
+      }
+    }
+
+    return res.json({ success: true, message: 'ok', data });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
