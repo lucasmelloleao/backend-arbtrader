@@ -337,7 +337,10 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
       allowedExchanges: settings.allowedExchanges || [],
       takeProfitPct: settings.takeProfitPct ?? 0.10,
       stopLossPct: settings.stopLossPct ?? 0.10,
-      trailingStopPct: settings.trailingStopPct ?? 0.01
+      trailingStopPct: settings.trailingStopPct ?? 0.01,
+      symbolProfiles: settings.symbolProfiles
+        ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
+        : {}
     };
 
     const isDashboard = req.path.includes('/auth/');
@@ -354,6 +357,10 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
 
     const body = req.body;
     if (body.autoExecute === undefined) body.autoExecute = true;
+    // `symbolProfiles` chega como objeto; converte para Map para o Mongoose.
+    if (body.symbolProfiles !== undefined) {
+      body.symbolProfiles = new Map(Object.entries(body.symbolProfiles || {}));
+    }
     const settings = await ForexArbSettings.findOneAndUpdate(
       { userId },
       { $set: body },
@@ -375,7 +382,13 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
       autoExecute: settings.autoExecute,
       simpleEnabled: settings.simpleEnabled,
       triangularEnabled: settings.triangularEnabled,
-      allowedExchanges: settings.allowedExchanges || []
+      allowedExchanges: settings.allowedExchanges || [],
+      takeProfitPct: settings.takeProfitPct ?? 0.10,
+      stopLossPct: settings.stopLossPct ?? 0.10,
+      trailingStopPct: settings.trailingStopPct ?? 0.01,
+      symbolProfiles: settings.symbolProfiles
+        ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
+        : {}
     };
 
     const isDashboard = req.path.includes('/auth/');

@@ -46,6 +46,27 @@ const M5_PERIOD_MS = 300_000;
 // Trava de tempo mínimo em posição antes de autorizar 'signal_reversal' (60 segundos)
 export const MIN_HOLD_TIME_MS = 60_000;
 
+// Acumulador de PnL realizado no dia (freio de perda diária). Recalculado a
+// partir do banco na inicialização e incrementado a cada fechamento.
+let dailyRealizedPnl = 0;
+let dailyPnlDayKey = new Date().toISOString().slice(0, 10);
+
+async function syncDailyRealizedPnl(userId: string) {
+  const dayKey = new Date().toISOString().slice(0, 10);
+  if (dayKey !== dailyPnlDayKey) {
+    dailyRealizedPnl = 0;
+    dailyPnlDayKey = dayKey;
+  }
+  const start = new Date(`${dayKey}T00:00:00.000Z`);
+  const closedToday = await ForexArbTrade.find({
+    userId,
+    type: 'close',
+    createdAt: { $gte: start },
+  }).lean();
+  dailyRealizedPnl = closedToday.reduce((acc, t: any) => acc + Number(t.realizedPnl || 0), 0);
+  return dailyRealizedPnl;
+}
+
 export function updateCandlesM1(symbol: string, price: number): { history: Candle[]; closed: boolean } {
   const now = Date.now();
   const bucket = Math.floor(now / M1_PERIOD_MS) * M1_PERIOD_MS;
@@ -205,6 +226,7 @@ export function calculateATR(candles: Candle[], period = 14): number {
 
 // ─── PERFIL E CALIBRAÇÃO POR ATIVO (AJUSTE 5) ─────────────────────────────────
 export interface SymbolProfile {
+  enabled: boolean;
   maxSpreadPct: number;
   trailingActivationUsd: number;
   trailingDistanceUsd: number;
@@ -212,54 +234,75 @@ export interface SymbolProfile {
   minEmaDeltaRatio: number;
   minAtrRatio: number;
   defaultTradeSize: number; // unidades base calibradas para ~$30 USD de margem (1:200)
+  takeProfitPct: number;
+  stopLossPct: number;
+  requireM5Trend: boolean;
 }
 
-export function getSymbolProfile(symbol: string): SymbolProfile {
+/** Perfil base (defaults) por símbolo, antes de aplicar overrides do banco. */
+function baseSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
+      enabled: true,
       maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
-      trailingActivationUsd: 0.20,// Trailing ativa com +$0.20 no ouro
-      trailingDistanceUsd: 0.05,  // Distância de trailing $0.05
-      minFeeProtectionUsd: 0.08,  // Piso mínimo garantido para cobrir taxas do ouro
+      trailingActivationUsd: 0.60,// Trailing ativa com +$0.60 no ouro (alvo ≥ 2x o custo)
+      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20 (deixa o vencedor correr)
+      minFeeProtectionUsd: 0.15,  // Piso mínimo garantido para cobrir taxas do ouro
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
       defaultTradeSize: 1,        // 0.01 lote (1 oz) ≈ $21,79 de margem
+      takeProfitPct: 0.30,
+      stopLossPct: 0.12,
+      requireM5Trend: true,
     };
   }
   if (symbol.includes('EUR/USD') || symbol.includes('EURUSD')) {
     return {
+      enabled: true,
       maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.05 lote
-      trailingDistanceUsd: 0.10,
-      minFeeProtectionUsd: 0.15,
+      trailingActivationUsd: 0.35, // Ativação calibrada para 0.05 lote
+      trailingDistanceUsd: 0.15,
+      minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
       defaultTradeSize: 5000,     // 0.05 lote = 5.000 EUR ≈ $29,06 de margem
+      takeProfitPct: 0.15,
+      stopLossPct: 0.08,
+      requireM5Trend: true,
     };
   }
   if (symbol.includes('GBP/USD') || symbol.includes('GBPUSD')) {
     return {
+      enabled: true,
       maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.04 lote
-      trailingDistanceUsd: 0.10,
-      minFeeProtectionUsd: 0.15,
+      trailingActivationUsd: 0.35, // Ativação calibrada para 0.04 lote
+      trailingDistanceUsd: 0.15,
+      minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
       defaultTradeSize: 4000,     // 0.04 lote = 4.000 GBP ≈ $27,08 de margem
+      takeProfitPct: 0.15,
+      stopLossPct: 0.08,
+      requireM5Trend: true,
     };
   }
   if (symbol.includes('USD/JPY') || symbol.includes('USDJPY')) {
     return {
+      enabled: true,
       maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.06 lote
-      trailingDistanceUsd: 0.10,
-      minFeeProtectionUsd: 0.15,
+      trailingActivationUsd: 0.35, // Ativação calibrada para 0.06 lote
+      trailingDistanceUsd: 0.15,
+      minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
       defaultTradeSize: 6000,     // 0.06 lote = 6.000 USD ≈ $30,00 de margem
+      takeProfitPct: 0.15,
+      stopLossPct: 0.08,
+      requireM5Trend: true,
     };
   }
   return {
+    enabled: true,
     maxSpreadPct: 0.018,
     trailingActivationUsd: 0.15,
     trailingDistanceUsd: 0.05,
@@ -267,22 +310,66 @@ export function getSymbolProfile(symbol: string): SymbolProfile {
     minEmaDeltaRatio: 0.00002,
     minAtrRatio: 0.00002,
     defaultTradeSize: 1000,
+    takeProfitPct: 0.15,
+    stopLossPct: 0.08,
+    requireM5Trend: true,
   };
+}
+
+/**
+ * Resolve o perfil efetivo de um símbolo, mesclando os defaults com o
+ * `symbolProfiles` salvo no settings (override por par). `overrides` é um objeto
+ * parcial: campos ausentes herdam o valor base.
+ */
+export function getSymbolProfile(
+  symbol: string,
+  overrides?: Partial<SymbolProfile> | null,
+): SymbolProfile {
+  const base = baseSymbolProfile(symbol);
+  if (!overrides) return base;
+  return {
+    enabled: overrides.enabled ?? base.enabled,
+    maxSpreadPct: overrides.maxSpreadPct ?? base.maxSpreadPct,
+    trailingActivationUsd: overrides.trailingActivationUsd ?? base.trailingActivationUsd,
+    trailingDistanceUsd: overrides.trailingDistanceUsd ?? base.trailingDistanceUsd,
+    minFeeProtectionUsd: overrides.minFeeProtectionUsd ?? base.minFeeProtectionUsd,
+    minEmaDeltaRatio: overrides.minEmaDeltaRatio ?? base.minEmaDeltaRatio,
+    minAtrRatio: overrides.minAtrRatio ?? base.minAtrRatio,
+    defaultTradeSize: overrides.defaultTradeSize ?? base.defaultTradeSize,
+    takeProfitPct: overrides.takeProfitPct ?? base.takeProfitPct,
+    stopLossPct: overrides.stopLossPct ?? base.stopLossPct,
+    requireM5Trend: overrides.requireM5Trend ?? base.requireM5Trend,
+  };
+}
+
+/** Extrai o override por par a partir do `settings.symbolProfiles` (Map ou POJO). */
+export function getSymbolProfileOverride(settings: any, symbol: string): Partial<SymbolProfile> | null {
+  const profiles = settings?.symbolProfiles;
+  if (!profiles) return null;
+  const value = typeof profiles.get === 'function'
+    ? profiles.get(symbol)
+    : (profiles[symbol] ?? profiles[symbol.replace('/', '')]);
+  if (!value) return null;
+  // Converte subdocumento Mongoose/Map para objeto plano, se necessário.
+  if (typeof value.toObject === 'function') return value.toObject();
+  if (value._doc) return { ...value._doc };
+  return value;
 }
 
 // ─── ANÁLISE DE OPORTUNIDADES (AJUSTES 1, 4 E 5) ──────────────────────────────
 export function analyzeScalpOpportunity(
   symbol: string,
   bid: number,
-  ask: number
+  ask: number,
+  profile?: SymbolProfile
 ): ScalpSignal {
   const currentPrice = (bid + ask) / 2;
-  const profile = getSymbolProfile(symbol);
+  const effectiveProfile = profile ?? getSymbolProfile(symbol);
 
   // 1. Filtro Estrito de Spread
   const spreadPct = ((ask - bid) / currentPrice) * 100;
-  if (spreadPct > profile.maxSpreadPct) {
-    return { symbol, action: 'NEUTRAL', reason: `Spread elevado (${spreadPct.toFixed(4)}% > ${profile.maxSpreadPct}%)`, price: currentPrice };
+  if (spreadPct > effectiveProfile.maxSpreadPct) {
+    return { symbol, action: 'NEUTRAL', reason: `Spread elevado (${spreadPct.toFixed(4)}% > ${effectiveProfile.maxSpreadPct}%)`, price: currentPrice };
   }
 
   // 2. Atualização de Velas M1 e M5
@@ -315,7 +402,7 @@ export function analyzeScalpOpportunity(
   const atr = calculateATR(candlesM1, 14);
 
   // Filtro de Volatilidade Mínima (ATR - apenas descarta mercado totalmente parado)
-  if (atr > 0 && atr < currentPrice * profile.minAtrRatio) {
+  if (atr > 0 && atr < currentPrice * effectiveProfile.minAtrRatio) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
   }
 
@@ -335,6 +422,9 @@ export function analyzeScalpOpportunity(
     if (m5Trend === 'BEARISH') {
       return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 em baixa`, price: currentPrice };
     }
+    if (effectiveProfile.requireM5Trend && m5Trend !== 'BULLISH') {
+      return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 não confirmada (${m5Trend})`, price: currentPrice };
+    }
     return {
       symbol,
       action: 'BUY',
@@ -347,6 +437,9 @@ export function analyzeScalpOpportunity(
   if ((crossoverSell || isBearishTrend) && rsi >= 32 && rsi <= 62) {
     if (m5Trend === 'BULLISH') {
       return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 em alta`, price: currentPrice };
+    }
+    if (effectiveProfile.requireM5Trend && m5Trend !== 'BEARISH') {
+      return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 não confirmada (${m5Trend})`, price: currentPrice };
     }
     return {
       symbol,
@@ -416,6 +509,11 @@ async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
   await syncClosedTradeCooldowns();
+
+  // Sincroniza o PnL diário realizado antes de começar a operar (freio de perda).
+  const seedSettings = await ForexArbSettings.findOne().lean();
+  if (seedSettings) await syncDailyRealizedPnl(String(seedSettings.userId)).catch(() => {});
+
   log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
@@ -669,7 +767,7 @@ async function startScalper() {
               const ticker = tickers[sym];
               if (ticker && ticker.bid && ticker.ask) {
                 const midPrice = (ticker.bid + ticker.ask) / 2;
-                const profile = getSymbolProfile(sym);
+                const profile = getSymbolProfile(sym, getSymbolProfileOverride(settings, sym));
 
                 // Atualiza o preço atual de mercado em tempo real em todas as estratégias abertas deste par no MongoDB
                 ForexArbStrategy.updateMany(
@@ -683,7 +781,9 @@ async function startScalper() {
                   }
                 ).catch(() => {});
 
-                const signal = analyzeScalpOpportunity(sym, ticker.bid, ticker.ask);
+                const signal = profile.enabled
+                  ? analyzeScalpOpportunity(sym, ticker.bid, ticker.ask, profile)
+                  : { symbol: sym, action: 'NEUTRAL' as const, reason: 'Par desativado nas configurações', price: midPrice };
                 const isM1Closed = justClosedM1Map.get(sym) || false;
 
                 // --- 1. GESTÃO DE SAÍDA (TP, SL, TRAILING E REVERSÃO FILTRADA) ---
@@ -835,8 +935,8 @@ async function startScalper() {
                     }
                   ).catch(() => {});
 
-                  const takeProfitTarget = settings.takeProfitPct ?? 0.20;
-                  const stopLossTarget = Math.abs(settings.stopLossPct ?? 0.10);
+                  const takeProfitTarget = profile.takeProfitPct ?? settings.takeProfitPct ?? 0.20;
+                  const stopLossTarget = Math.abs(profile.stopLossPct ?? settings.stopLossPct ?? 0.10);
 
                   const atingiuTP = pnlPct >= takeProfitTarget;
                   const atingiuSL = pnlPct <= -stopLossTarget;
@@ -916,7 +1016,10 @@ async function startScalper() {
                       const closeAmountUsd = closeVolume > 0 && closePrice > 0 ? amountUsdFor(sym, closeVolume, closePrice) : null;
                       activePositions.delete(sym);
                       recordClosedTrade(sym);
-                      log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real cTrader: $${finalPnlUsd.toFixed(2)} | Preço Fechamento: ${closePrice} | Motivo: ${reasonType}`);
+
+                      // Atualiza o acumulador diário de PnL (freio de perda).
+                      dailyRealizedPnl += Number(finalPnlUsd || 0);
+                      log.info(`✅ [POSIÇÃO ENCERRADA] ${sym}! PnL Real cTrader: $${finalPnlUsd.toFixed(2)} | PnL diário: $${dailyRealizedPnl.toFixed(2)} | Preço Fechamento: ${closePrice} | Motivo: ${reasonType}`);
 
                       try {
                         const existingStrat = await ForexArbStrategy.findOne({
@@ -976,9 +1079,13 @@ async function startScalper() {
                   positionOpen: true,
                 });
 
+                const maxDailyLoss = Math.abs(settings.maxDailyLoss ?? 100);
+                const dailyLossAlcancado = dailyRealizedPnl <= -maxDailyLoss;
+
                 if (
                   settings.isScanningEnabled &&
                   settings.autoExecute &&
+                  !dailyLossAlcancado &&
                   !activePositions.has(sym) &&
                   !temPosicaoAbertaNoBanco &&
                   signal.action !== 'NEUTRAL'
@@ -1017,8 +1124,8 @@ async function startScalper() {
                     const isGoldPair = sym.includes('XAU');
                     const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
                     const digits = market?.digits ?? (isGoldPair ? 2 : (isJpyPair ? 3 : 5));
-                    const stopLossPct = Math.abs(settings.stopLossPct ?? 0.10);
-                    const takeProfitPct = settings.takeProfitPct ?? 0.20;
+                    const stopLossPct = Math.abs(profile.stopLossPct ?? settings.stopLossPct ?? 0.10);
+                    const takeProfitPct = profile.takeProfitPct ?? settings.takeProfitPct ?? 0.20;
 
                     const initialSL = signal.action === 'BUY'
                       ? execPrice * (1 - stopLossPct / 100)

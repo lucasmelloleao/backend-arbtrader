@@ -1,5 +1,19 @@
 import mongoose from 'mongoose';
 
+const ForexSymbolProfileSchema = new mongoose.Schema({
+  enabled: { type: Boolean, default: true },
+  maxSpreadPct: { type: Number },
+  trailingActivationUsd: { type: Number },
+  trailingDistanceUsd: { type: Number },
+  minFeeProtectionUsd: { type: Number },
+  minEmaDeltaRatio: { type: Number },
+  minAtrRatio: { type: Number },
+  defaultTradeSize: { type: Number },
+  takeProfitPct: { type: Number },
+  stopLossPct: { type: Number },
+  requireM5Trend: { type: Boolean, default: true },
+}, { _id: false });
+
 const ForexArbSettingsSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
   isScanningEnabled: { type: Boolean, default: false },
@@ -17,6 +31,7 @@ const ForexArbSettingsSchema = new mongoose.Schema({
   takeProfitPct: { type: Number, default: 0.10 },
   stopLossPct: { type: Number, default: 0.10 },
   trailingStopPct: { type: Number, default: 0.01 },
+  symbolProfiles: { type: Map, of: ForexSymbolProfileSchema, default: {} },
 }, { timestamps: true });
 
 export default mongoose.models.ForexArbSettings || mongoose.model('ForexArbSettings', ForexArbSettingsSchema);
