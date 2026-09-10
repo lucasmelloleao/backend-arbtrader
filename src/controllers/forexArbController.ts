@@ -183,12 +183,12 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    let trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
+    let trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100).lean();
     if (!trades || trades.length === 0) {
-      trades = await ForexArbTrade.find({ type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100);
+      trades = await ForexArbTrade.find({ type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100).lean();
     }
     if (!trades || trades.length === 0) {
-      trades = await ForexArbTrade.find({}).sort({ createdAt: -1 }).limit(100);
+      trades = await ForexArbTrade.find({}).sort({ createdAt: -1 }).limit(100).lean();
     }
     const formatted = trades.map((t: any) => {
       const legs = t.legs || [];
@@ -271,7 +271,7 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
       userId,
       type: 'opportunity_found',
       status: 'detected'
-    }).sort({ createdAt: -1 }).limit(50);
+    }).sort({ createdAt: -1 }).limit(50).lean();
 
     const formatted = opportunities.map((t: any) => ({
       _id: t._id.toString(),
