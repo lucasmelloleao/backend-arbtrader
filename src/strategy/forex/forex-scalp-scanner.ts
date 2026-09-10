@@ -393,6 +393,18 @@ async function startScalpScanner() {
                     positionOpen: true
                   });
 
+                  // Expira oportunidades pendentes antigas (> 60 segundos) para não travar novos sinais
+                  await ForexArbTrade.updateMany(
+                    {
+                      userId: settings.userId,
+                      type: 'opportunity_found',
+                      status: 'detected',
+                      'legs.symbol': sym,
+                      createdAt: { $lt: new Date(Date.now() - 60000) }
+                    },
+                    { $set: { status: 'expired', reason: 'Sinal expirado (> 60s sem execução)' } }
+                  );
+
                   const temOportunidadePendente = await ForexArbTrade.exists({
                     userId: settings.userId,
                     type: 'opportunity_found',

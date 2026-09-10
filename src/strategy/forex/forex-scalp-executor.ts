@@ -100,6 +100,15 @@ async function startScalpExecutor() {
             }).sort({ createdAt: 1 });
 
             if (pendingOpp && pendingOpp.legs && pendingOpp.legs.length > 0) {
+              // Descarta sinal defasado no executor se tiver mais de 60 segundos
+              const idadeMs = Date.now() - new Date(pendingOpp.createdAt).getTime();
+              if (idadeMs > 60000) {
+                pendingOpp.status = 'expired';
+                pendingOpp.reason = 'Sinal descartado pelo executor (> 60s defasado)';
+                await pendingOpp.save();
+                continue;
+              }
+
               const leg = pendingOpp.legs[0];
               const sym = leg.symbol;
               const side = leg.side as 'buy' | 'sell';
