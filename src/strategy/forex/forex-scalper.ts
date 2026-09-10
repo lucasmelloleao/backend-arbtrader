@@ -835,9 +835,13 @@ async function startScalper() {
                           : priceDiff * rawUnits)
                     : (pnlPct / 100) * tradeSize;
 
-                  const pnlUsd = Number.isFinite(livePnlUsd)
-                    ? Number(livePnlUsd)
-                    : (rawPnlUsd - estimatedComm);
+                  // A decisão de saída usa o PnL calculado do ticker (bid/ask em
+                  // tempo real), NÃO o netPnl da cTrader — que chega via duas
+                  // requisições sequenciais e pode atrasar o trailing/SL. O netPnl
+                  // da cTrader fica apenas como referência para o registro.
+                  const pnlUsd = Number.isFinite(rawPnlUsd)
+                    ? (rawPnlUsd - estimatedComm)
+                    : (Number.isFinite(livePnlUsd) ? Number(livePnlUsd) : 0);
 
                   // Atualiza picos de ganho
                   if (pnlPct > activePos.peakPnlPct) activePos.peakPnlPct = pnlPct;
