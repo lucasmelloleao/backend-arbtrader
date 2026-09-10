@@ -8,6 +8,18 @@ import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
+import {
+  calculateFrictionCost,
+  calculateMicroPrice,
+  calculateLogReturns,
+  calculateAutocorrelationRho1,
+  calculateDynamicZScore,
+  calculateHurstExponent,
+  calculateGarmanKlassVolatility,
+  detectVolumeAbsorption,
+  checkMarketSessionLiquidity,
+  calculateOrnsteinUhlenbeckHalfLife
+} from './quant-scalp-engine';
 
 const getTs = () => `[${new Date().toISOString()}]`;
 const log = {
@@ -204,17 +216,43 @@ function calculateADX(candles: Candle[], period: number = 14): number {
 export function analyzeScalpOpportunity(
   symbol: string,
   bid: number,
-  ask: number
+  ask: number,
+  volumeBid: number = 0,
+  volumeAsk: number = 0
 ): ScalpSignal {
   const currentPrice = (bid + ask) / 2;
-  
-  // 1. Filtro de Spread Máximo (Máximo 0.020%)
-  const spreadPct = ((ask - bid) / currentPrice) * 100;
-  if (spreadPct > 0.020) {
-    return { symbol, action: 'NEUTRAL', reason: `Spread elevado (${spreadPct.toFixed(4)}% > 0.020%)`, price: currentPrice };
+  recordPrice(symbol, currentPrice);
+
+  // 0. Filtro de Liquidez de Sessão e Rollover
+  const sessionCheck = checkMarketSessionLiquidity();
+  if (sessionCheck.isLowLiquidity) {
+    return { symbol, action: 'NEUTRAL', reason: `Filtro de Sessão / Liquidez Reduzida (${sessionCheck.reason})`, price: currentPrice };
   }
 
-  // 2. Cooldown Estrito de 5 Minutos (300.000ms) após fechar trade no mesmo par
+  const priceHistoryList = priceHistory.get(symbol)?.map(p => p.price) || [currentPrice];
+  
+  // 1. Modelagem de Fricção e Microestrutura (Custo Total C_t e Fator de Cobertura k)
+  const expectedTargetPips = 6.0; // Alvo padrão de 6 pips
+  const pipSize = symbol.includes('JPY') ? 0.01 : (symbol.includes('XAU') ? 0.1 : 0.0001);
+  const friction = calculateFrictionCost(bid, ask, expectedTargetPips, pipSize, 100000, 6.0, 0.2, 2.5);
+
+  if (!friction.isViable) {
+    return {
+      symbol,
+      action: 'NEUTRAL',
+      reason: `Fricção alta / Cobertura insuficiente (${friction.coverageRatio.toFixed(2)}x < 2.5x | Spread: ${friction.spreadPips.toFixed(1)} pips)`,
+      price: currentPrice
+    };
+  }
+
+  // Order Book Imbalance (OBI) & Micro-Price (se houver dados L2/ECN)
+  let microPriceStr = '';
+  if (volumeBid > 0 && volumeAsk > 0) {
+    const micro = calculateMicroPrice(bid, ask, volumeBid, volumeAsk);
+    microPriceStr = ` | OBI: ${micro.obi.toFixed(2)} MicroP: ${micro.microPrice.toFixed(5)}`;
+  }
+
+  // 2. Cooldown Estrito após Fechamento no Mesmo Par
   const lastTime = lastClosedTradeTime.get(symbol) || 0;
   if (Date.now() - lastTime < 300000) {
     const restSec = Math.ceil((300000 - (Date.now() - lastTime)) / 1000);
@@ -228,17 +266,35 @@ export function analyzeScalpOpportunity(
     return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/15)`, price: currentPrice };
   }
 
-  const atr = calculateATR(candles, 14);
-  const minAtrThreshold = currentPrice * 0.00015; // Mínimo de volatilidade ativa
-  if (atr < minAtrThreshold) {
-    return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade/consolidação rasa (ATR=${atr.toFixed(5)})`, price: currentPrice };
+  // 3. Análise de Série Temporal Tick, Log-Returns e Exponente de Hurst (H)
+  const logReturns = calculateLogReturns(priceHistoryList);
+  const rho1 = calculateAutocorrelationRho1(logReturns);
+  const { zScore } = calculateDynamicZScore(priceHistoryList, 20);
+
+  // Exponente de Hurst (H):
+  // H == 0.5 => Passeio Aleatório (Random Walk) -> REJEITA OPERAÇÃO
+  // H < 0.45 => Anti-persistente (Mean-Reversion)
+  // H > 0.55 => Persistente (Trend/Momentum)
+  const hurst = calculateHurstExponent(priceHistoryList);
+  if (Math.abs(hurst - 0.5) < 0.03) {
+    return { symbol, action: 'NEUTRAL', reason: `Mercado em Passeio Aleatório/Ruído (Hurst=${hurst.toFixed(2)} ~ 0.5)`, price: currentPrice };
   }
+
+  // Volatilidade intrínseca Garman-Klass (OHLC)
+  const gkVol = calculateGarmanKlassVolatility(candles);
+  
+  const atr = calculateATR(candles, 14);
+  const minAtrThreshold = currentPrice * 0.00015;
+  if (atr < minAtrThreshold) {
+    return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade/consolidação rasa (ATR=${atr.toFixed(5)} GKVol=${gkVol.toFixed(5)})`, price: currentPrice };
+  }
+
+  // Absorção de Volume (Iceberg Detection)
+  const tickVolumes = candles.map(c => c.close > 0 ? 1 : 0); // Frequência de ticks por candle
+  const lastPriceDeltaPips = Math.abs(closes[closes.length - 1] - closes[closes.length - 2]) / pipSize;
+  const absorption = detectVolumeAbsorption(tickVolumes, lastPriceDeltaPips);
 
   const adx = calculateADX(candles, 14);
-  if (adx < 20) {
-    return { symbol, action: 'NEUTRAL', reason: `Tendência fraca (ADX=${adx.toFixed(1)} < 20)`, price: currentPrice };
-  }
-
   const bb = calculateBollingerBands(closes, 20, 2.0);
   const emaFast = calculateEMA(closes, 5);
   const emaSlow = calculateEMA(closes, 15);
@@ -252,7 +308,6 @@ export function analyzeScalpOpportunity(
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
-  // Distância mínima entre EMAs para evitar cruzamento falso colado
   const emaDelta = Math.abs(emaFast - emaSlow);
   const minEmaDelta = currentPrice * 0.00010;
   if (emaDelta < minEmaDelta) {
@@ -261,30 +316,52 @@ export function analyzeScalpOpportunity(
 
   const emaSlowSlope = emaSlow - prev2EmaSlow;
 
-  // 3. Condições de Entrada de Alta Precisão (BUY)
-  // Cruzamento de Alta + Slope Positivo + RSI (45-60) + Preço perto da Banda Média/Inferior + ADX > 20
-  const isNearOrBelowUpperBB = bb ? currentPrice <= bb.upper : true;
-  if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 60 && isNearOrBelowUpperBB) {
-    return {
-      symbol,
-      action: 'BUY',
-      reason: `🎯 CONFLUÊNCIA BUY! EMA5>EMA15 (Delta:${emaDelta.toFixed(5)}), Inclin:+${emaSlowSlope.toFixed(6)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}, ATR:${atr.toFixed(5)}`,
-      price: currentPrice
-    };
-  } 
-  // 4. Condições de Entrada de Alta Precisão (SELL)
-  // Cruzamento de Baixa + Slope Negativo + RSI (40-55) + Preço perto da Banda Média/Superior + ADX > 20
-  const isNearOrAboveLowerBB = bb ? currentPrice >= bb.lower : true;
-  if (crossoverSell && emaSlowSlope < 0 && rsi >= 40 && rsi <= 55 && isNearOrAboveLowerBB) {
-    return {
-      symbol,
-      action: 'SELL',
-      reason: `🎯 CONFLUÊNCIA SELL! EMA5<EMA15 (Delta:${emaDelta.toFixed(5)}), Inclin:${emaSlowSlope.toFixed(6)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}, ATR:${atr.toFixed(5)}`,
-      price: currentPrice
-    };
+  // Classificação de Regime via Autocorrelação rho1 e Exponente de Hurst H:
+  if (rho1 < -0.05 || hurst < 0.47) {
+    // REGIME: REVERSÃO À MÉDIA (Mean Reversion)
+    const ouHalfLife = calculateOrnsteinUhlenbeckHalfLife(priceHistoryList);
+    const ouStr = ouHalfLife.isValid ? ` | OU t1/2: ${ouHalfLife.halfLifeSeconds}s` : '';
+
+    if (zScore < -2.0 && rsi < 40) {
+      return {
+        symbol,
+        action: 'BUY',
+        reason: `🎯 QUANT MEAN-REVERSION BUY! Z-Score:${zScore.toFixed(2)} < -2.0, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        price: currentPrice
+      };
+    }
+    if (zScore > 2.0 && rsi > 60) {
+      return {
+        symbol,
+        action: 'SELL',
+        reason: `🎯 QUANT MEAN-REVERSION SELL! Z-Score:${zScore.toFixed(2)} > +2.0, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        price: currentPrice
+      };
+    }
+  } else if (rho1 > 0.05 || hurst > 0.53) {
+    // REGIME: MOMENTUM / TENDÊNCIA
+    const isNearOrBelowUpperBB = bb ? currentPrice <= bb.upper : true;
+    if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 60 && isNearOrBelowUpperBB && adx >= 20) {
+      return {
+        symbol,
+        action: 'BUY',
+        reason: `🎯 QUANT MOMENTUM BUY! EMA5>EMA15 (Delta:${emaDelta.toFixed(5)}), Hurst:${hurst.toFixed(2)}, Z-Score:${zScore.toFixed(2)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}${microPriceStr}`,
+        price: currentPrice
+      };
+    }
+
+    const isNearOrAboveLowerBB = bb ? currentPrice >= bb.lower : true;
+    if (crossoverSell && emaSlowSlope < 0 && rsi >= 40 && rsi <= 55 && isNearOrAboveLowerBB && adx >= 20) {
+      return {
+        symbol,
+        action: 'SELL',
+        reason: `🎯 QUANT MOMENTUM SELL! EMA5<EMA15 (Delta:${emaDelta.toFixed(5)}), Hurst:${hurst.toFixed(2)}, Z-Score:${zScore.toFixed(2)}, RSI:${rsi.toFixed(1)}, ADX:${adx.toFixed(1)}${microPriceStr}`,
+        price: currentPrice
+      };
+    }
   }
 
-  return { symbol, action: 'NEUTRAL', reason: `Sem confluência (RSI=${rsi.toFixed(1)}, ADX=${adx.toFixed(1)}, Slope=${emaSlowSlope.toFixed(6)})`, price: currentPrice };
+  return { symbol, action: 'NEUTRAL', reason: `Sem gatilho quant (Hurst:${hurst.toFixed(2)}, Z:${zScore.toFixed(2)}, rho1:${rho1.toFixed(3)}, Absorp:${absorption.isAbsorption})`, price: currentPrice };
 }
 
 async function startScalpScanner() {

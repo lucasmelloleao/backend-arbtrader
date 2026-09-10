@@ -10,6 +10,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import BotStatus from '../../models/BotStatus';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
 import { recordClosedTrade, syncClosedTradeCooldowns } from './forex-scalp-scanner';
+import { calculateFractionalKellyLotSize, checkBinomialLossCircuitBreaker } from './quant-scalp-engine';
 
 const getTs = () => `[${new Date().toISOString()}]`;
 const log = {
@@ -1128,18 +1129,41 @@ async function startScalper() {
                 const maxDailyLoss = Math.abs(settings.maxDailyLoss ?? 100);
                 const dailyLossAlcancado = dailyRealizedPnl <= -maxDailyLoss;
 
+                // Consulta perdas consecutivas recentes para atuar o Circuit Breaker Binomial
+                const ultimosFechados = await ForexArbTrade.find({
+                  userId: settings.userId,
+                  type: 'close'
+                }).sort({ createdAt: -1 }).limit(5).lean();
+
+                let perdasConsecutivas = 0;
+                for (const t of ultimosFechados) {
+                  if (Number((t as any).realizedPnl || 0) < 0) perdasConsecutivas++;
+                  else break;
+                }
+
+                const circuitBreaker = checkBinomialLossCircuitBreaker(perdasConsecutivas, 0.60);
+                if (circuitBreaker.shouldPause) {
+                  log.warn(`🚨 [CIRCUIT BREAKER ATIVO] ${perdasConsecutivas} perdas consecutivas! Probabilidade binomial anômala: ${(circuitBreaker.probability * 100).toFixed(2)}%. Novas aberturas suspensas.`);
+                }
+
                 if (
                   settings.isScanningEnabled &&
                   settings.autoExecute &&
                   !dailyLossAlcancado &&
+                  !circuitBreaker.shouldPause &&
                   !activePositions.has(sym) &&
                   !temPosicaoAbertaNoBanco &&
                   signal.action !== 'NEUTRAL'
                 ) {
                   log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                   const side = signal.action === 'BUY' ? 'buy' : 'sell';
-                  const targetTradeSize = profile.defaultTradeSize || tradeSize;
-                  log.info(`🚀 [ORDEM AUTO-SCALPER] Enviando ordem de ${signal.action} para ${sym} (${targetTradeSize} unidades)...`);
+
+                  // Risco e Kelly Fracionário: Dimensionar lote dinamicamente com base na taxa de acerto e no saldo da conta
+                  const balanceUsd = Number(settings.accountBalanceUsd || 1000);
+                  const kelly = calculateFractionalKellyLotSize(0.60, 3.5, 2.0, balanceUsd, 0.15, 10.0, 0.01, 100000);
+                  const targetTradeSize = profile.defaultTradeSize || kelly.recommendedUnits || tradeSize;
+
+                  log.info(`🚀 [ORDEM AUTO-SCALPER QUANT] Enviando ordem de ${signal.action} para ${sym} (${targetTradeSize} unidades | Kelly Lots: ${kelly.recommendedLots}L | Fração: ${(kelly.kellyFraction * 100).toFixed(1)}%)...`);
                   try {
                     const orderRes = await adapter.createMarketOrder(sym, side, targetTradeSize);
                     const posIdNew = orderRes?.positionId || orderRes?.id || `pos_${Date.now()}`;
