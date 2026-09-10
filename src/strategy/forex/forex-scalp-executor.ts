@@ -118,7 +118,8 @@ async function startScalpExecutor() {
                 await pendingOpp.save();
 
                 try {
-                  const orderRes = await adapter.createMarketOrder(sym, side, tradeSize);
+                  const sizeForOrder = sym.includes('XAU') ? 100 : tradeSize;
+                  const orderRes = await adapter.createMarketOrder(sym, side, sizeForOrder);
                   const posIdReal = orderRes?.positionId ? String(orderRes.positionId) : null;
                   const posIdNew = posIdReal || orderRes?.id || `pos_${Date.now()}`;
                   const entryPrice = orderRes?.price || leg.price || 0;

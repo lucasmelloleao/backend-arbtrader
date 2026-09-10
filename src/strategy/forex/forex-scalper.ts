@@ -247,10 +247,11 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
       enabled: true,
+      defaultTradeSize: 100,      // 100 unidades (1 lote Ouro = minVolume cTrader)
       maxSpreadPct: 0.045,        // Ouro aceita spread até 0.045%
-      trailingActivationUsd: 0.50,// Trailing ativa com +$0.50 no ouro
-      trailingDistanceUsd: 0.20,  // Distância de trailing $0.20
-      minFeeProtectionUsd: 0.15,  
+      trailingActivationUsd: 0.80,// Trailing ativa com +$0.80 no ouro
+      trailingDistanceUsd: 0.30,  // Distância de trailing $0.30
+      minFeeProtectionUsd: 0.25,  
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       takeProfitPct: 0.30,
