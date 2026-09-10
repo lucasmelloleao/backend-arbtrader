@@ -510,6 +510,44 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
 }
 
 // --- CLOSE & OPERATIONS ---
+async function persistManualCloseTrade(strategy: any, reason: string) {
+  const leg = (strategy.legs && strategy.legs[0]) || {};
+  const sym = leg.symbol;
+  const entryPrice = Number(leg.price ?? leg.entryPrice ?? 0);
+  const currentPrice = Number(strategy.currentPrice ?? 0);
+  const closePrice = currentPrice > 0 ? currentPrice : entryPrice;
+  const volume = Number(leg.volume ?? strategy.positionVolume ?? 0);
+  const amountUsd = Number(leg.amountUsd ?? strategy.positionAmountUsd ?? 0);
+
+  await ForexArbTrade.create({
+    userId: strategy.userId,
+    strategyId: strategy._id,
+    strategyName: strategy.name,
+    exchangeId: strategy.exchangeId || 'ctrader',
+    type: 'close',
+    legs: [{
+      symbol: sym,
+      side: leg.side,
+      price: closePrice,
+      entryPrice,
+      closePrice,
+      amount: volume,
+      volume,
+      amountUsd,
+      orderId: leg.orderId ?? null,
+    }],
+    amount: volume,
+    volume,
+    amountUsd,
+    realizedPnl: Number(strategy.pnl ?? 0),
+    commission: Number(strategy.commission ?? 0),
+    swap: Number(strategy.swap ?? 0),
+    status: 'executed',
+    closedReason: strategy.closedReason ?? 'manual',
+    reason,
+  });
+}
+
 export async function closeForexStrategy(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
@@ -561,8 +599,10 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
 
     await ForexArbStrategy.updateOne(
       { _id: strategyId },
-      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false, pnl: strategy.pnl ?? 0, closedReason: strategy.closedReason ?? 'manual' } }
     );
+
+    await persistManualCloseTrade(strategy, 'Fechamento manual via dashboard');
 
     return res.json({ success: true, message: 'Fechamento de posição encerrado com sucesso.' });
   } catch (e: any) {
@@ -588,8 +628,10 @@ export async function voidCloseForexStrategy(req: AuthenticatedRequest, res: Res
 
     await ForexArbStrategy.updateOne(
       { _id: strategyId },
-      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false, pnl: strategy.pnl ?? 0, closedReason: 'manual' } }
     );
+
+    await persistManualCloseTrade(strategy, 'Encerrada pela corretora');
 
     return res.json({ success: true, message: 'Posição marcada como encerrada pela corretora.' });
   } catch (e: any) {
@@ -639,8 +681,16 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
 
     await ForexArbStrategy.updateMany(
       { userId, positionOpen: true },
-      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false } }
+      { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false, closedReason: 'manual' } }
     );
+
+    for (const s of openStrategies) {
+      try {
+        await persistManualCloseTrade(s, 'Fechamento em massa via dashboard');
+      } catch (e: any) {
+        console.warn(`⚠️ Erro ao registrar trade de fechamento para ${s?.name}:`, e.message);
+      }
+    }
 
     return res.json({ success: true, message: `Todas as posições (${openStrategies.length}) foram encerradas com sucesso!`, closedCount });
   } catch (e: any) {
