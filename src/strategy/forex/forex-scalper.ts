@@ -566,8 +566,10 @@ async function startScalper() {
               for (const openStrat of openMongoStrats) {
                 const stratSym = openStrat.legs?.[0]?.symbol;
                 if (stratSym && !cTraderOpenSymbols.has(stratSym)) {
-                  // Extrai o positionId se existir nas pernas
-                  const posIdMatch = (openStrat.legs?.[0]?.orderId || '').match(/(\d+)/);
+                  // Extrai o positionId se existir nas pernas (o "Pos #NNN" é o id da posição;
+                  // o "Order #NNN" é o id da ordem e não deve ser usado para consultar deals)
+                  const orderIdRaw = openStrat.legs?.[0]?.orderId || '';
+                  const posIdMatch = orderIdRaw.match(/Pos\s*#?(\d+)/i) || orderIdRaw.match(/(\d+)/);
                   const posId = posIdMatch ? posIdMatch[1] : undefined;
 
                   let brokerPnl = openStrat.pnl || 0;
