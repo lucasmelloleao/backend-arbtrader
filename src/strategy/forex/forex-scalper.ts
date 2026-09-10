@@ -243,7 +243,7 @@ export interface SymbolProfile {
 function baseSymbolProfile(symbol: string): SymbolProfile {
   if (symbol.includes('XAU')) {
     return {
-      enabled: true,
+      enabled: false, // Ouro desativado: perdas grandes concentradas nesse par.
       maxSpreadPct: 0.035,        // Ouro aceita spread até 0.035%
       trailingActivationUsd: 0.60,// Trailing ativa com +$0.60 no ouro (alvo ≥ 2x o custo)
       trailingDistanceUsd: 0.20,  // Distância de trailing $0.20 (deixa o vencedor correr)
@@ -878,23 +878,10 @@ async function startScalper() {
                         : activePos.entryPrice - (activePos.trailingFloorUsd * pricePerUsd))
                     : null;
 
-                  // Sincroniza o Trailing Stop Loss diretamente nos servidores da cTrader (server-side execution)
-                  if (
-                    trailingFloorPrice &&
-                    activePos.positionId &&
-                    !activePos.positionId.startsWith('pos_') &&
-                    trailingFloorPrice !== activePos.lastSyncedFloorPrice
-                  ) {
-                    activePos.lastSyncedFloorPrice = trailingFloorPrice;
-                    if (typeof (adapter as any).amendPositionSLTP === 'function') {
-                      const market = (adapter as any).marketsBySymbol?.get(sym);
-                      const digits = market?.digits ?? (isGoldPair ? 2 : (isJpyPair ? 3 : 5));
-                      const roundedFloorPrice = Number(trailingFloorPrice.toFixed(digits));
-                      (adapter as any).amendPositionSLTP(activePos.positionId, roundedFloorPrice).catch((err: any) => {
-                        log.warn(`⚠️ [CTRADER-SLTP] Erro ao sincronizar Stop Loss na cTrader (${sym}): ${err.message}`);
-                      });
-                    }
-                  }
+                  // A saída é controlada pelo robô (closePosition no próprio ciclo). O
+                  // trailing floor é apenas referência interna; NÃO é mais enviado como
+                  // SL/TP server-side para a cTrader, para o robô ter autonomia total.
+                  void trailingFloorPrice;
 
                   let currentAction = '⏳ Monitorando mercado';
                   if (activePos.trailingActive) {
@@ -1120,29 +1107,9 @@ async function startScalper() {
                     });
                     log.info(`✅ [ORDEM ABERTA] #${posIdNew} ${sym} ${signal.action} @${execPrice}!`);
 
-                    // Ativa proteções iniciais (SL e TP) na corretora logo na entrada
-                    const isGoldPair = sym.includes('XAU');
-                    const isJpyPair = sym.endsWith('/JPY') || sym.endsWith('JPY');
-                    const digits = market?.digits ?? (isGoldPair ? 2 : (isJpyPair ? 3 : 5));
-                    const stopLossPct = Math.abs(profile.stopLossPct ?? settings.stopLossPct ?? 0.10);
-                    const takeProfitPct = profile.takeProfitPct ?? settings.takeProfitPct ?? 0.20;
-
-                    const initialSL = signal.action === 'BUY'
-                      ? execPrice * (1 - stopLossPct / 100)
-                      : execPrice * (1 + stopLossPct / 100);
-
-                    const initialTP = signal.action === 'BUY'
-                      ? execPrice * (1 + takeProfitPct / 100)
-                      : execPrice * (1 - takeProfitPct / 100);
-
-                    const roundedSL = Number(initialSL.toFixed(digits));
-                    const roundedTP = Number(initialTP.toFixed(digits));
-
-                    if (posIdNew && !String(posIdNew).startsWith('pos_') && typeof (adapter as any).amendPositionSLTP === 'function') {
-                      (adapter as any).amendPositionSLTP(posIdNew, roundedSL, roundedTP).catch((err: any) => {
-                        log.warn(`⚠️ [CTRADER-INITIAL-SLTP] Erro ao registrar SL/TP inicial na cTrader (${sym}): ${err.message}`);
-                      });
-                    }
+                    // SL/TP NÃO são mais enviados como ordens server-side na cTrader.
+                    // A saída é decisão exclusiva do robô, que monitora pnlPct/pnlUsd no
+                    // próprio ciclo e envia closePosition quando TP/SL/trailing dispara.
 
                     try {
                       const stratDoc = await ForexArbStrategy.create({
