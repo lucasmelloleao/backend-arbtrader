@@ -263,8 +263,8 @@ export function analyzeScalpOpportunity(
   const candles = updateCandles(symbol, currentPrice);
   const closes = candles.map(c => c.close);
 
-  if (candles.length < 5) {
-    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/5)`, price: currentPrice };
+  if (candles.length < 2) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (possuí ${candles.length}/2)`, price: currentPrice };
   }
 
   // 3. Análise de Série Temporal Tick & Log-Returns
