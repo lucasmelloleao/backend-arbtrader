@@ -234,13 +234,14 @@ export function analyzeScalpOpportunity(
   // 1. Modelagem de Fricção e Microestrutura (Custo Total C_t e Fator de Cobertura k)
   const expectedTargetPips = 6.0; // Alvo padrão de 6 pips
   const pipSize = symbol.includes('JPY') ? 0.01 : (symbol.includes('XAU') ? 0.1 : 0.0001);
-  const friction = calculateFrictionCost(bid, ask, expectedTargetPips, pipSize, 100000, 6.0, 0.2, 2.5);
+  const minCoverageK = symbol.includes('XAU') ? 1.6 : 1.8; // Calibrado: Ouro aceita 1.6x, Forex Majors 1.8x
+  const friction = calculateFrictionCost(bid, ask, expectedTargetPips, pipSize, 100000, 6.0, 0.2, minCoverageK);
 
   if (!friction.isViable) {
     return {
       symbol,
       action: 'NEUTRAL',
-      reason: `Fricção alta / Cobertura insuficiente (${friction.coverageRatio.toFixed(2)}x < 2.5x | Spread: ${friction.spreadPips.toFixed(1)} pips)`,
+      reason: `Fricção alta / Cobertura insuficiente (${friction.coverageRatio.toFixed(2)}x < ${minCoverageK}x | Spread: ${friction.spreadPips.toFixed(1)} pips)`,
       price: currentPrice
     };
   }
@@ -272,11 +273,9 @@ export function analyzeScalpOpportunity(
   const { zScore } = calculateDynamicZScore(priceHistoryList, 20);
 
   // Exponente de Hurst (H):
-  // H == 0.5 => Passeio Aleatório (Random Walk) -> REJEITA OPERAÇÃO
-  // H < 0.45 => Anti-persistente (Mean-Reversion)
-  // H > 0.55 => Persistente (Trend/Momentum)
+  // Faixa Neutra reduzida de 0.03 para 0.01 (Evita descartar falsos aleatórios)
   const hurst = calculateHurstExponent(priceHistoryList);
-  if (Math.abs(hurst - 0.5) < 0.03) {
+  if (Math.abs(hurst - 0.5) < 0.01) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado em Passeio Aleatório/Ruído (Hurst=${hurst.toFixed(2)} ~ 0.5)`, price: currentPrice };
   }
 
@@ -284,13 +283,13 @@ export function analyzeScalpOpportunity(
   const gkVol = calculateGarmanKlassVolatility(candles);
   
   const atr = calculateATR(candles, 14);
-  const minAtrThreshold = currentPrice * 0.00015;
+  const minAtrThreshold = currentPrice * 0.00010; // Reduzido threshold para liberar consolidações limpas
   if (atr < minAtrThreshold) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade/consolidação rasa (ATR=${atr.toFixed(5)} GKVol=${gkVol.toFixed(5)})`, price: currentPrice };
   }
 
   // Absorção de Volume (Iceberg Detection)
-  const tickVolumes = candles.map(c => c.close > 0 ? 1 : 0); // Frequência de ticks por candle
+  const tickVolumes = candles.map(c => c.close > 0 ? 1 : 0);
   const lastPriceDeltaPips = Math.abs(closes[closes.length - 1] - closes[closes.length - 2]) / pipSize;
   const absorption = detectVolumeAbsorption(tickVolumes, lastPriceDeltaPips);
 
@@ -309,7 +308,7 @@ export function analyzeScalpOpportunity(
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
 
   const emaDelta = Math.abs(emaFast - emaSlow);
-  const minEmaDelta = currentPrice * 0.00010;
+  const minEmaDelta = currentPrice * 0.00004; // Calibrado: 0.4 pips de distância mínima
   if (emaDelta < minEmaDelta) {
     return { symbol, action: 'NEUTRAL', reason: `Cruzamento raso (Delta EMA=${emaDelta.toFixed(6)})`, price: currentPrice };
   }
@@ -317,31 +316,32 @@ export function analyzeScalpOpportunity(
   const emaSlowSlope = emaSlow - prev2EmaSlow;
 
   // Classificação de Regime via Autocorrelação rho1 e Exponente de Hurst H:
-  if (rho1 < -0.05 || hurst < 0.47) {
+  if (rho1 < -0.02 || hurst < 0.49) {
     // REGIME: REVERSÃO À MÉDIA (Mean Reversion)
     const ouHalfLife = calculateOrnsteinUhlenbeckHalfLife(priceHistoryList);
     const ouStr = ouHalfLife.isValid ? ` | OU t1/2: ${ouHalfLife.halfLifeSeconds}s` : '';
 
-    if (zScore < -2.0 && rsi < 40) {
+    // Z-Score calibrado para 1.65 (90% de confiança estatística) e faixas de RSI flexibilizadas (44 / 56)
+    if (zScore < -1.65 && rsi < 44) {
       return {
         symbol,
         action: 'BUY',
-        reason: `🎯 QUANT MEAN-REVERSION BUY! Z-Score:${zScore.toFixed(2)} < -2.0, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        reason: `🎯 QUANT MEAN-REVERSION BUY! Z-Score:${zScore.toFixed(2)} < -1.65, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
         price: currentPrice
       };
     }
-    if (zScore > 2.0 && rsi > 60) {
+    if (zScore > 1.65 && rsi > 56) {
       return {
         symbol,
         action: 'SELL',
-        reason: `🎯 QUANT MEAN-REVERSION SELL! Z-Score:${zScore.toFixed(2)} > +2.0, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
+        reason: `🎯 QUANT MEAN-REVERSION SELL! Z-Score:${zScore.toFixed(2)} > +1.65, Hurst:${hurst.toFixed(2)}, rho1:${rho1.toFixed(3)}, RSI:${rsi.toFixed(1)}${microPriceStr}${ouStr}`,
         price: currentPrice
       };
     }
-  } else if (rho1 > 0.05 || hurst > 0.53) {
+  } else if (rho1 > 0.02 || hurst > 0.51) {
     // REGIME: MOMENTUM / TENDÊNCIA
     const isNearOrBelowUpperBB = bb ? currentPrice <= bb.upper : true;
-    if (crossoverBuy && emaSlowSlope > 0 && rsi >= 45 && rsi <= 60 && isNearOrBelowUpperBB && adx >= 20) {
+    if (crossoverBuy && emaSlowSlope > 0 && rsi >= 42 && rsi <= 65 && isNearOrBelowUpperBB && adx >= 15) {
       return {
         symbol,
         action: 'BUY',
@@ -351,7 +351,7 @@ export function analyzeScalpOpportunity(
     }
 
     const isNearOrAboveLowerBB = bb ? currentPrice >= bb.lower : true;
-    if (crossoverSell && emaSlowSlope < 0 && rsi >= 40 && rsi <= 55 && isNearOrAboveLowerBB && adx >= 20) {
+    if (crossoverSell && emaSlowSlope < 0 && rsi >= 35 && rsi <= 58 && isNearOrAboveLowerBB && adx >= 15) {
       return {
         symbol,
         action: 'SELL',
