@@ -233,7 +233,9 @@ export interface SymbolProfile {
   minFeeProtectionUsd: number;
   minEmaDeltaRatio: number;
   minAtrRatio: number;
-  defaultTradeSize: number; // unidades base calibradas para ~$30 USD de margem (1:200)
+  // Tamanho do lote em unidades base (ex: 5000 = 0.05 lote). Configurável por
+  // par via symbolProfiles; NÃO é mais hardcoded no código.
+  defaultTradeSize?: number;
   takeProfitPct: number;
   stopLossPct: number;
   requireM5Trend: boolean;
@@ -250,7 +252,6 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
       minFeeProtectionUsd: 0.15,  // Piso mínimo garantido para cobrir taxas do ouro
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
-      defaultTradeSize: 1,        // 0.01 lote (1 oz) ≈ $21,79 de margem
       takeProfitPct: 0.30,
       stopLossPct: 0.12,
       requireM5Trend: true,
@@ -265,7 +266,6 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
       minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
-      defaultTradeSize: 5000,     // 0.05 lote = 5.000 EUR ≈ $29,06 de margem
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
       requireM5Trend: true,
@@ -280,7 +280,6 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
       minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
-      defaultTradeSize: 4000,     // 0.04 lote = 4.000 GBP ≈ $27,08 de margem
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
       requireM5Trend: true,
@@ -295,7 +294,6 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
       minFeeProtectionUsd: 0.25,
       minEmaDeltaRatio: 0.00002,
       minAtrRatio: 0.00002,
-      defaultTradeSize: 6000,     // 0.06 lote = 6.000 USD ≈ $30,00 de margem
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
       requireM5Trend: true,
@@ -309,7 +307,6 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     minFeeProtectionUsd: 0.08,
     minEmaDeltaRatio: 0.00002,
     minAtrRatio: 0.00002,
-    defaultTradeSize: 1000,
     takeProfitPct: 0.15,
     stopLossPct: 0.08,
     requireM5Trend: true,

@@ -6,6 +6,7 @@ import ExchangeKey from '../models/ExchangeKey';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { encryptSecretKey } from '../utils/encryption';
 import { recordClosedTrade } from '../strategy/forex/forex-scalp-scanner';
+import { getSymbolProfile, getSymbolProfileOverride } from '../strategy/forex/forex-scalper';
 
 // --- STRATEGIES ---
 export async function getForexStrategies(req: AuthenticatedRequest, res: Response) {
@@ -292,6 +293,25 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
 }
 
 // --- SETTINGS ---
+const KNOWN_SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+
+// Mescla os defaults do código com o override salvo no banco para cada par,
+// devolvendo os perfis efetivos (o que o robô realmente usa).
+function buildResolvedSymbolProfiles(settings: any): Record<string, any> {
+  const resolved: Record<string, any> = {};
+  for (const sym of KNOWN_SYMBOLS) {
+    const override = getSymbolProfileOverride(settings, sym);
+    const effective = getSymbolProfile(sym, override);
+    // Remove `undefined` para não poluir o JSON enviado ao frontend.
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(effective)) {
+      if (v !== undefined) cleaned[k] = v;
+    }
+    resolved[sym] = cleaned;
+  }
+  return resolved;
+}
+
 export async function getForexSettings(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
@@ -340,7 +360,10 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
       trailingStopPct: settings.trailingStopPct ?? 0.01,
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
-        : {}
+        : {},
+      // Perfis efetivos por par (defaults mesclados com o override do banco), para
+      // o frontend exibir os valores reais que o robô utiliza em vez de "padrão".
+      resolvedSymbolProfiles: buildResolvedSymbolProfiles(settings)
     };
 
     const isDashboard = req.path.includes('/auth/');
@@ -388,7 +411,10 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
       trailingStopPct: settings.trailingStopPct ?? 0.01,
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
-        : {}
+        : {},
+      // Perfis efetivos por par (defaults mesclados com o override do banco), para
+      // o frontend exibir os valores reais que o robô utiliza em vez de "padrão".
+      resolvedSymbolProfiles: buildResolvedSymbolProfiles(settings)
     };
 
     const isDashboard = req.path.includes('/auth/');
