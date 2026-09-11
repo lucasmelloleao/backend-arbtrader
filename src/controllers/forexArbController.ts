@@ -32,40 +32,38 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
       let livePnlPct = s.pnlPct || 0;
       let livePnlUsd = s.pnl || 0;
 
-      // Se temos o preço atual e o preço de entrada da perna, calcula os dados em tempo real se pnl for 0 ou desatualizado
+      // Sempre calcula o PnL líquido em tempo real considerando o preço atual e deduzindo as comissões de abertura+fechamento
       if (curPrice && leg && leg.price && leg.price > 0) {
         const sideUpper = (leg.side || 'BUY').toUpperCase();
         const diff = sideUpper === 'BUY' ? (curPrice - leg.price) : (leg.price - curPrice);
         const calculatedPct = (diff / leg.price) * 100;
-        if (!livePnlPct || livePnlPct === 0) {
-          livePnlPct = calculatedPct;
+        livePnlPct = calculatedPct;
+
+        const isGoldPair = sym?.includes('XAU');
+        const isJpyPair = sym?.includes('JPY');
+        const rawUnits = (leg.amount && leg.amount > 0)
+          ? leg.amount
+          : (leg.volume && leg.volume > 0)
+            ? leg.volume
+            : (s.positionVolume && s.positionVolume > 0)
+              ? s.positionVolume
+              : (s.tradeSize || 1000);
+
+        const lotesReais = isGoldPair
+          ? (rawUnits >= 100 ? rawUnits / 100 : rawUnits * 0.01)
+          : (rawUnits >= 1000 ? rawUnits / 100000 : rawUnits);
+        const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
+        const comm = Number(((isGoldPair ? 0.09 : 0.06) * numLotes001).toFixed(2));
+
+        let grossUsd = 0;
+        if (isGoldPair) {
+          grossUsd = diff * rawUnits;
+        } else if (isJpyPair && curPrice > 0) {
+          grossUsd = (diff * rawUnits) / curPrice;
+        } else {
+          grossUsd = diff * rawUnits;
         }
-
-        if (livePnlUsd === 0) {
-          const isGoldPair = sym?.includes('XAU');
-          const isJpyPair = sym?.includes('JPY');
-          const rawUnits = (leg.amount && leg.amount > 0)
-            ? leg.amount
-            : (leg.volume && leg.volume > 0)
-              ? leg.volume
-              : (s.positionVolume && s.positionVolume > 0)
-                ? s.positionVolume
-                : (s.tradeSize || 1000);
-
-          const lotesReais = isGoldPair
-            ? (rawUnits >= 100 ? rawUnits / 100 : rawUnits * 0.01)
-            : (rawUnits >= 1000 ? rawUnits / 100000 : rawUnits);
-          const numLotes001 = lotesReais / 0.01;
-          const comm = Number(((isGoldPair ? 0.09 : 0.06) * numLotes001).toFixed(2));
-
-          if (isGoldPair) {
-            livePnlUsd = (diff * rawUnits) - comm;
-          } else if (isJpyPair && curPrice > 0) {
-            livePnlUsd = ((diff * rawUnits) / curPrice) - comm;
-          } else {
-            livePnlUsd = (diff * rawUnits) - comm;
-          }
-        }
+        livePnlUsd = Number((grossUsd - comm).toFixed(4));
       }
 
       const isGold = sym?.includes('XAU');
