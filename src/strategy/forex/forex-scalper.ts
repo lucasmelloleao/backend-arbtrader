@@ -592,10 +592,10 @@ async function executeClosePosition(params: {
     const isJpy = sym.endsWith('/JPY') || sym.endsWith('JPY');
     const vol = activePos.amount || (isGold ? 1 : tradeSize || 1000);
     const lotesReais = isGold ? (vol >= 100 ? vol / 100 : vol * 0.01) : (vol >= 1000 ? vol / 100000 : vol);
-    const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
+    const numLotes001 = lotesReais / 0.01;
     const totalComm = closeRes?.commission != null && Number(closeRes.commission) > 0
       ? Number(closeRes.commission)
-      : (isGold ? 0.08 : 0.06) * numLotes001;
+      : Number(((isGold ? 0.09 : 0.06) * numLotes001).toFixed(2));
 
     const diffPrice = activePos.side === 'BUY' ? (closePrice - activePos.entryPrice) : (activePos.entryPrice - closePrice);
     const calcGross = isGold
