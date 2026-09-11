@@ -55,8 +55,8 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
           const lotesReais = isGoldPair
             ? (rawUnits >= 100 ? rawUnits / 100 : rawUnits * 0.01)
             : (rawUnits >= 1000 ? rawUnits / 100000 : rawUnits);
-          const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
-          const comm = (isGoldPair ? 0.08 : 0.06) * numLotes001;
+          const numLotes001 = lotesReais / 0.01;
+          const comm = Number(((isGoldPair ? 0.09 : 0.06) * numLotes001).toFixed(2));
 
           if (isGoldPair) {
             livePnlUsd = (diff * rawUnits) - comm;
@@ -206,8 +206,11 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
 
       const vol = Number(t.volume ?? t.amount ?? primaryLeg.volume ?? primaryLeg.amount ?? 1000);
       const lotesReais = isGold ? (vol >= 100 ? vol / 100 : vol * 0.01) : (vol >= 1000 ? vol / 100000 : vol);
-      const numLotes001 = Math.max(1, Math.round(lotesReais / 0.01));
-      const calcComm = (isGold ? 0.08 : 0.06) * numLotes001;
+      // Taxa cTrader/Pepperstone Standard: $6.00 por 1.0 lote Forex ($0.06 por 0.01 lote / $0.18 por 0.03 lote)
+      // Ouro (XAU/USD): $9.00 por 1.0 lote ($0.09 por 0.01 lote)
+      const costPer001Lot = isGold ? 0.09 : 0.06;
+      const numLotes001 = lotesReais / 0.01;
+      const calcComm = Number((costPer001Lot * numLotes001).toFixed(2));
 
       let computedNetPnl = t.realizedPnl;
       if (entryP > 0 && closeP > 0 && entryP !== closeP) {
