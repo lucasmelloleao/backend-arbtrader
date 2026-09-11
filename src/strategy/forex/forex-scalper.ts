@@ -263,14 +263,14 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.025,
-      trailingActivationUsd: 0.25,
-      trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.20,
+      trailingActivationUsd: 0.65,
+      trailingDistanceUsd: 0.30,
+      minFeeProtectionUsd: 0.35,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       defaultTradeSize: 3000,
       takeProfitPct: 0.15,
-      stopLossPct: 0.05,
+      stopLossPct: 0.02,
       requireM5Trend: false,
     };
   }
@@ -278,14 +278,14 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.025,
-      trailingActivationUsd: 0.25,
-      trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.20,
+      trailingActivationUsd: 0.65,
+      trailingDistanceUsd: 0.30,
+      minFeeProtectionUsd: 0.35,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       defaultTradeSize: 3000,
       takeProfitPct: 0.15,
-      stopLossPct: 0.05,
+      stopLossPct: 0.02,
       requireM5Trend: false,
     };
   }
@@ -293,14 +293,14 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.05,
-      trailingActivationUsd: 1.0,
-      trailingDistanceUsd: 0.4,
-      minFeeProtectionUsd: 0.30,
+      trailingActivationUsd: 1.50,
+      trailingDistanceUsd: 0.60,
+      minFeeProtectionUsd: 0.50,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       defaultTradeSize: 0.01,
       takeProfitPct: 0.30,
-      stopLossPct: 0.15,
+      stopLossPct: 0.05,
       requireM5Trend: false,
     };
   }
@@ -308,13 +308,13 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.025,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.05 lote
-      trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.20,
+      trailingActivationUsd: 0.65,
+      trailingDistanceUsd: 0.30,
+      minFeeProtectionUsd: 0.35,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
-      stopLossPct: 0.08,
+      stopLossPct: 0.02,
       requireM5Trend: false,
     };
   }
@@ -322,13 +322,13 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.025,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.04 lote
-      trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.20,
+      trailingActivationUsd: 0.65,
+      trailingDistanceUsd: 0.30,
+      minFeeProtectionUsd: 0.35,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
-      stopLossPct: 0.08,
+      stopLossPct: 0.02,
       requireM5Trend: false,
     };
   }
@@ -336,26 +336,26 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
     return {
       enabled: true,
       maxSpreadPct: 0.025,
-      trailingActivationUsd: 0.25, // Ativação calibrada para 0.06 lote
-      trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.20,
+      trailingActivationUsd: 0.65,
+      trailingDistanceUsd: 0.30,
+      minFeeProtectionUsd: 0.35,
       minEmaDeltaRatio: 0.00001,
       minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
-      stopLossPct: 0.08,
+      stopLossPct: 0.02,
       requireM5Trend: false,
     };
   }
   return {
     enabled: true,
     maxSpreadPct: 0.025,
-    trailingActivationUsd: 0.20,
-    trailingDistanceUsd: 0.10,
-    minFeeProtectionUsd: 0.15,
+    trailingActivationUsd: 0.65,
+    trailingDistanceUsd: 0.30,
+    minFeeProtectionUsd: 0.35,
     minEmaDeltaRatio: 0.00001,
     minAtrRatio: 0.00001,
     takeProfitPct: 0.15,
-    stopLossPct: 0.08,
+    stopLossPct: 0.02,
     requireM5Trend: false,
   };
 }
