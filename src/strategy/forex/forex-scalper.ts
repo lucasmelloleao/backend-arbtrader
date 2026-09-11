@@ -675,7 +675,7 @@ async function executeClosePosition(params: {
 // em memória) para decidir TP/SL/trailing sem esperar o loop pesado (reconcile,
 // PnL da cTrader, sinais). Roda em paralelo ao loop principal.
 async function runExitLoop() {
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD'];
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
@@ -856,7 +856,7 @@ async function startScalper() {
 
   log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD'];
 
   // Loop de saída dedicado: reage rápido ao preço (cache de tickers) para
   // decidir TP/SL/trailing sem esperar o loop principal (reconcile/PnL/sinais).
