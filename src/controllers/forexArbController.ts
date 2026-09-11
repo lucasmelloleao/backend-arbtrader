@@ -296,7 +296,7 @@ export async function getForexOpportunities(req: AuthenticatedRequest, res: Resp
 }
 
 // --- SETTINGS ---
-const KNOWN_SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD'];
+const KNOWN_SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
 
 // Mescla os defaults do código com o override salvo no banco para cada par,
 // devolvendo os perfis efetivos (o que o robô realmente usa).

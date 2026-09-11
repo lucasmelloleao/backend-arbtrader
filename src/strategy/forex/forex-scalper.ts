@@ -244,6 +244,51 @@ export interface SymbolProfile {
 
 /** Perfil base (defaults) por símbolo, antes de aplicar overrides do banco. */
 function baseSymbolProfile(symbol: string): SymbolProfile {
+  if (symbol.includes('NAS100') || symbol.includes('USTEC') || symbol.includes('NDX')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.05,
+      trailingActivationUsd: 2.50, // Ativa com 2.5 pontos a favor ($2.50)
+      trailingDistanceUsd: 1.00,  // Folga de 1.0 ponto ($1.00)
+      minFeeProtectionUsd: 0.80,  // Garantia de lucro de $0.80
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 1,        // 1 contrato
+      takeProfitPct: 0.35,
+      stopLossPct: 0.03,
+      requireM5Trend: false,
+    };
+  }
+  if (symbol.includes('US30') || symbol.includes('DJI') || symbol.includes('WS30')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.05,
+      trailingActivationUsd: 3.50, // Ativa com 3.5 pontos a favor ($3.50)
+      trailingDistanceUsd: 1.50,  // Folga de 1.5 pontos ($1.50)
+      minFeeProtectionUsd: 1.00,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 1,        // 1 contrato
+      takeProfitPct: 0.35,
+      stopLossPct: 0.03,
+      requireM5Trend: false,
+    };
+  }
+  if (symbol.includes('GER40') || symbol.includes('DAX') || symbol.includes('GER30')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.05,
+      trailingActivationUsd: 2.50, // Ativa com ~2 pontos a favor ($2.50)
+      trailingDistanceUsd: 1.00,  // Folga de 1.0 ponto ($1.00)
+      minFeeProtectionUsd: 0.80,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 1,        // 1 contrato
+      takeProfitPct: 0.35,
+      stopLossPct: 0.03,
+      requireM5Trend: false,
+    };
+  }
   if (symbol.includes('XAU')) {
     return {
       enabled: true,
@@ -675,7 +720,7 @@ async function executeClosePosition(params: {
 // em memória) para decidir TP/SL/trailing sem esperar o loop pesado (reconcile,
 // PnL da cTrader, sinais). Roda em paralelo ao loop principal.
 async function runExitLoop() {
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD'];
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
@@ -856,7 +901,7 @@ async function startScalper() {
 
   log.info('✅ Conectado ao MongoDB - Forex Scalper Bot (Versão Otimizada com 5 Ajustes)');
 
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD'];
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
 
   // Loop de saída dedicado: reage rápido ao preço (cache de tickers) para
   // decidir TP/SL/trailing sem esperar o loop principal (reconcile/PnL/sinais).
