@@ -486,8 +486,8 @@ export function analyzeScalpOpportunity(
   const isBearishTrend = emaFast <= emaSlow;
   const emaDelta = Math.abs(emaFast - emaSlow);
 
-  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 25 && rsi <= 75;
-  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 25 && rsi <= 75;
+  const buyConditions = (crossoverBuy || (isBullishTrend && emaDelta >= currentPrice * 0.00003)) && rsi >= 35 && rsi <= 65;
+  const sellConditions = (crossoverSell || (isBearishTrend && emaDelta >= currentPrice * 0.00003)) && rsi >= 35 && rsi <= 65;
 
   // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável)
   if (buyConditions) {
