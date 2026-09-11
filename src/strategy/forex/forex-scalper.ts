@@ -259,59 +259,104 @@ function baseSymbolProfile(symbol: string): SymbolProfile {
       requireM5Trend: false,
     };
   }
+  if (symbol.includes('AUD/USD') || symbol.includes('AUDUSD')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.025,
+      trailingActivationUsd: 0.25,
+      trailingDistanceUsd: 0.15,
+      minFeeProtectionUsd: 0.20,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 3000,
+      takeProfitPct: 0.15,
+      stopLossPct: 0.05,
+      requireM5Trend: false,
+    };
+  }
+  if (symbol.includes('USD/CAD') || symbol.includes('USDCAD')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.025,
+      trailingActivationUsd: 0.25,
+      trailingDistanceUsd: 0.15,
+      minFeeProtectionUsd: 0.20,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 3000,
+      takeProfitPct: 0.15,
+      stopLossPct: 0.05,
+      requireM5Trend: false,
+    };
+  }
+  if (symbol.includes('BTC')) {
+    return {
+      enabled: true,
+      maxSpreadPct: 0.05,
+      trailingActivationUsd: 1.0,
+      trailingDistanceUsd: 0.4,
+      minFeeProtectionUsd: 0.30,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
+      defaultTradeSize: 0.01,
+      takeProfitPct: 0.30,
+      stopLossPct: 0.15,
+      requireM5Trend: false,
+    };
+  }
   if (symbol.includes('EUR/USD') || symbol.includes('EURUSD')) {
     return {
       enabled: true,
-      maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.35, // Ativação calibrada para 0.05 lote
+      maxSpreadPct: 0.025,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.05 lote
       trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.25,
-      minEmaDeltaRatio: 0.00002,
-      minAtrRatio: 0.00002,
+      minFeeProtectionUsd: 0.20,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
-      requireM5Trend: true,
+      requireM5Trend: false,
     };
   }
   if (symbol.includes('GBP/USD') || symbol.includes('GBPUSD')) {
     return {
       enabled: true,
-      maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.35, // Ativação calibrada para 0.04 lote
+      maxSpreadPct: 0.025,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.04 lote
       trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.25,
-      minEmaDeltaRatio: 0.00002,
-      minAtrRatio: 0.00002,
+      minFeeProtectionUsd: 0.20,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
-      requireM5Trend: true,
+      requireM5Trend: false,
     };
   }
   if (symbol.includes('USD/JPY') || symbol.includes('USDJPY')) {
     return {
       enabled: true,
-      maxSpreadPct: 0.018,
-      trailingActivationUsd: 0.35, // Ativação calibrada para 0.06 lote
+      maxSpreadPct: 0.025,
+      trailingActivationUsd: 0.25, // Ativação calibrada para 0.06 lote
       trailingDistanceUsd: 0.15,
-      minFeeProtectionUsd: 0.25,
-      minEmaDeltaRatio: 0.00002,
-      minAtrRatio: 0.00002,
+      minFeeProtectionUsd: 0.20,
+      minEmaDeltaRatio: 0.00001,
+      minAtrRatio: 0.00001,
       takeProfitPct: 0.15,
       stopLossPct: 0.08,
-      requireM5Trend: true,
+      requireM5Trend: false,
     };
   }
   return {
     enabled: true,
-    maxSpreadPct: 0.018,
-    trailingActivationUsd: 0.15,
-    trailingDistanceUsd: 0.05,
-    minFeeProtectionUsd: 0.08,
-    minEmaDeltaRatio: 0.00002,
-    minAtrRatio: 0.00002,
+    maxSpreadPct: 0.025,
+    trailingActivationUsd: 0.20,
+    trailingDistanceUsd: 0.10,
+    minFeeProtectionUsd: 0.15,
+    minEmaDeltaRatio: 0.00001,
+    minAtrRatio: 0.00001,
     takeProfitPct: 0.15,
     stopLossPct: 0.08,
-    requireM5Trend: true,
+    requireM5Trend: false,
   };
 }
 
@@ -401,7 +446,7 @@ export function analyzeScalpOpportunity(
   const atr = calculateATR(candlesM1, 14);
 
   // Filtro de Volatilidade Mínima (ATR - apenas descarta mercado totalmente parado)
-  if (atr > 0 && atr < currentPrice * effectiveProfile.maxSpreadPct) {
+  if (atr > 0 && atr < currentPrice * (effectiveProfile.maxSpreadPct * 0.5)) {
     return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
   }
 
@@ -416,12 +461,12 @@ export function analyzeScalpOpportunity(
   const isBearishTrend = emaFast < emaSlow && currentPrice <= emaSlow * 1.0001;
   const emaDelta = Math.abs(emaFast - emaSlow);
 
-  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 38 && rsi <= 68;
-  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 32 && rsi <= 62;
+  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 32 && rsi <= 72;
+  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 28 && rsi <= 68;
 
   // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável)
   if (buyConditions) {
-    if (m5Trend === 'BEARISH') {
+    if (effectiveProfile.requireM5Trend && m5Trend === 'BEARISH') {
       log.info(`🚫 [${symbol}] Compra BLOQUEADA: M5 em baixa | RSI:${rsi.toFixed(1)} M5:${m5Trend} Delta:${emaDelta.toFixed(5)} spread:${spreadPct.toFixed(4)}% atr:${atr.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Compra filtrada: Tendência M5 em baixa`, price: currentPrice };
     }
@@ -436,7 +481,7 @@ export function analyzeScalpOpportunity(
 
   // 6. Confluência SELL (Cruzamento M1 ou Momentum de Baixa + RSI saudável)
   if (sellConditions) {
-    if (m5Trend === 'BULLISH') {
+    if (effectiveProfile.requireM5Trend && m5Trend === 'BULLISH') {
       log.info(`🚫 [${symbol}] Venda BLOQUEADA: M5 em alta | RSI:${rsi.toFixed(1)} M5:${m5Trend} Delta:${emaDelta.toFixed(5)}`);
       return { symbol, action: 'NEUTRAL', reason: `Venda filtrada: Tendência M5 em alta`, price: currentPrice };
     }
