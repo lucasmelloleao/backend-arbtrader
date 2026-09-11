@@ -420,8 +420,8 @@ export function analyzeScalpOpportunity(
   const { history: candlesM1 } = updateCandlesM1(symbol, currentPrice);
   const candlesM5 = updateCandlesM5(symbol, currentPrice);
 
-  if (candlesM1.length < 15) {
-    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (${candlesM1.length}/15)`, price: currentPrice };
+  if (candlesM1.length < 5) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (${candlesM1.length}/5)`, price: currentPrice };
   }
 
   const closesM1 = candlesM1.map(c => c.close);
@@ -440,29 +440,24 @@ export function analyzeScalpOpportunity(
   }
 
   // 4. Indicadores M1
-  const emaFast = calculateEMA(closesM1, 5);
-  const emaSlow = calculateEMA(closesM1, 15);
-  const rsi = calculateRSI(closesM1, 14);
-  const atr = calculateATR(candlesM1, 14);
-
-  // Filtro de Volatilidade Mínima (ATR - apenas descarta mercado totalmente parado)
-  if (atr > 0 && atr < currentPrice * (effectiveProfile.maxSpreadPct * 0.5)) {
-    return { symbol, action: 'NEUTRAL', reason: `Mercado consolidado/sem volatilidade (ATR=${atr.toFixed(5)})`, price: currentPrice };
-  }
+  const emaFast = calculateEMA(closesM1, Math.min(5, closesM1.length));
+  const emaSlow = calculateEMA(closesM1, Math.min(15, closesM1.length));
+  const rsi = calculateRSI(closesM1, Math.min(14, closesM1.length));
+  const atr = calculateATR(candlesM1, Math.min(14, candlesM1.length));
 
   // Crossover e Momentum M1
   const prevCloses = closesM1.slice(0, -1);
-  const prevEmaFast = calculateEMA(prevCloses, 5);
-  const prevEmaSlow = calculateEMA(prevCloses, 15);
+  const prevEmaFast = calculateEMA(prevCloses, Math.min(5, prevCloses.length || 1));
+  const prevEmaSlow = calculateEMA(prevCloses, Math.min(15, prevCloses.length || 1));
 
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
-  const isBullishTrend = emaFast > emaSlow && currentPrice >= emaSlow * 0.9999;
-  const isBearishTrend = emaFast < emaSlow && currentPrice <= emaSlow * 1.0001;
+  const isBullishTrend = emaFast >= emaSlow;
+  const isBearishTrend = emaFast <= emaSlow;
   const emaDelta = Math.abs(emaFast - emaSlow);
 
-  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 32 && rsi <= 72;
-  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 28 && rsi <= 68;
+  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 20 && rsi <= 80;
+  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 20 && rsi <= 80;
 
   // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável)
   if (buyConditions) {
