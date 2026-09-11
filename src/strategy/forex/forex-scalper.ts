@@ -420,8 +420,8 @@ export function analyzeScalpOpportunity(
   const { history: candlesM1 } = updateCandlesM1(symbol, currentPrice);
   const candlesM5 = updateCandlesM5(symbol, currentPrice);
 
-  if (candlesM1.length < 5) {
-    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (${candlesM1.length}/5)`, price: currentPrice };
+  if (candlesM1.length < 10) {
+    return { symbol, action: 'NEUTRAL', reason: `Aguardando velas M1 (${candlesM1.length}/10)`, price: currentPrice };
   }
 
   const closesM1 = candlesM1.map(c => c.close);
@@ -445,6 +445,11 @@ export function analyzeScalpOpportunity(
   const rsi = calculateRSI(closesM1, Math.min(14, closesM1.length));
   const atr = calculateATR(candlesM1, Math.min(14, candlesM1.length));
 
+  // Filtro de Volatilidade Mínima Suave (ATR descarta mercado totalmente parado/sem corpo)
+  if (atr > 0 && atr < currentPrice * (effectiveProfile.maxSpreadPct * 0.3)) {
+    return { symbol, action: 'NEUTRAL', reason: `Mercado sem volatilidade suficiente (ATR=${atr.toFixed(5)})`, price: currentPrice };
+  }
+
   // Crossover e Momentum M1
   const prevCloses = closesM1.slice(0, -1);
   const prevEmaFast = calculateEMA(prevCloses, Math.min(5, prevCloses.length || 1));
@@ -452,12 +457,12 @@ export function analyzeScalpOpportunity(
 
   const crossoverBuy = prevEmaFast <= prevEmaSlow && emaFast > emaSlow;
   const crossoverSell = prevEmaFast >= prevEmaSlow && emaFast < emaSlow;
-  const isBullishTrend = emaFast >= emaSlow;
-  const isBearishTrend = emaFast <= emaSlow;
+  const isBullishTrend = emaFast > emaSlow && currentPrice >= emaSlow * 0.9999;
+  const isBearishTrend = emaFast < emaSlow && currentPrice <= emaSlow * 1.0001;
   const emaDelta = Math.abs(emaFast - emaSlow);
 
-  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 20 && rsi <= 80;
-  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 20 && rsi <= 80;
+  const buyConditions = (crossoverBuy || isBullishTrend) && rsi >= 30 && rsi <= 70 && emaDelta > 0.00002;
+  const sellConditions = (crossoverSell || isBearishTrend) && rsi >= 30 && rsi <= 70 && emaDelta > 0.00002;
 
   // 5. Confluência BUY (Cruzamento M1 ou Momentum de Alta + RSI saudável)
   if (buyConditions) {
