@@ -380,8 +380,12 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
 
     const body = req.body;
     if (body.autoExecute === undefined) body.autoExecute = true;
+
+    // Remove resolvedSymbolProfiles (campo calculado apenas de leitura) para não sobrescrever
+    delete body.resolvedSymbolProfiles;
+
     // `symbolProfiles` chega como objeto; converte para Map para o Mongoose.
-    if (body.symbolProfiles !== undefined) {
+    if (body.symbolProfiles !== undefined && !(body.symbolProfiles instanceof Map)) {
       body.symbolProfiles = new Map(Object.entries(body.symbolProfiles || {}));
     }
     const settings = await ForexArbSettings.findOneAndUpdate(
