@@ -31,6 +31,11 @@ const ForexArbSettingsSchema = new mongoose.Schema({
   takeProfitPct: { type: Number, default: 0.10 },
   stopLossPct: { type: Number, default: 0.10 },
   trailingStopPct: { type: Number, default: 0.01 },
+  // ─── Trend Grid Bot Settings ─────────────────────────────────────────────
+  gridEnabled: { type: Boolean, default: false },
+  stepPips: { type: Number, default: 15 },           // Distância em pips para abrir próxima ordem a favor
+  trailingPips: { type: Number, default: 10 },       // Distância do trailing stop global em pips
+  maxGridLevels: { type: Number, default: 5 },       // Número máximo de ordens empilhadas na grade
   symbolProfiles: { type: Map, of: ForexSymbolProfileSchema, default: {} },
 }, { timestamps: true });
 

@@ -51,9 +51,12 @@ const ForexArbStrategySchema = new mongoose.Schema({
   commission: { type: Number, default: 0 },
   swap: { type: Number, default: 0 },
   closedAt: { type: Date, default: null },
-  peakProfitPct: { type: Number, default: 0 },
-  currentPrice: { type: Number, default: null },
-  lastLegPrices: { type: Map, of: Number, default: {} }, // symbol -> último preço visto
+  // ─── Grid & Pyramiding fields ──────────────────────────────────────────────
+  isGrid: { type: Boolean, default: false },
+  gridPositions: { type: Array, default: [] },          // [{ id, entryPrice, volume, orderId }]
+  weightedAvgPrice: { type: Number, default: null },   // Preço médio ponderado da grade
+  globalTrailingStopPrice: { type: Number, default: null }, // Trailing Stop Global em preço
+  gridLevelsCount: { type: Number, default: 0 },
 }, { timestamps: true, collection: 'forexarbstrategies' });
 
 export default mongoose.models.ForexArbStrategy || mongoose.model('ForexArbStrategy', ForexArbStrategySchema);

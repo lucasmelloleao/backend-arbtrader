@@ -2589,6 +2589,18 @@ components:
         trailingStopPct:
           type: number
           description: Percentual de gatilho do Trailing Stop móvel (ex 0.01 para 0.01%)
+        gridEnabled:
+          type: boolean
+          description: Ativa o motor de Trend Grid (Piramidagem + Trailing Stop Global)
+        stepPips:
+          type: number
+          description: Distância em pips a favor para abrir o próximo nível do grid
+        trailingPips:
+          type: number
+          description: Distância do Trailing Stop Global em pips
+        maxGridLevels:
+          type: number
+          description: Número máximo de ordens empilhadas no grid
     ForexArbSettingsUpdateRequest:
       type: object
       properties:
@@ -2618,6 +2630,14 @@ components:
           type: array
           items:
             type: string
+        gridEnabled:
+          type: boolean
+        stepPips:
+          type: number
+        trailingPips:
+          type: number
+        maxGridLevels:
+          type: number
     CtraderCredentialsUpdateRequest:
       type: object
       properties:
