@@ -42,32 +42,33 @@ export async function consultarProcessoTJPR(req: AuthenticatedRequest, res: Resp
       });
     }
 
-    const hit = hits[0];
-    const source = hit._source;
-
-    // Normaliza dados relevantes do Datajud
-    const dadosFormatados = {
-      numeroProcesso: source.numeroProcesso,
-      classe: source.classe?.nome || 'N/A',
-      codigoClasse: source.classe?.codigo || null,
-      sistema: source.sistema?.nome || 'TJPR / Datajud',
-      orgaoJulgador: source.orgaoJulgador?.nome || 'N/A',
-      dataAjuizamento: source.dataAjuizamento || null,
-      ultimaAtualizacao: source.dataHoraUltimaAtualizacao || null,
-      grau: source.grau || 'G1',
-      assuntos: (source.assuntos || []).map((a: any) => a.nome).join(', '),
-      movimentos: (source.movimentos || []).map((m: any) => ({
-        nome: m.nome,
-        data: m.dataHora,
-        complementos: (m.complementosTabelados || []).map((c: any) => `${c.nome}: ${c.descricao}`).join(' | ')
-      })),
-      raw: source
-    };
+    const listaProcessos = hits.map((h: any) => {
+      const src = h._source || {};
+      return {
+        numeroProcesso: src.numeroProcesso,
+        classe: src.classe?.nome || 'N/A',
+        codigoClasse: src.classe?.codigo || null,
+        sistema: src.sistema?.nome || 'TJPR / Datajud',
+        orgaoJulgador: src.orgaoJulgador?.nome || 'N/A',
+        dataAjuizamento: src.dataAjuizamento || null,
+        ultimaAtualizacao: src.dataHoraUltimaAtualizacao || null,
+        grau: src.grau || 'G1',
+        assuntos: (src.assuntos || []).map((a: any) => a.nome).join(', '),
+        movimentos: (src.movimentos || []).map((m: any) => ({
+          nome: m.nome,
+          data: m.dataHora,
+          complementos: (m.complementosTabelados || []).map((c: any) => `${c.nome}: ${c.descricao}`).join(' | ')
+        })),
+        raw: src
+      };
+    });
 
     return res.json({
       success: true,
-      message: 'Processo localizado com sucesso.',
-      data: dadosFormatados
+      message: `${listaProcessos.length} processo(s) localizado(s) com sucesso.`,
+      total: response.data?.hits?.total?.value || listaProcessos.length,
+      data: listaProcessos[0],
+      processos: listaProcessos
     });
 
   } catch (error: any) {

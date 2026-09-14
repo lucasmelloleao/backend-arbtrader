@@ -183,6 +183,44 @@ export async function runTrendGridLoop() {
               log.info(`📊 [GRID TICKER] ${sym} Bid: ${ticker.bid} | Ask: ${ticker.ask} | Motor Grid ATIVO`);
             }
 
+            // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
+            const dbGridStrategies = await ForexArbStrategy.find({
+              userId: settings.userId,
+              type: 'trend_grid',
+              positionOpen: true,
+              active: true
+            }).lean();
+
+            for (const strat of dbGridStrategies) {
+              const sym = strat.legs?.[0]?.symbol;
+              if (sym && !activeGridEngines.has(sym)) {
+                const side = (strat.legs?.[0]?.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+                const engine = new TrendGridEngine({
+                  symbol: sym,
+                  side,
+                  lotSize: strat.tradeSize || 0.01,
+                  stepPips: strat.gridStepPips || 15,
+                  trailingPips: strat.gridTrailingPips || 10,
+                  maxGridLevels: strat.maxGridLevels || 5,
+                });
+
+                if (strat.gridPositions && strat.gridPositions.length > 0) {
+                  engine.positions = strat.gridPositions;
+                  if (side === 'BUY') {
+                    engine.highestPrice = Math.max(...strat.gridPositions.map((p: any) => p.entryPrice));
+                  } else {
+                    engine.lowestPrice = Math.min(...strat.gridPositions.map((p: any) => p.entryPrice));
+                  }
+                }
+                if (strat.globalTrailingStopPrice) {
+                  engine.globalTrailingStop = strat.globalTrailingStopPrice;
+                }
+
+                activeGridEngines.set(sym, { engine, strategyId: (strat as any)._id.toString() });
+                log.info(`🔄 [GRID RESTAURADO] Estratégia de grade ativa restaurada do banco para ${sym} (${side}) com ${engine.positions.length} posições.`);
+              }
+            }
+
             const gridData = activeGridEngines.get(sym);
 
             if (gridData) {
