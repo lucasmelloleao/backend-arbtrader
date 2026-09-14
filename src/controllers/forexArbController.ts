@@ -507,7 +507,12 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
 
     try {
       let filter: any = { userId };
-      if (processName.includes('scanner')) {
+      if (processName.includes('grid')) {
+        filter.$or = [
+          { strategyName: new RegExp('TrendGrid', 'i') },
+          { reason: new RegExp('grid', 'i') }
+        ];
+      } else if (processName.includes('scanner')) {
         filter.type = { $in: ['opportunity_found', 'scan'] };
       }
 
@@ -524,16 +529,22 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
         return `[${ts}] [${processName.toUpperCase()}] ${t.type.toUpperCase()}: ${t.strategyName || symbol} ${side}${price} | ${t.reason || t.status || 'OK'}`;
       });
 
+      const defaultLogs = processName.includes('grid')
+        ? [
+            `[${new Date().toISOString()}] [TREND-GRID] Motor de Piramidagem & Trailing Stop Global operante.`,
+            `⚡ Monitorando ticks de mercado cTrader e níveis do grid...`,
+            `🎯 Calculando Preço Médio Ponderado por volume e marca d'água de Trailing Stop...`
+          ]
+        : [
+            `[${new Date().toISOString()}] [FOREX-SCALPER] Robô de Scalping Forex operante.`,
+            `⚡ Monitorando ticks de mercado em tempo real (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
+            `🎯 Buscando novos cruzamentos de médias (EMA5 x EMA15) e validação de RSI...`
+          ];
+
       const responseData = {
         process: processName,
         linesCount: dbLogs.length > 0 ? dbLogs.length : 3,
-        logs: dbLogs.length > 0
-          ? dbLogs
-          : [
-              `[${new Date().toISOString()}] [${processName.toUpperCase()}] Robô de Scalping Forex operante.`,
-              `⚡ Monitorando ticks de mercado em tempo real (EUR/USD, GBP/USD, USD/JPY, XAU/USD)...`,
-              `🎯 Buscando novos cruzamentos de médias (EMA5 x EMA15) e validação de RSI...`
-            ],
+        logs: dbLogs.length > 0 ? dbLogs : defaultLogs,
         timestamp: new Date().toISOString(),
       };
       const isDashboard = req.path.includes('/auth/');
