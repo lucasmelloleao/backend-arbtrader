@@ -69,10 +69,11 @@ export async function consultarProcessoTJPR(req: AuthenticatedRequest, res: Resp
     });
 
   } catch (error: any) {
-    console.error('❌ Erro na consulta do processo TJPR:', error.message || error);
-    return res.status(500).json({
+    console.error('❌ Erro na consulta do processo TJPR:', error.response?.data || error.message || error);
+    return res.json({
       success: false,
-      message: error.response?.data?.message || error.message || 'Erro ao consultar o TJPR.'
+      message: error.response?.data?.message || 'Processo não encontrado ou indisponível na base pública do Datajud/TJPR no momento.',
+      data: null
     });
   }
 }
