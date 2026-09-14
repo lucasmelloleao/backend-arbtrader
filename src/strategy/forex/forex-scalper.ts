@@ -1329,7 +1329,10 @@ async function startScalper() {
   }
 }
 
+import { runTrendGridLoop } from './forex-trend-grid';
+
 if (require.main === module) {
+  runTrendGridLoop().catch(err => log.error('Erro no loop do Trend Grid:', err));
   startScalper().catch(err => {
     log.error('Erro fatal no bot de Scalping:', err);
     process.exit(1);

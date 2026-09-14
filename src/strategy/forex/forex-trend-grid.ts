@@ -179,6 +179,10 @@ export async function runTrendGridLoop() {
             const ticker = tickers[sym];
             if (!ticker || !ticker.bid || !ticker.ask) continue;
 
+            if (Math.random() < 0.05) {
+              log.info(`📊 [GRID TICKER] ${sym} Bid: ${ticker.bid} | Ask: ${ticker.ask} | Motor Grid ATIVO`);
+            }
+
             const gridData = activeGridEngines.get(sym);
 
             if (gridData) {
