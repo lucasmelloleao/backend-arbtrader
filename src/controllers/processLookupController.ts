@@ -10,18 +10,19 @@ export async function consultarProcessoTJPR(req: AuthenticatedRequest, res: Resp
     }
 
     const numeroLimpo = numeroProcesso.replace(/\D/g, '');
-    if (numeroLimpo.length < 10) {
-      return res.status(400).json({ success: false, message: 'Número de processo inválido.' });
+    if (numeroLimpo.length < 3) {
+      return res.status(400).json({ success: false, message: 'Digite pelo menos 3 dígitos do processo.' });
     }
+
+    const queryDatajud = numeroLimpo.length === 20
+      ? { match: { numeroProcesso: numeroLimpo } }
+      : { wildcard: { numeroProcesso: `*${numeroLimpo}*` } };
 
     const response = await axios.post(
       'https://api-publica.datajud.cnj.jus.br/api_publica_tjpr/_search',
       {
-        query: {
-          match: {
-            numeroProcesso: numeroLimpo
-          }
-        }
+        size: 10,
+        query: queryDatajud
       },
       {
         headers: {
@@ -32,15 +33,16 @@ export async function consultarProcessoTJPR(req: AuthenticatedRequest, res: Resp
       }
     );
 
-    const hit = response.data?.hits?.hits?.[0];
-    if (!hit) {
+    const hits = response.data?.hits?.hits || [];
+    if (hits.length === 0) {
       return res.json({
         success: true,
-        message: 'Nenhum processo encontrado na base do Datajud/TJPR com este número.',
+        message: 'Nenhum processo encontrado na base do Datajud/TJPR com este trecho ou número.',
         data: null
       });
     }
 
+    const hit = hits[0];
     const source = hit._source;
 
     // Normaliza dados relevantes do Datajud
