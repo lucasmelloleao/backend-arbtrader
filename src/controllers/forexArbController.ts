@@ -472,9 +472,11 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    processName = (req.query.process as string) || 'forex-scalper';
-    if (['forex-scalp-executor', 'forex-scalp-scanner', 'forex-arb', 'forex-scanner'].includes(processName)) {
-      processName = 'forex-scalper';
+    const requestedProcess = (req.query.process as string) || 'forex-scalper';
+    processName = requestedProcess;
+    let pm2ProcessName = 'forex-scalper';
+    if (['forex-scalp-executor', 'forex-scalp-scanner', 'forex-arb', 'forex-scanner', 'forex-trend-grid', 'trend-grid'].includes(requestedProcess)) {
+      pm2ProcessName = 'forex-scalper';
     }
     const lines = (req.query.lines as string) || '150';
 
@@ -483,8 +485,8 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const execAsync = promisify(exec);
 
     try {
-      // 1. Tenta buscar logs reais do PM2 se o processo estiver rodando
-      const { stdout, stderr } = await execAsync(`pm2 logs ${processName} --lines ${lines} --nostream --raw`);
+      // 1. Tenta buscar logs reais do PM2 do processo em execução
+      const { stdout, stderr } = await execAsync(`pm2 logs ${pm2ProcessName} --lines ${lines} --nostream --raw`);
       const rawLog = (stdout || stderr || '').toString();
       const logLines = rawLog
         .split('\n')
