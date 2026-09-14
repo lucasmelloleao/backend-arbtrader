@@ -191,6 +191,8 @@ router.get('/auth/portfolio/resumo', authMiddleware as any, getPortfolioResumo a
 router.get('/auth/portfolio/historico', authMiddleware as any, getPortfolioHistorico as any);
 router.get('/auth/portfolio/live', authMiddleware as any, getPortfolioLive as any);
 
+import { consultarProcessoTJPR } from '../controllers/processLookupController';
+
 // --- LATENCY ARB ENDPOINTS ---
 router.get('/latency-arb/settings', authMiddleware as any, getLatencySettings as any);
 router.post('/latency-arb/settings', authMiddleware as any, updateLatencySettings as any);
@@ -203,5 +205,9 @@ router.post('/auth/latency-arb/settings', authMiddleware as any, updateLatencySe
 router.get('/auth/latency-arb/trades', authMiddleware as any, getLatencyTrades as any);
 router.post('/auth/latency-arb/close', authMiddleware as any, closeLatencyTrade as any);
 router.get('/auth/latency-arb/logs', authMiddleware as any, getLatencyLogs as any);
+
+// --- CONSULTA PROCESSUAL TJPR / DATAJUD ---
+router.post('/processo-tjpr', authMiddleware as any, consultarProcessoTJPR as any);
+router.post('/auth/processo-tjpr', authMiddleware as any, consultarProcessoTJPR as any);
 
 export default router;
