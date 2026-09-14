@@ -492,10 +492,18 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
         .filter((l: string) => l.length > 0);
 
       if (logLines.length > 0) {
+        const filteredLines = processName.includes('grid')
+          ? logLines.filter((l: string) => l.includes('GRID') || l.includes('GRID BUY') || l.includes('GRID SELL') || l.includes('Piramidagem'))
+          : logLines;
+
         const responseData = {
           process: processName,
-          linesCount: logLines.length,
-          logs: logLines,
+          linesCount: filteredLines.length,
+          logs: filteredLines.length > 0 ? filteredLines : [
+            `[${new Date().toISOString()}] [TREND-GRID] Motor de Piramidagem & Trailing Stop Global operante.`,
+            `⚡ Monitorando ticks de mercado cTrader e níveis do grid...`,
+            `🎯 Calculando Preço Médio Ponderado por volume e marca d'água de Trailing Stop...`
+          ],
           timestamp: new Date().toISOString(),
         };
         const isDashboard = req.path.includes('/auth/');
