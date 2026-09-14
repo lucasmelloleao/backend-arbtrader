@@ -25,7 +25,7 @@ export async function consultarProcessoTJPR(req: AuthenticatedRequest, res: Resp
       },
       {
         headers: {
-          'Authorization': 'APIKey cjfsd2UtU2FvLVBhdWxvLVNQ',
+          'Authorization': 'APIKey cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==',
           'Content-Type': 'application/json'
         },
         timeout: 15000
