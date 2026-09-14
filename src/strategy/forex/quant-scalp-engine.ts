@@ -321,7 +321,7 @@ export function checkBinomialLossCircuitBreaker(
   consecutiveLosses: number,
   expectedWinRate: number = 0.60
 ): { shouldPause: boolean; probability: number } {
-  if (consecutiveLosses < 3) return { shouldPause: false, probability: 1.0 };
+  if (consecutiveLosses < 10) return { shouldPause: false, probability: 1.0 };
 
   const lossProbability = 1 - expectedWinRate; // ex: 0.40
   const sequenceProbability = Math.pow(lossProbability, consecutiveLosses);
