@@ -921,7 +921,7 @@ async function startScalper() {
         try {
           await (BotStatus as any).updateOne(
             { userId: settings.userId, botName: 'forex-scalper' },
-            { $set: { lastHeartbeat: new Date() } },
+            { $set: { lastHeartbeat: new Date(), botName: 'forex-scalper', isOnline: settings.isScanningEnabled === true } },
             { upsert: true }
           );
           await (BotStatus as any).updateOne(

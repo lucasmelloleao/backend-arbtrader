@@ -30,8 +30,8 @@ export async function getBotStatus(req: AuthenticatedRequest, res: Response) {
     
     if (botStatusDoc && botStatusDoc.lastHeartbeat) {
       const diffMs = Date.now() - new Date(botStatusDoc.lastHeartbeat).getTime();
-      // Considera online se o heartbeat ocorreu nos ultimos 3 minutos
-      if (diffMs < 3 * 60 * 1000) {
+      // Considera online se o heartbeat ocorreu nos últimos 3 minutos E a flag isOnline for verdadeira
+      if (diffMs < 3 * 60 * 1000 && (botStatusDoc as any).isOnline !== false) {
         isOnline = true;
       }
     }
