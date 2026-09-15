@@ -393,8 +393,10 @@ export class CtraderAdapter {
 
       const handler = (evt: any) => {
         const order = evt.order || {};
-        if (order.clientOrderId !== clientOrderId) return;
-        if (evt.executionType === EXECUTION_TYPE.ORDER_FILLED) {
+        const evtClientOrderId = order.clientOrderId || evt.position?.clientOrderId || evt.clientOrderId;
+        if (evtClientOrderId !== clientOrderId) return;
+        
+        if (evt.executionType === EXECUTION_TYPE.ORDER_FILLED || evt.executionType === EXECUTION_TYPE.ORDER_ACCEPTED) {
           clearTimeout(timer);
           this.client.offExecution(handler);
           const deal = evt.deal || {};
@@ -405,13 +407,13 @@ export class CtraderAdapter {
               ? Number(pos.price)
               : (order.executionPrice != null ? Number(order.executionPrice) : 0));
           const price = rawPrice;
-          const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : 0);
+          const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : (order.volume != null ? Number(order.volume) : 0));
           resolve({
-            id: String(order.orderId || deal.dealId || ''),
+            id: String(order.orderId || deal.dealId || pos.positionId || ''),
             clientOrderId,
             symbol,
             price,
-            amount: filledVolume / VOLUME_DIVISOR, // filledVolume é em cents de unidade; divide por 100 p/ unidades
+            amount: filledVolume / VOLUME_DIVISOR,
             positionId: evt.position?.positionId != null ? String(evt.position.positionId) : undefined,
             side: order.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
           });
