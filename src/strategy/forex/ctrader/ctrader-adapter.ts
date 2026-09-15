@@ -68,7 +68,6 @@ export class CtraderAdapter {
       onDisconnect: () => {
         this.subscribed.clear();
         this.tickers.clear();
-        log.warn('⚠️ CtraderAdapter: conexão caiu. Assinaturas de spot serão refeitas no próximo fetch.');
       },
     });
   }

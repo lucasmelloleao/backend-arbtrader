@@ -201,8 +201,13 @@ export async function runTrendGridLoop() {
             const ticker = tickers[sym];
             if (!ticker || !ticker.bid || !ticker.ask) continue;
 
-            if (sym === 'EUR/USD' && (Date.now() % 5000 < 500)) {
-              log.info(`⚡ [GRID TICKER ACTIVE] ${sym} Bid: ${ticker.bid} | Ask: ${ticker.ask} | Motor operando!`);
+            if (Date.now() % 10000 < 500 && sym === 'EUR/USD') {
+              const totalGrids = activeGridEngines.size;
+              if (totalGrids > 0) {
+                log.info(`⚡ [TREND GRID OPERANDO] ${totalGrids} grade(s) ativa(s) sendo monitorada(s) | Tick ${sym}: ${ticker.bid}/${ticker.ask}`);
+              } else {
+                log.info(`⏳ [TREND GRID AGUARDANDO] Motor ativo | Cotações fluindo (${sym}: ${ticker.bid}/${ticker.ask}) | Aguardando iniciar nova grade no painel...`);
+              }
             }
 
             // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
