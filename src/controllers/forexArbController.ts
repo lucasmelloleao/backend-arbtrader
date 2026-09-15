@@ -110,7 +110,9 @@ export async function getForexStrategies(req: AuthenticatedRequest, res: Respons
         trailingDistanceUsd: trailingDistanceUsd,
         currentAction: currentAction,
         currentPrice: (s as any).currentPrice || null,
-        lastLegPrices: (s as any).lastLegPrices || {},
+        isGrid: (s as any).isGrid ?? (s.type === 'trend_grid' || Boolean((s as any).gridLevelsCount)),
+        gridLevelsCount: (s as any).gridLevelsCount || (s as any).gridPositions?.length || 1,
+        gridPositions: (s as any).gridPositions || [],
         closedAt: s.closedAt,
         createdAt: s.createdAt
       });
