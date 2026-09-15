@@ -1,3 +1,5 @@
+import { loadEnv } from '../../utils/env-loader';
+loadEnv();
 import { connectToDatabase } from '../../config/db';
 import ForexArbSettings from '../../models/ForexArbSettings';
 import ForexArbStrategy from '../../models/ForexArbStrategy';
