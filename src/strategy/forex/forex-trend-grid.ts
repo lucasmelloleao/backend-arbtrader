@@ -274,8 +274,8 @@ export async function runTrendGridLoop() {
 
                 const deltaPips = (lastPrice - firstPrice) / pipSize;
                 
-                // Variação mínima de 3 pips nos últimos ticks para confirmar tendência
-                if (Math.abs(deltaPips) >= 3.0) {
+                // Variação micro-tendência: 0.8 pips nos últimos ticks para acionar abertura de grade
+                if (Math.abs(deltaPips) >= 0.8) {
                   const autoSide: 'BUY' | 'SELL' = deltaPips > 0 ? 'BUY' : 'SELL';
                   log.info(`🎯 [TREND GRID AUTO-DETECT] Oportunidade em ${sym}! Tendência de ${autoSide} (${deltaPips.toFixed(1)} pips). Abrindo grade...`);
 
