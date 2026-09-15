@@ -161,8 +161,9 @@ export class TrendGridEngine {
   }
 }
 
-// Rastreamento em memória das grades ativas por símbolo
+// Rastreamento em memória das grades ativas e histórico recente de cotações por símbolo
 const activeGridEngines = new Map<string, { engine: TrendGridEngine; strategyId: string }>();
+const priceHistories = new Map<string, number[]>();
 
 export async function runTrendGridLoop() {
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
@@ -219,11 +220,11 @@ export async function runTrendGridLoop() {
             }).lean();
 
             for (const strat of dbGridStrategies) {
-              const sym = strat.legs?.[0]?.symbol;
-              if (sym && !activeGridEngines.has(sym)) {
+              const symName = strat.legs?.[0]?.symbol;
+              if (symName && !activeGridEngines.has(symName)) {
                 const side = (strat.legs?.[0]?.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
                 const engine = new TrendGridEngine({
-                  symbol: sym,
+                  symbol: symName,
                   side,
                   lotSize: strat.tradeSize || 0.01,
                   stepPips: strat.gridStepPips || 15,
@@ -243,8 +244,83 @@ export async function runTrendGridLoop() {
                   engine.globalTrailingStop = strat.globalTrailingStopPrice;
                 }
 
-                activeGridEngines.set(sym, { engine, strategyId: (strat as any)._id.toString() });
-                log.info(`🔄 [GRID RESTAURADO] Estratégia de grade ativa restaurada do banco para ${sym} (${side}) com ${engine.positions.length} posições.`);
+                activeGridEngines.set(symName, { engine, strategyId: (strat as any)._id.toString() });
+                log.info(`🔄 [GRID RESTAURADO] Estratégia de grade ativa restaurada do banco para ${symName} (${side}) com ${engine.positions.length} posições.`);
+              }
+            }
+
+            // AUTO-DETECÇÃO DE OPORTUNIDADES (ENTRADA AUTOMÁTICA):
+            // Se o ativo não possui grade ativa e o robô está habilitado, analisa a micro-tendência para iniciar nova grade
+            if (!activeGridEngines.has(sym) && settings.gridEnabled !== false) {
+              const priceHistory = priceHistories.get(sym) || [];
+              const midPrice = (ticker.bid + ticker.ask) / 2;
+              priceHistory.push(midPrice);
+              if (priceHistory.length > 20) priceHistory.shift();
+              priceHistories.set(sym, priceHistory);
+
+              if (priceHistory.length >= 10) {
+                const firstPrice = priceHistory[0];
+                const lastPrice = priceHistory[priceHistory.length - 1];
+                const deltaPips = (lastPrice - firstPrice) / (sym.includes('JPY') ? 0.01 : 0.0001);
+                
+                // Critério de Tendência Autônoma: variação mínima de 3 pips nos últimos 10-20 ticks
+                if (Math.abs(deltaPips) >= 3.0) {
+                  const autoSide: 'BUY' | 'SELL' = deltaPips > 0 ? 'BUY' : 'SELL';
+                  log.info(`🎯 [TREND GRID AUTO-DETECT] Oportunidade detectada em ${sym}! Tendência de ${autoSide} (${deltaPips.toFixed(1)} pips). Abrindo grade automática...`);
+
+                  try {
+                    const lotSize = settings.lotSize || 0.01;
+                    const volUnits = lotSize * 100000;
+                    const orderRes = await adapter.createMarketOrder(sym, autoSide.toLowerCase() as 'buy' | 'sell', volUnits);
+                    const posId = orderRes?.positionId || orderRes?.id || Date.now().toString();
+                    const entryPrice = orderRes?.price ? Number(orderRes.price) : (autoSide === 'BUY' ? ticker.ask : ticker.bid);
+
+                    const firstPos: GridPosition = {
+                      id: posId,
+                      positionId: String(posId),
+                      orderId: orderRes?.id ? String(orderRes.id) : String(posId),
+                      entryPrice,
+                      volume: lotSize,
+                      side: autoSide,
+                      createdAt: Date.now(),
+                    };
+
+                    const newStrat = await ForexArbStrategy.create({
+                      userId: settings.userId,
+                      name: `TrendGrid Auto ${sym} (${autoSide})`,
+                      type: 'trend_grid',
+                      tradeSize: lotSize,
+                      gridStepPips: 15,
+                      gridTrailingPips: 10,
+                      maxGridLevels: 5,
+                      positionOpen: true,
+                      active: true,
+                      legs: [{ symbol: sym, side: autoSide, exchangeId: 'ctrader' }],
+                      gridPositions: [firstPos],
+                      weightedAvgPrice: entryPrice,
+                      gridLevelsCount: 1,
+                      currentPrice: midPrice,
+                      currentAction: `🚀 Grade Autônoma Iniciada (Nível 1/5 @ ${entryPrice})`,
+                    });
+
+                    const engine = new TrendGridEngine({
+                      symbol: sym,
+                      side: autoSide,
+                      lotSize,
+                      stepPips: 15,
+                      trailingPips: 10,
+                      maxGridLevels: 5,
+                    });
+                    engine.positions = [firstPos];
+                    if (autoSide === 'BUY') engine.highestPrice = entryPrice;
+                    else engine.lowestPrice = entryPrice;
+
+                    activeGridEngines.set(sym, { engine, strategyId: (newStrat as any)._id.toString() });
+                    log.info(`✅ [TREND GRID AUTO INICIADO] Nova grade criada com sucesso para ${sym} (${autoSide}) @ ${entryPrice}`);
+                  } catch (err: any) {
+                    log.error(`❌ [TREND GRID AUTO ERROR] Falha ao iniciar grade autônoma para ${sym}: ${err.message}`);
+                  }
+                }
               }
             }
 
