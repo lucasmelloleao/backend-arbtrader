@@ -349,13 +349,9 @@ export class CtraderAdapter {
 
     log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} volumeProtocol=${volumeProtocol} | ${amount} unidades | ${(volumeProtocol / (market.lotSize * 100)).toFixed(2)} lote)...`);
 
-    // A cTrader Open API NÃO responde ao NewOrderReq com uma resposta
-    // correlacionada por clientMsgId: a confirmação chega como
-    // ProtoOAExecutionEvent (2126) ecoando o clientOrderId. Por isso:
-    //  1) registra o waitForFill ANTES do envio (para não perder o evento);
-    //  2) envia a ordem em fire-and-forget.
     const fillPromise = this.waitForFill(clientOrderId, symbol, 15000);
-    this.client.sendFireAndForget(
+
+    const res = await this.client.sendRequest(
       PAYLOAD_TYPE.PROTO_OA_NEW_ORDER_REQ,
       'ProtoOANewOrderReq',
       {
@@ -368,12 +364,36 @@ export class CtraderAdapter {
         clientOrderId,
         timeInForce: 3, // IMMEDIATE_OR_CANCEL
       },
+      15000
     );
+
+    if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
+      throw new Error(`CtraderAdapter: erro ao enviar ordem: ${res.errorCode} ${res.description || ''}`);
+    }
+
+    // Se o evento ProtoOAExecutionEvent veio direto no retorno da requisição
+    if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_EXECUTION_EVENT || res.executionType) {
+      const order = res.order || {};
+      const deal = res.deal || {};
+      const pos = res.position || {};
+      const rawPrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
+        ? Number(deal.executionPrice)
+        : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
+      const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : (order.volume != null ? Number(order.volume) : 0));
+      return {
+        id: String(order.orderId || deal.dealId || pos.positionId || clientOrderId),
+        clientOrderId,
+        symbol,
+        price: rawPrice,
+        amount: filledVolume / VOLUME_DIVISOR,
+        positionId: pos.positionId != null ? String(pos.positionId) : undefined,
+        side: order.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
+      };
+    }
 
     try {
       return await fillPromise;
     } catch (e: any) {
-      // Se a rejeição for por token expirado/inválido, renova e reenvia.
       const msg = e?.message || '';
       if (msg.includes('OA_AUTH_TOKEN_EXPIRED') || msg.includes('CH_ACCESS_TOKEN_INVALID')) {
         log.warn('⚠️ CtraderAdapter: token expirado ao enviar ordem. Tentando refresh...');
