@@ -445,6 +445,8 @@ export class CtraderClient {
       [PAYLOAD_TYPE.PROTO_OA_GET_TRENDBARS_RES]: 'ProtoOAGetTrendbarsRes',
       [PAYLOAD_TYPE.PROTO_OA_EXPECTED_MARGIN_RES]: 'ProtoOAExpectedMarginRes',
       [PAYLOAD_TYPE.PROTO_OA_ERROR_RES]: 'ProtoOAErrorRes',
+      [PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT]: 'ProtoOAOrderErrorEvent',
+      [PAYLOAD_TYPE.PROTO_OA_EXECUTION_EVENT]: 'ProtoOAExecutionEvent',
       [PAYLOAD_TYPE.PROTO_OA_GET_ACCOUNTS_BY_ACCESS_TOKEN_RES]: 'ProtoOAGetAccountListByAccessTokenRes',
       [PAYLOAD_TYPE.PROTO_OA_ACCOUNT_LOGOUT_RES]: 'ProtoOAAccountLogoutRes',
       [PAYLOAD_TYPE.PROTO_OA_REFRESH_TOKEN_RES]: 'ProtoOARefreshTokenRes',
