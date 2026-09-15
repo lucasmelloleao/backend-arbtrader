@@ -272,9 +272,8 @@ export class CtraderAdapter {
     }
     await this.ensureSpots(pairs);
     // O primeiro ProtoOASpotEvent chega logo após a assinatura; aguarda um tick
-    // de cada par (ou usa o que já tem em cache). 7s dá margem para o primeiro
-    // tick de símbolos recém-assinados em conexão nova.
-    await this.waitForTicks(pairs, 7000);
+    // de cada par (ou usa o que já tem em cache).
+    await this.waitForTicks(pairs, 1500);
     const out: Record<string, CtraderTicker> = {};
     for (const sym of pairs) {
       const t = this.tickers.get(sym);
