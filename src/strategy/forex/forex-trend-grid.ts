@@ -5,6 +5,7 @@ import ForexArbSettings from '../../models/ForexArbSettings';
 import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
+import BotStatus from '../../models/BotStatus';
 import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
 import logger from '../../utils/logger';
 
@@ -179,6 +180,13 @@ export async function runTrendGridLoop() {
           settings.gridEnabled = true;
           log.info('✅ [TREND GRID] Robô Trend Grid HABILITADO no banco de dados!');
         }
+
+        // Atualiza o Heartbeat do bot para o frontend exibir ONLINE
+        await (BotStatus as any).updateOne(
+          { userId: String(settings.userId), botName: { $in: ['forex-trend-grid', 'forex-scalper'] } },
+          { $set: { lastHeartbeat: new Date(), botName: 'forex-trend-grid' } },
+          { upsert: true }
+        ).catch(() => {});
 
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
