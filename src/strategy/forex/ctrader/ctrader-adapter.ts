@@ -326,7 +326,7 @@ export class CtraderAdapter {
    *   volumeProtocol = round(amount / lotSize * VOLUME_DIVISOR)  → nº de 1/100 de lote
    *   (0.01 lote = 1; 1.00 lote = 100)
    */
-  async createMarketOrder(symbol: string, side: 'buy' | 'sell', amount: number): Promise<any> {
+  async createMarketOrder(symbol: string, side: 'buy' | 'sell', amount: number, timeoutMs = 15000): Promise<any> {
     await this.connect();
     // Garante que os markets estão carregados (o executor pode chamar
     // createMarketOrder sem passar por loadMarkets antes).
