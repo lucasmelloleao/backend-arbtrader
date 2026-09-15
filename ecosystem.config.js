@@ -72,6 +72,7 @@ module.exports = {
       restart_delay: 10000,
       kill_timeout: 8000,
     },
+    /* Desativado em favor do robô isolado Trend Grid
     {
       name: "forex-scalper",
       script: "dist/strategy/forex/forex-scalper.js",
@@ -82,6 +83,7 @@ module.exports = {
       restart_delay: 5000,
       kill_timeout: 8000,
     },
+    */
     {
       name: "trend-grid",
       script: "dist/strategy/forex/forex-trend-grid.js",
