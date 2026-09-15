@@ -424,7 +424,7 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
     const settings = await ForexArbSettings.findOneAndUpdate(
       { userId },
       { $set: body },
-      { new: true, upsert: true }
+      { returnDocument: 'after', upsert: true }
     );
 
     const formatted = {

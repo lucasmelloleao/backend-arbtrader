@@ -179,15 +179,15 @@ export async function runTrendGridLoop() {
         if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Configurações de Forex (ForexArbSettings) não encontradas no banco.');
       } else {
         if (settings.gridEnabled === false) {
-          await ForexArbSettings.updateOne({ _id: settings._id }, { $set: { gridEnabled: true } });
-          settings.gridEnabled = true;
-          log.info('✅ [TREND GRID] Robô Trend Grid HABILITADO no banco de dados!');
+          if (Math.random() < 0.05) {
+            log.info('⏸️ [TREND GRID DESABILITADO] Robô Trend Grid pausado pelo painel.');
+          }
         }
 
-        // Atualiza o Heartbeat do bot para o frontend exibir ONLINE (forex-trend-grid)
+        // Atualiza o Heartbeat do bot para o frontend exibir ONLINE/OFFLINE (forex-trend-grid)
         await (BotStatus as any).updateOne(
           { userId: String(settings.userId), botName: 'forex-trend-grid' },
-          { $set: { lastHeartbeat: new Date(), botName: 'forex-trend-grid', isOnline: true } },
+          { $set: { lastHeartbeat: new Date(), botName: 'forex-trend-grid', isOnline: settings.gridEnabled !== false } },
           { upsert: true }
         ).catch(() => {});
 
