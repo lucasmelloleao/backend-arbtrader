@@ -166,7 +166,8 @@ const activeGridEngines = new Map<string, { engine: TrendGridEngine; strategyId:
 const priceHistories = new Map<string, number[]>();
 
 export async function runTrendGridLoop() {
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
+  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP'];
+  const lastFailedAttempts = new Map<string, number>();
   log.info('🚀 [TREND GRID BOT] Conectando ao banco de dados e iniciando motor de Piramidagem...');
   await connectToDatabase();
 
@@ -250,8 +251,11 @@ export async function runTrendGridLoop() {
             }
 
             // AUTO-DETECÇÃO DE OPORTUNIDADES (ENTRADA AUTOMÁTICA):
-            // Se o ativo não possui grade ativa e o robô está habilitado, analisa a micro-tendência para iniciar nova grade
-            if (!activeGridEngines.has(sym) && settings.gridEnabled !== false) {
+            // Se o ativo não possui grade ativa, não falhou nos últimos 60s e o robô está habilitado, analisa a micro-tendência
+            const lastFailTime = lastFailedAttempts.get(sym) || 0;
+            const isCoolingDown = Date.now() - lastFailTime < 60000;
+
+            if (!activeGridEngines.has(sym) && !isCoolingDown && settings.gridEnabled !== false) {
               const priceHistory = priceHistories.get(sym) || [];
               const midPrice = (ticker.bid + ticker.ask) / 2;
               priceHistory.push(midPrice);
@@ -261,12 +265,19 @@ export async function runTrendGridLoop() {
               if (priceHistory.length >= 10) {
                 const firstPrice = priceHistory[0];
                 const lastPrice = priceHistory[priceHistory.length - 1];
-                const deltaPips = (lastPrice - firstPrice) / (sym.includes('JPY') ? 0.01 : 0.0001);
                 
-                // Critério de Tendência Autônoma: variação mínima de 3 pips nos últimos 10-20 ticks
+                // Determina pipSize exato por tipo de ativo
+                let pipSize = 0.0001;
+                if (sym.includes('JPY')) pipSize = 0.01;
+                else if (sym.includes('XAU')) pipSize = 0.1;
+                else if (sym.includes('BTC')) pipSize = 1.0;
+
+                const deltaPips = (lastPrice - firstPrice) / pipSize;
+                
+                // Variação mínima de 3 pips nos últimos ticks para confirmar tendência
                 if (Math.abs(deltaPips) >= 3.0) {
                   const autoSide: 'BUY' | 'SELL' = deltaPips > 0 ? 'BUY' : 'SELL';
-                  log.info(`🎯 [TREND GRID AUTO-DETECT] Oportunidade detectada em ${sym}! Tendência de ${autoSide} (${deltaPips.toFixed(1)} pips). Abrindo grade automática...`);
+                  log.info(`🎯 [TREND GRID AUTO-DETECT] Oportunidade em ${sym}! Tendência de ${autoSide} (${deltaPips.toFixed(1)} pips). Abrindo grade...`);
 
                   try {
                     const lotSize = settings.lotSize || 0.01;
@@ -307,6 +318,7 @@ export async function runTrendGridLoop() {
                       symbol: sym,
                       side: autoSide,
                       lotSize,
+                      pipSize,
                       stepPips: 15,
                       trailingPips: 10,
                       maxGridLevels: 5,
@@ -318,7 +330,8 @@ export async function runTrendGridLoop() {
                     activeGridEngines.set(sym, { engine, strategyId: (newStrat as any)._id.toString() });
                     log.info(`✅ [TREND GRID AUTO INICIADO] Nova grade criada com sucesso para ${sym} (${autoSide}) @ ${entryPrice}`);
                   } catch (err: any) {
-                    log.error(`❌ [TREND GRID AUTO ERROR] Falha ao iniciar grade autônoma para ${sym}: ${err.message}`);
+                    lastFailedAttempts.set(sym, Date.now());
+                    log.error(`❌ [TREND GRID AUTO ERROR] Falha ao iniciar grade autônoma para ${sym}: ${err.message}. Entrando em cooldown de 60s.`);
                   }
                 }
               }
