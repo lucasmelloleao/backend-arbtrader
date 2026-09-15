@@ -125,7 +125,7 @@ export async function takePortfolioSnapshot(userId: string, force: boolean = fal
 
     for (const key of keys) {
       const exId = String(key.exchangeId || '').toLowerCase().trim();
-      if (exId === 'hyperliquid' || exId === 'ctrader' || exId === 'fix' || exId === 'dukascopy' || exId === 'oanda') {
+      if (exId === 'hyperliquid' || exId === 'ctrader' || exId === 'fix' || exId === 'dukascopy' || exId === 'oanda' || exId === 'polymarket') {
         continue;
       }
       try {
