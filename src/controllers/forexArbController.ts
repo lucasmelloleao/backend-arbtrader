@@ -232,9 +232,13 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
         };
       });
 
-      const finalRealizedPnl = (computedNetPnl != null && !isNaN(Number(computedNetPnl)))
-        ? Number(computedNetPnl)
-        : Number(t.realizedPnl || 0);
+      let finalRealizedPnl = Number(t.realizedPnl || 0);
+      if (computedNetPnl != null && !isNaN(Number(computedNetPnl)) && entryP > 0 && closeP > 0 && entryP !== closeP) {
+        finalRealizedPnl = Number(computedNetPnl);
+      } else if (isJpy && finalRealizedPnl > 5.0) {
+        const refPrice = closeP > 0 ? closeP : (entryP > 0 ? entryP : 154.787);
+        finalRealizedPnl = Number((finalRealizedPnl / refPrice).toFixed(4));
+      }
 
       return {
         _id: t._id.toString(),
