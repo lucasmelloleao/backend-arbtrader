@@ -17,6 +17,7 @@ export interface GridPosition {
   orderId?: string;
   entryPrice: number;
   volume: number;
+  volumeProtocol?: number;
   side: 'BUY' | 'SELL';
   createdAt: number;
 }
@@ -329,12 +330,15 @@ export async function runTrendGridLoop() {
                     const posId = orderRes?.positionId || orderRes?.id || Date.now().toString();
                     const entryPrice = orderRes?.price ? Number(orderRes.price) : (autoSide === 'BUY' ? ticker.ask : ticker.bid);
 
+                    const volProto = orderRes?.volumeProtocol || Math.round(lotSize * 100000 * 100);
+
                     const firstPos: GridPosition = {
                       id: posId,
                       positionId: String(posId),
                       orderId: orderRes?.id ? String(orderRes.id) : String(posId),
                       entryPrice,
                       volume: lotSize,
+                      volumeProtocol: volProto,
                       side: autoSide,
                       createdAt: Date.now(),
                     };
@@ -396,12 +400,15 @@ export async function runTrendGridLoop() {
                     const orderRes = await adapter.createMarketOrder(sym, side.toLowerCase() as 'buy' | 'sell', vol);
                     const posId = orderRes?.positionId || orderRes?.id || Date.now().toString();
 
+                    const volProto = orderRes?.volumeProtocol || Math.round(engine.lotSize * 100000 * 100);
+
                     const newPos: GridPosition = {
                       id: posId,
                       positionId: String(posId),
                       orderId: orderRes?.id ? String(orderRes.id) : String(posId),
                       entryPrice: orderRes?.price ? Number(orderRes.price) : marketPrice,
                       volume: engine.lotSize,
+                      volumeProtocol: volProto,
                       side,
                       createdAt: Date.now(),
                     };
@@ -426,8 +433,10 @@ export async function runTrendGridLoop() {
                   try {
                     for (const pos of engine.positions) {
                       if (pos.positionId) {
-                        const volumeProtocol = Math.round(pos.volume * 100);
-                        await adapter.closePosition(pos.positionId, volumeProtocol).catch(() => {});
+                        const volumeProtocol = pos.volumeProtocol || Math.round(pos.volume * 100000 * 100);
+                        await adapter.closePosition(pos.positionId, volumeProtocol).catch((err: any) => {
+                          log.error(`❌ Erro ao fechar posição ${pos.positionId} no cTrader: ${err.message}`);
+                        });
                       }
                     }
 
@@ -464,6 +473,14 @@ export async function runTrendGridLoop() {
                       status: 'executed',
                       closedReason: 'grid_trailing_stop',
                       reason,
+                      legs: engine.positions.map((p) => ({
+                        symbol: sym,
+                        side: engine.side,
+                        orderId: String(p.positionId || p.orderId || p.id),
+                        price: p.entryPrice,
+                        volume: p.volume,
+                        amount: p.volume * 100000,
+                      })),
                     });
 
                     activeGridEngines.delete(sym);
