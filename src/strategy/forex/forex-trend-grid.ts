@@ -225,17 +225,11 @@ export async function runTrendGridLoop() {
                 if (key.includes('/') && pos.positionId) {
                   const existing = await ForexArbStrategy.findOne({
                     positionOpen: true,
-                    $or: [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }],
-                    $and: [
-                      {
-                        $or: [
-                          { 'legs.orderId': String(pos.positionId) },
-                          { 'gridPositions.id': pos.positionId },
-                          { 'gridPositions.positionId': pos.positionId },
-                          { 'gridPositions.orderId': String(pos.positionId) },
-                          { 'legs.symbol': key }
-                        ]
-                      }
+                    $or: [
+                      { 'legs.orderId': String(pos.positionId) },
+                      { 'gridPositions.id': pos.positionId },
+                      { 'gridPositions.positionId': pos.positionId },
+                      { 'gridPositions.orderId': String(pos.positionId) }
                     ]
                   });
                   if (!existing) {
