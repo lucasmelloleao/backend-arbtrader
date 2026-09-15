@@ -35,6 +35,7 @@ export class TrendGridEngine {
   public lowestPrice: number = Infinity;
   public globalTrailingStop: number | null = null;
   public isPendingOrder: boolean = false;
+  public isClosing: boolean = false;
 
   constructor(config: {
     symbol: string;
@@ -69,7 +70,7 @@ export class TrendGridEngine {
     onOpenOrder: (side: 'BUY' | 'SELL', marketPrice: number) => Promise<GridPosition | null>,
     onCloseAll: (reason: string) => Promise<void>
   ): { action: 'NONE' | 'EXPAND' | 'CLOSE_TRAILING'; details?: any } {
-    if (this.positions.length === 0 || this.isPendingOrder) return { action: 'NONE' };
+    if (this.positions.length === 0 || this.isPendingOrder || this.isClosing) return { action: 'NONE' };
 
     const currentPrice = this.side === 'BUY' ? bid : ask;
     const stepDistance = this.stepPips * this.pipSize;
@@ -112,6 +113,7 @@ export class TrendGridEngine {
 
       // 3. Verificação de Saída: preço recuou e tocou o Trailing Stop Global
       if (this.globalTrailingStop !== null && currentPrice <= this.globalTrailingStop) {
+        this.isClosing = true;
         onCloseAll(`Trailing Stop Global Atingido (Piso: ${this.globalTrailingStop.toFixed(5)}, Preço: ${currentPrice.toFixed(5)})`);
         return { action: 'CLOSE_TRAILING', details: { floor: this.globalTrailingStop, currentPrice } };
       }
@@ -153,6 +155,7 @@ export class TrendGridEngine {
 
       // 3. Verificação de Saída para venda
       if (this.globalTrailingStop !== null && currentPrice >= this.globalTrailingStop) {
+        this.isClosing = true;
         onCloseAll(`Trailing Stop Global Atingido (Teto: ${this.globalTrailingStop.toFixed(5)}, Preço: ${currentPrice.toFixed(5)})`);
         return { action: 'CLOSE_TRAILING', details: { floor: this.globalTrailingStop, currentPrice } };
       }
@@ -431,14 +434,31 @@ export async function runTrendGridLoop() {
                   }
                 },
                 async (reason) => {
+                  if (!activeGridEngines.has(sym)) return;
+                  activeGridEngines.delete(sym);
+
                   log.info(`🔒 [GRID CLOSE ALL] Fechando todas as ordens da grade de ${sym}. Motivo: ${reason}`);
+                  let totalRealizedPnl = 0;
+                  let totalCommission = 0;
+                  let hasCtraderPnl = false;
+
                   try {
                     for (const pos of engine.positions) {
                       if (pos.positionId) {
                         const volumeProtocol = pos.volumeProtocol || Math.round(pos.volume * 100000 * 100);
-                        await adapter.closePosition(pos.positionId, volumeProtocol).catch((err: any) => {
+                        const closeRes = await adapter.closePosition(pos.positionId, volumeProtocol).catch((err: any) => {
                           log.error(`❌ Erro ao fechar posição ${pos.positionId} no cTrader: ${err.message}`);
+                          return null;
                         });
+                        if (closeRes) {
+                          if (closeRes.realizedPnl != null && !isNaN(Number(closeRes.realizedPnl))) {
+                            totalRealizedPnl += Number(closeRes.realizedPnl);
+                            hasCtraderPnl = true;
+                          }
+                          if (closeRes.commission != null && !isNaN(Number(closeRes.commission))) {
+                            totalCommission += Number(closeRes.commission);
+                          }
+                        }
                       }
                     }
 
@@ -448,10 +468,12 @@ export async function runTrendGridLoop() {
                     const totalVolume = engine.positions.reduce((acc, p) => acc + p.volume, 0);
                     const totalUnits = totalVolume * 100000;
                     
-                    let realizedPnl = priceDiff * totalUnits;
+                    let calcPnl = priceDiff * totalUnits;
                     if (sym.includes('JPY') && closePrice > 0) {
-                      realizedPnl = (priceDiff * totalUnits) / closePrice;
+                      calcPnl = (priceDiff * totalUnits) / closePrice;
                     }
+
+                    const realizedPnl = hasCtraderPnl ? totalRealizedPnl : calcPnl;
 
                     await ForexArbStrategy.findByIdAndUpdate(strategyId, {
                       positionOpen: false,
@@ -461,6 +483,7 @@ export async function runTrendGridLoop() {
                       active: false,
                       closedAt: new Date(),
                       pnl: realizedPnl,
+                      commission: totalCommission,
                     });
 
                     await ForexArbTrade.create({
@@ -472,6 +495,7 @@ export async function runTrendGridLoop() {
                       amount: totalVolume * 100000,
                       volume: totalVolume,
                       realizedPnl,
+                      commission: totalCommission,
                       status: 'executed',
                       closedReason: 'grid_trailing_stop',
                       reason,
@@ -484,8 +508,6 @@ export async function runTrendGridLoop() {
                         amount: p.volume * 100000,
                       })),
                     });
-
-                    activeGridEngines.delete(sym);
                   } catch (closeErr: any) {
                     log.error(`❌ [GRID CLOSE ERROR] Erro ao fechar grade de ${sym}: ${closeErr.message}`);
                   }
