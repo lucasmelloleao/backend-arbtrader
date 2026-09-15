@@ -224,7 +224,6 @@ export async function runTrendGridLoop() {
               for (const [key, pos] of livePositions.entries()) {
                 if (key.includes('/') && pos.positionId) {
                   const existing = await ForexArbStrategy.findOne({
-                    userId: settings.userId,
                     positionOpen: true,
                     $or: [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }],
                     $and: [
