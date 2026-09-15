@@ -181,10 +181,10 @@ export async function runTrendGridLoop() {
           log.info('✅ [TREND GRID] Robô Trend Grid HABILITADO no banco de dados!');
         }
 
-        // Atualiza o Heartbeat do bot para o frontend exibir ONLINE
+        // Atualiza o Heartbeat do bot para o frontend exibir ONLINE (forex-arb, forex-trend-grid, forex-scalper)
         await (BotStatus as any).updateOne(
-          { userId: String(settings.userId), botName: { $in: ['forex-trend-grid', 'forex-scalper'] } },
-          { $set: { lastHeartbeat: new Date(), botName: 'forex-trend-grid' } },
+          { userId: String(settings.userId), botName: { $in: ['forex-trend-grid', 'forex-scalper', 'forex-arb'] } },
+          { $set: { lastHeartbeat: new Date(), botName: 'forex-arb' } },
           { upsert: true }
         ).catch(() => {});
 
