@@ -171,11 +171,17 @@ export async function runTrendGridLoop() {
   while (true) {
     try {
       const settings = await ForexArbSettings.findOne().lean();
-      if (settings && settings.userId && settings.gridEnabled) {
+      if (!settings || !settings.userId) {
+        if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Configurações de Forex (ForexArbSettings) não encontradas no banco.');
+      } else if (!settings.gridEnabled) {
+        if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Robô Trend Grid desativado nas configurações do painel (gridEnabled: false).');
+      } else {
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
-        if (ctraderKey) {
+        if (!ctraderKey) {
+          if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Chave cTrader ativa não encontrada para o usuário.');
+        } else {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
           const tickers = await adapter.fetchTickers(symbols);
 
