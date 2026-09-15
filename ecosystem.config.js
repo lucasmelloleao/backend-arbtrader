@@ -81,6 +81,16 @@ module.exports = {
       max_memory_restart: "400M",
       restart_delay: 5000,
       kill_timeout: 8000,
+    },
+    {
+      name: "trend-grid",
+      script: "dist/strategy/forex/forex-trend-grid.js",
+      node_args: "--expose-gc --max-old-space-size=300",
+      autorestart: true,
+      max_restarts: 15,
+      max_memory_restart: "400M",
+      restart_delay: 5000,
+      kill_timeout: 8000,
     }
   ]
 };
