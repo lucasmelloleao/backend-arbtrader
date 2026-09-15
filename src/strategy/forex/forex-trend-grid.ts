@@ -322,6 +322,10 @@ export async function runTrendGridLoop() {
           }
         }
       }
+    } catch (err: any) {
+      log.error(`⚠️ Erro no ciclo do Trend Grid: ${err.message}`);
+    }
+
     await new Promise((r) => setTimeout(r, 500));
   }
 }
@@ -329,4 +333,5 @@ export async function runTrendGridLoop() {
 if (require.main === module) {
   runTrendGridLoop().catch(err => log.error('Erro fatal no motor Trend Grid:', err));
 }
+
 
