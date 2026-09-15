@@ -193,8 +193,8 @@ export async function runTrendGridLoop() {
             const ticker = tickers[sym];
             if (!ticker || !ticker.bid || !ticker.ask) continue;
 
-            if (Math.random() < 0.05) {
-              log.info(`📊 [GRID TICKER] ${sym} Bid: ${ticker.bid} | Ask: ${ticker.ask} | Motor Grid ATIVO`);
+            if (sym === 'EUR/USD' && (Date.now() % 5000 < 500)) {
+              log.info(`⚡ [GRID TICKER ACTIVE] ${sym} Bid: ${ticker.bid} | Ask: ${ticker.ask} | Motor operando!`);
             }
 
             // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
