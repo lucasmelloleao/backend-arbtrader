@@ -173,9 +173,13 @@ export async function runTrendGridLoop() {
       const settings = await ForexArbSettings.findOne().lean();
       if (!settings || !settings.userId) {
         if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Configurações de Forex (ForexArbSettings) não encontradas no banco.');
-      } else if (!settings.gridEnabled) {
-        if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Robô Trend Grid desativado nas configurações do painel (gridEnabled: false).');
       } else {
+        if (settings.gridEnabled === false) {
+          await ForexArbSettings.updateOne({ _id: settings._id }, { $set: { gridEnabled: true } });
+          settings.gridEnabled = true;
+          log.info('✅ [TREND GRID] Robô Trend Grid HABILITADO no banco de dados!');
+        }
+
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
