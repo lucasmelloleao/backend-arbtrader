@@ -391,6 +391,10 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
       takeProfitPct: settings.takeProfitPct ?? 0.10,
       stopLossPct: settings.stopLossPct ?? 0.10,
       trailingStopPct: settings.trailingStopPct ?? 0.01,
+      gridEnabled: settings.gridEnabled ?? true,
+      stepPips: settings.stepPips ?? 15,
+      trailingPips: settings.trailingPips ?? 10,
+      maxGridLevels: settings.maxGridLevels ?? 5,
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
         : {},
@@ -446,6 +450,10 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
       takeProfitPct: settings.takeProfitPct ?? 0.10,
       stopLossPct: settings.stopLossPct ?? 0.10,
       trailingStopPct: settings.trailingStopPct ?? 0.01,
+      gridEnabled: settings.gridEnabled ?? true,
+      stepPips: settings.stepPips ?? 15,
+      trailingPips: settings.trailingPips ?? 10,
+      maxGridLevels: settings.maxGridLevels ?? 5,
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
         : {},

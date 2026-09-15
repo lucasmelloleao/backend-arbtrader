@@ -185,6 +185,8 @@ export async function runTrendGridLoop() {
           if (Math.random() < 0.05) {
             log.info('⏸️ [TREND GRID DESABILITADO] Robô Trend Grid pausado pelo painel.');
           }
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
         }
 
         // Atualiza o Heartbeat do bot para o frontend exibir ONLINE/OFFLINE (forex-trend-grid)
