@@ -840,7 +840,7 @@ export async function getForexLivePrices(req: AuthenticatedRequest, res: Respons
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+    const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP'];
     const keys = await ExchangeKey.find({ userId, active: true }).lean();
     const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
     if (!ctraderKey) {
