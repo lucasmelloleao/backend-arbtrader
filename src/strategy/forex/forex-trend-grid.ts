@@ -219,47 +219,56 @@ export async function runTrendGridLoop() {
             }
 
             // RECONCILE AUTOMÁTICO: Sincroniza posições abertas na cTrader com o MongoDB
-            if (Date.now() % 15000 < 500) {
-              try {
-                const livePositions = await adapter.getPositionsPnL();
-                for (const [key, pos] of livePositions.entries()) {
-                  if (key.includes('/') && pos.positionId) {
-                    const existing = await ForexArbStrategy.findOne({
+            try {
+              const livePositions = await adapter.getPositionsPnL();
+              for (const [key, pos] of livePositions.entries()) {
+                if (key.includes('/') && pos.positionId) {
+                  const existing = await ForexArbStrategy.findOne({
+                    userId: settings.userId,
+                    positionOpen: true,
+                    $or: [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }],
+                    $and: [
+                      {
+                        $or: [
+                          { 'legs.orderId': String(pos.positionId) },
+                          { 'gridPositions.id': pos.positionId },
+                          { 'gridPositions.positionId': pos.positionId },
+                          { 'gridPositions.orderId': String(pos.positionId) },
+                          { 'legs.symbol': key }
+                        ]
+                      }
+                    ]
+                  });
+                  if (!existing) {
+                    const sideUpper = pos.side.toUpperCase() as 'BUY' | 'SELL';
+                    const lotSize = pos.volume || 0.01;
+                    const volUnits = lotSize * 100000;
+                    await ForexArbStrategy.create({
                       userId: settings.userId,
+                      name: `TrendGrid ${key} (${sideUpper})`,
+                      type: 'trend_grid',
+                      isGrid: true,
+                      tradeSize: lotSize,
+                      gridStepPips: 15,
+                      gridTrailingPips: 10,
+                      maxGridLevels: 5,
                       positionOpen: true,
-                      $or: [{ 'legs.symbol': key }, { 'gridPositions.id': pos.positionId }, { 'gridPositions.positionId': pos.positionId }]
+                      active: true,
+                      legs: [{ symbol: key, side: sideUpper, exchangeId: 'ctrader', orderId: String(pos.positionId), price: ticker.bid, volume: lotSize, amount: volUnits }],
+                      positionSize: volUnits,
+                      positionVolume: lotSize,
+                      gridPositions: [{ id: pos.positionId, positionId: pos.positionId, orderId: String(pos.positionId), entryPrice: ticker.bid, volume: lotSize, side: sideUpper, createdAt: Date.now() }],
+                      weightedAvgPrice: ticker.bid,
+                      gridLevelsCount: 1,
+                      currentPrice: (ticker.bid + ticker.ask) / 2,
+                      currentAction: `🚀 Sincronizado da cTrader (ID: ${pos.positionId})`,
                     });
-                    if (!existing) {
-                      const sideUpper = pos.side.toUpperCase() as 'BUY' | 'SELL';
-                      const lotSize = pos.volume || 0.01;
-                      const volUnits = lotSize * 100000;
-                      await ForexArbStrategy.create({
-                        userId: settings.userId,
-                        name: `TrendGrid ${key} (${sideUpper})`,
-                        type: 'trend_grid',
-                        isGrid: true,
-                        tradeSize: lotSize,
-                        gridStepPips: 15,
-                        gridTrailingPips: 10,
-                        maxGridLevels: 5,
-                        positionOpen: true,
-                        active: true,
-                        legs: [{ symbol: key, side: sideUpper, exchangeId: 'ctrader', orderId: String(pos.positionId), price: ticker.bid, volume: lotSize, amount: volUnits }],
-                        positionSize: volUnits,
-                        positionVolume: lotSize,
-                        gridPositions: [{ id: pos.positionId, positionId: pos.positionId, entryPrice: ticker.bid, volume: lotSize, side: sideUpper, createdAt: Date.now() }],
-                        weightedAvgPrice: ticker.bid,
-                        gridLevelsCount: 1,
-                        currentPrice: (ticker.bid + ticker.ask) / 2,
-                        currentAction: `🚀 Sincronizado da cTrader (ID: ${pos.positionId})`,
-                      });
-                      log.info(`🔄 [RECONCILE] Posição aberta na cTrader ${key} (${pos.positionId}) sincronizada no MongoDB!`);
-                    }
+                    log.info(`🔄 [RECONCILE] Posição aberta na cTrader ${key} (#${pos.positionId}) sincronizada no MongoDB!`);
                   }
                 }
-              } catch (e: any) {
-                // Silencioso se der erro temporário no reconcile
               }
+            } catch (e: any) {
+              // Silencioso se der erro temporário no reconcile
             }
 
             // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
