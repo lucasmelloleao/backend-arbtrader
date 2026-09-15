@@ -250,12 +250,9 @@ export async function runTrendGridLoop() {
               }
             }
 
-            // AUTO-DETECÇÃO DE OPORTUNIDADES (ENTRADA AUTOMÁTICA):
-            // Se o ativo não possui grade ativa, não falhou nos últimos 60s e o robô está habilitado, analisa a micro-tendência
-            const lastFailTime = lastFailedAttempts.get(sym) || 0;
-            const isCoolingDown = Date.now() - lastFailTime < 60000;
-
-            if (!activeGridEngines.has(sym) && !isCoolingDown && settings.gridEnabled !== false) {
+            // AUTO-DETECÇÃO DE OPORTUNIDADES (DESABILITADO POR PADRÃO):
+            // O Trend Grid agora gerencia apenas grades ativas que foram iniciadas pelo usuário no painel.
+            if (false) {
               const priceHistory = priceHistories.get(sym) || [];
               const midPrice = (ticker.bid + ticker.ask) / 2;
               priceHistory.push(midPrice);
