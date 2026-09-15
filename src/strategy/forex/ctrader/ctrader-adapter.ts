@@ -349,9 +349,49 @@ export class CtraderAdapter {
 
     log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} volumeProtocol=${volumeProtocol} | ${amount} unidades | ${(volumeProtocol / (market.lotSize * 100)).toFixed(2)} lote)...`);
 
-    const fillPromise = this.waitForFill(clientOrderId, symbol, 15000);
+    // Registra listener no cTraderClient para capturar ProtoOAExecutionEvent ou ProtoOAOrderErrorEvent
+    const fillPromise = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.client.offExecution(handler);
+        reject(new Error(`CtraderAdapter: timeout aguardando fill da ordem ${clientOrderId}`));
+      }, timeoutMs);
 
-    const res = await this.client.sendRequest(
+      const handler = (evt: any) => {
+        const order = evt.order || {};
+        const pos = evt.position || {};
+        const evtClientOrderId = order.clientOrderId || pos.clientOrderId || evt.clientOrderId;
+
+        // Se for a confirmação da ordem enviada
+        if (evtClientOrderId === clientOrderId || (evt.executionType && !evtClientOrderId)) {
+          clearTimeout(timer);
+          this.client.offExecution(handler);
+
+          if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode) {
+            return reject(new Error(`CtraderAdapter: ordem rejeitada (${evt.errorCode || evt.description || 'ORDER_REJECTED'})`));
+          }
+
+          const deal = evt.deal || {};
+          const rawPrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
+            ? Number(deal.executionPrice)
+            : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
+          const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : (order.volume != null ? Number(order.volume) : volumeProtocol));
+          
+          resolve({
+            id: String(order.orderId || deal.dealId || pos.positionId || clientOrderId),
+            clientOrderId,
+            symbol,
+            price: rawPrice,
+            amount: filledVolume / VOLUME_DIVISOR,
+            positionId: pos.positionId != null ? String(pos.positionId) : undefined,
+            side: order.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
+          });
+        }
+      };
+
+      this.client.onExecution(handler);
+    });
+
+    await this.client.sendFireAndForget(
       PAYLOAD_TYPE.PROTO_OA_NEW_ORDER_REQ,
       'ProtoOANewOrderReq',
       {
@@ -363,33 +403,8 @@ export class CtraderAdapter {
         label: 'forex-arb',
         clientOrderId,
         timeInForce: 3, // IMMEDIATE_OR_CANCEL
-      },
-      15000
+      }
     );
-
-    if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
-      throw new Error(`CtraderAdapter: erro ao enviar ordem: ${res.errorCode} ${res.description || ''}`);
-    }
-
-    // Se o evento ProtoOAExecutionEvent veio direto no retorno da requisição
-    if (res.payloadType === PAYLOAD_TYPE.PROTO_OA_EXECUTION_EVENT || res.executionType) {
-      const order = res.order || {};
-      const deal = res.deal || {};
-      const pos = res.position || {};
-      const rawPrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
-        ? Number(deal.executionPrice)
-        : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
-      const filledVolume = deal.filledVolume != null ? Number(deal.filledVolume) : (order.executedVolume != null ? Number(order.executedVolume) : (order.volume != null ? Number(order.volume) : 0));
-      return {
-        id: String(order.orderId || deal.dealId || pos.positionId || clientOrderId),
-        clientOrderId,
-        symbol,
-        price: rawPrice,
-        amount: filledVolume / VOLUME_DIVISOR,
-        positionId: pos.positionId != null ? String(pos.positionId) : undefined,
-        side: order.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
-      };
-    }
 
     try {
       return await fillPromise;
@@ -398,7 +413,7 @@ export class CtraderAdapter {
       if (msg.includes('OA_AUTH_TOKEN_EXPIRED') || msg.includes('CH_ACCESS_TOKEN_INVALID')) {
         log.warn('⚠️ CtraderAdapter: token expirado ao enviar ordem. Tentando refresh...');
         await this.refreshTokenAndReconnect();
-        return this.createMarketOrder(symbol, side, amount);
+        return this.createMarketOrder(symbol, side, amount, timeoutMs);
       }
       throw e;
     }
