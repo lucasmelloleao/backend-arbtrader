@@ -650,10 +650,13 @@ async function executeClosePosition(params: {
       const existingStrat = await ForexArbStrategy.findOne({
         userId: settings.userId,
         positionOpen: true,
+        type: { $ne: 'trend_grid' },
+        isGrid: { $ne: true },
+        name: { $not: /TrendGrid/i },
         $or: [
           { 'legs.symbol': sym },
           { 'legs.orderId': new RegExp(activePos.positionId || '___') },
-          { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') }
+          { name: new RegExp(`Scalping.*${sym.replace('/', '.*')}`, 'i') }
         ]
       });
 
@@ -802,10 +805,13 @@ async function runExitLoop() {
               {
                 userId: settings.userId,
                 positionOpen: true,
+                type: { $ne: 'trend_grid' },
+                isGrid: { $ne: true },
+                name: { $not: /TrendGrid/i },
                 $or: [
                   { 'legs.symbol': sym },
                   { 'legs.orderId': new RegExp(activePos.positionId || '___') },
-                  { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') }
+                  { name: new RegExp(`Scalping.*${sym.replace('/', '.*')}`, 'i') }
                 ]
               },
               {
@@ -958,10 +964,13 @@ async function startScalper() {
                   const existingDoc = await ForexArbStrategy.findOne({
                     userId: settings.userId,
                     positionOpen: true,
+                    type: { $ne: 'trend_grid' },
+                    isGrid: { $ne: true },
+                    name: { $not: /TrendGrid/i },
                     $or: [
                       { 'legs.symbol': sym },
                       { 'legs.orderId': new RegExp(posId) },
-                      { name: new RegExp(`(Scalping|Forex).*${sym.replace('/', '.*')}`, 'i') },
+                      { name: new RegExp(`Scalping.*${sym.replace('/', '.*')}`, 'i') },
                     ]
                   }).lean();
 
@@ -1136,7 +1145,14 @@ async function startScalper() {
 
                 // Atualiza o preço atual de mercado em tempo real em todas as estratégias abertas deste par no MongoDB
                 ForexArbStrategy.updateMany(
-                  { userId: settings.userId, positionOpen: true, 'legs.symbol': sym },
+                  {
+                    userId: settings.userId,
+                    positionOpen: true,
+                    type: { $ne: 'trend_grid' },
+                    isGrid: { $ne: true },
+                    name: { $not: /TrendGrid/i },
+                    'legs.symbol': sym
+                  },
                   {
                     $set: {
                       currentPrice: midPrice,
