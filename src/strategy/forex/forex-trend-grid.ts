@@ -392,7 +392,12 @@ export async function runTrendGridLoop() {
                     const closePrice = engine.side === 'BUY' ? ticker.bid : ticker.ask;
                     const priceDiff = engine.side === 'BUY' ? (closePrice - avgPrice) : (avgPrice - closePrice);
                     const totalVolume = engine.positions.reduce((acc, p) => acc + p.volume, 0);
-                    const realizedPnl = priceDiff * totalVolume * 100000;
+                    const totalUnits = totalVolume * 100000;
+                    
+                    let realizedPnl = priceDiff * totalUnits;
+                    if (sym.includes('JPY') && closePrice > 0) {
+                      realizedPnl = (priceDiff * totalUnits) / closePrice;
+                    }
 
                     await ForexArbStrategy.findByIdAndUpdate(strategyId, {
                       positionOpen: false,
