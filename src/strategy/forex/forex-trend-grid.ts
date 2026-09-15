@@ -1,3 +1,4 @@
+import { connectToDatabase } from '../../config/db';
 import ForexArbSettings from '../../models/ForexArbSettings';
 import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
@@ -162,7 +163,8 @@ const activeGridEngines = new Map<string, { engine: TrendGridEngine; strategyId:
 
 export async function runTrendGridLoop() {
   const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'BTC/USD', 'XAU/USD', 'NAS100', 'US30', 'GER40'];
-  log.info('🚀 [TREND GRID BOT] Iniciando loop do motor de Piramidagem & Trailing Stop Global...');
+  log.info('🚀 [TREND GRID BOT] Conectando ao banco de dados e iniciando motor de Piramidagem...');
+  await connectToDatabase();
 
   while (true) {
     try {
