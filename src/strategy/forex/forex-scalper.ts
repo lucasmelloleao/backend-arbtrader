@@ -1028,6 +1028,9 @@ async function startScalper() {
               const openMongoStrats = await ForexArbStrategy.find({
                 userId: settings.userId,
                 positionOpen: true,
+                type: { $ne: 'trend_grid' },
+                isGrid: { $ne: true },
+                name: { $not: /TrendGrid/i }
               });
 
               for (const openStrat of openMongoStrats) {
@@ -1187,6 +1190,9 @@ async function startScalper() {
                   userId: settings.userId,
                   'legs.symbol': sym,
                   positionOpen: true,
+                  type: { $ne: 'trend_grid' },
+                  isGrid: { $ne: true },
+                  name: { $not: /TrendGrid/i }
                 });
 
                 const maxDailyLoss = Math.abs(settings.maxDailyLoss ?? 100);
