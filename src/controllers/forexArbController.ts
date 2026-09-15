@@ -169,10 +169,36 @@ export async function deleteForexTrades(req: AuthenticatedRequest, res: Response
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    await ForexArbTrade.deleteMany({ userId });
-    await ForexArbStrategy.deleteMany({ userId });
+    const botType = (req.query.type || req.body?.type) as string;
 
-    return res.json({ success: true, message: 'Todas as operações e estratégias foram apagadas do banco de dados.' });
+    if (botType === 'trend_grid') {
+      await ForexArbTrade.deleteMany({
+        userId,
+        $or: [{ strategyName: /TrendGrid/i }, { reason: /grid/i }]
+      });
+      await ForexArbStrategy.deleteMany({
+        userId,
+        $or: [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }]
+      });
+      return res.json({ success: true, message: 'Histórico e dados do Trend Grid zerados com sucesso!' });
+    } else if (botType === 'scalping') {
+      await ForexArbTrade.deleteMany({
+        userId,
+        strategyName: { $not: /TrendGrid/i },
+        reason: { $not: /grid/i }
+      });
+      await ForexArbStrategy.deleteMany({
+        userId,
+        type: { $ne: 'trend_grid' },
+        isGrid: { $ne: true },
+        name: { $not: /TrendGrid/i }
+      });
+      return res.json({ success: true, message: 'Histórico e dados do Scalping Forex zerados com sucesso!' });
+    } else {
+      await ForexArbTrade.deleteMany({ userId });
+      await ForexArbStrategy.deleteMany({ userId });
+      return res.json({ success: true, message: 'Todas as operações e estratégias foram apagadas do banco de dados.' });
+    }
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -715,9 +741,20 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const openStrategies = await ForexArbStrategy.find({ userId, positionOpen: true });
+    const botType = (req.body?.type || req.query?.type) as string;
+
+    let query: any = { userId, positionOpen: true };
+    if (botType === 'trend_grid') {
+      query.$or = [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }];
+    } else if (botType === 'scalping') {
+      query.type = { $ne: 'trend_grid' };
+      query.isGrid = { $ne: true };
+      query.name = { $not: /TrendGrid/i };
+    }
+
+    const openStrategies = await ForexArbStrategy.find(query);
     if (!openStrategies || openStrategies.length === 0) {
-      return res.json({ success: true, message: 'Nenhuma posição aberta encontrada.', closedCount: 0 });
+      return res.json({ success: true, message: 'Nenhuma posição aberta encontrada para este robô.', closedCount: 0 });
     }
 
     let closedCount = 0;
@@ -733,11 +770,28 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
         const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
 
         if (rec && rec.position && rec.position.length > 0) {
+          const openPosIds = new Set<string>();
+          for (const s of openStrategies) {
+            if (s.gridPositions && s.gridPositions.length > 0) {
+              for (const gp of s.gridPositions) {
+                if (gp.positionId || gp.id) openPosIds.add(String(gp.positionId || gp.id));
+              }
+            }
+            if (s.legs) {
+              for (const l of s.legs) {
+                if (l.orderId) openPosIds.add(String(l.orderId));
+              }
+            }
+          }
+
           for (const p of rec.position) {
             try {
               const realPosId = String(p.positionId);
+              if (botType && openPosIds.size > 0 && !openPosIds.has(realPosId)) {
+                continue;
+              }
               const volProto = Number(p.tradeData?.volume || 100);
-              console.log(`🚨 [CLOSE ALL MANUAL] Encerrando posição #${realPosId} na cTrader...`);
+              console.log(`🚨 [CLOSE ALL ${botType || 'ALL'}] Encerrando posição #${realPosId} na cTrader...`);
               await adapter.closePosition(realPosId, volProto);
               closedCount++;
             } catch (err: any) {
@@ -751,7 +805,7 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
     }
 
     await ForexArbStrategy.updateMany(
-      { userId, positionOpen: true },
+      query,
       { $set: { positionOpen: false, status: 'closed', closedAt: new Date(), active: false, closedReason: 'manual' } }
     );
 
@@ -763,7 +817,7 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
       }
     }
 
-    return res.json({ success: true, message: `Todas as posições (${openStrategies.length}) foram encerradas com sucesso!`, closedCount });
+    return res.json({ success: true, message: `Todas as posições do robô (${openStrategies.length}) foram encerradas com sucesso!`, closedCount });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
