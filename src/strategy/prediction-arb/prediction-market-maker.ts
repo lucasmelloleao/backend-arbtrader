@@ -380,7 +380,7 @@ export async function runMarketMaking(
   const isAltcoin = /^(sol|doge|xrp)/i.test(slugLower);
 
   const maxSegsEntrada = isAltcoin
-    ? (is15m ? 120 : 45)
+    ? (is15m ? 120 : 60)
     : (is15m ? 300 : 120);
 
   if (segsRestantes > maxSegsEntrada) {
