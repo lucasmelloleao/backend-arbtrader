@@ -32,12 +32,12 @@ export async function withRpcFailover<T>(
   endpoints: string[] = RPC_ENDPOINTS
 ): Promise<T> {
   let lastError: Error | null = null;
+  const staticNetwork = ethers.Network.from(137);
 
   for (let i = 0; i < endpoints.length; i++) {
     const endpoint = endpoints[i];
-    const provider = new ethers.JsonRpcProvider(endpoint, 137);
-
     try {
+      const provider = new ethers.JsonRpcProvider(endpoint, staticNetwork, { staticNetwork, batchMaxCount: 1 });
       const result = await operation(provider);
       if (i > 0) {
         log.info(`✅ RPC failover: sucesso no endpoint #${i + 1} (${endpoint})`);
@@ -77,7 +77,8 @@ export async function getOnchainBalanceWithFailover(depositWallet: string): Prom
  */
 export async function checkRpcHealth(endpoint: string): Promise<boolean> {
   try {
-    const provider = new ethers.JsonRpcProvider(endpoint, 137);
+    const staticNetwork = ethers.Network.from(137);
+    const provider = new ethers.JsonRpcProvider(endpoint, staticNetwork, { staticNetwork, batchMaxCount: 1 });
     await provider.getBlockNumber();
     return true;
   } catch {
