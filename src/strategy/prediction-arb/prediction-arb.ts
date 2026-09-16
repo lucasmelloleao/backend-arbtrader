@@ -130,15 +130,22 @@ function getRedisClient(): Redis | null {
 }
 
 async function heartbeat(userId: any) {
-  if (!userId) return;
   try {
+    const now = new Date();
     await (BotStatus as any).updateOne(
-      { userId: String(userId), botName: BOT_NAME },
-      { $set: { lastHeartbeat: new Date() } },
+      { botName: BOT_NAME },
+      { $set: { lastHeartbeat: now } },
       { upsert: true }
     );
+    if (userId) {
+      await (BotStatus as any).updateOne(
+        { userId: String(userId), botName: BOT_NAME },
+        { $set: { lastHeartbeat: now } },
+        { upsert: true }
+      );
+    }
   } catch (e: any) {
-    log.warn(`⚠️ heartbeat falhou para o usuário ${userId}: ${e.message}`);
+    log.warn(`⚠️ heartbeat falhou: ${e.message}`);
   }
 }
 
