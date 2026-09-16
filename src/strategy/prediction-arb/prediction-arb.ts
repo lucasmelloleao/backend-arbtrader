@@ -516,9 +516,8 @@ async function main() {
     });
   }
 
-  // Intervalo do ciclo
-  const settings = await (PredictionArbSettings as any).findOne().lean();
-  const interval = Number(settings?.scanIntervalMs || DEFAULT_INTERVAL_MS);
+  // Intervalo do ciclo: 3 segundos (3_000ms) para execução ultra-rápida sem perder oportunidades de 5m
+  const FAST_INTERVAL_MS = 3_000;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -527,7 +526,7 @@ async function main() {
     } catch (e: any) {
       log.error('❌ [PREDICTION-ARB] Erro no ciclo:', e.message);
     }
-    await new Promise((r) => setTimeout(r, interval));
+    await new Promise((r) => setTimeout(r, FAST_INTERVAL_MS));
   }
 }
 

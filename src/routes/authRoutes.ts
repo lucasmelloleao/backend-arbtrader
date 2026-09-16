@@ -91,7 +91,8 @@ import {
   updatePredictionStrategy,
   deletePredictionStrategy,
   getPredictionTrades,
-  getPredictionTradesSummary
+  getPredictionTradesSummary,
+  deletePredictionTrades
 } from '../controllers/predictionArbController';
 import {
   getPredictionArbSettings,
@@ -175,6 +176,7 @@ router.put('/prediction-arb/strategies', authMiddleware as any, updatePrediction
 router.delete('/prediction-arb/strategies/:id', authMiddleware as any, deletePredictionStrategy as any);
 router.delete('/prediction-arb/strategies', authMiddleware as any, deletePredictionStrategy as any);
 router.get('/prediction-arb/trades', authMiddleware as any, getPredictionTrades as any);
+router.delete('/prediction-arb/trades', authMiddleware as any, deletePredictionTrades as any);
 router.get('/prediction-arb/trades/resumo', authMiddleware as any, getPredictionTradesSummary as any);
 router.get('/prediction-arb/settings', authMiddleware as any, getPredictionArbSettings as any);
 router.post('/prediction-arb/settings', authMiddleware as any, updatePredictionArbSettings as any);
@@ -191,6 +193,7 @@ router.put('/auth/prediction-arb/strategies', authMiddleware as any, updatePredi
 router.delete('/auth/prediction-arb/strategies/:id', authMiddleware as any, deletePredictionStrategy as any);
 router.delete('/auth/prediction-arb/strategies', authMiddleware as any, deletePredictionStrategy as any);
 router.get('/auth/prediction-arb/trades', authMiddleware as any, getPredictionTrades as any);
+router.delete('/auth/prediction-arb/trades', authMiddleware as any, deletePredictionTrades as any);
 router.get('/auth/prediction-arb/trades/resumo', authMiddleware as any, getPredictionTradesSummary as any);
 router.get('/auth/prediction-arb/settings', authMiddleware as any, getPredictionArbSettings as any);
 router.post('/auth/prediction-arb/settings', authMiddleware as any, updatePredictionArbSettings as any);

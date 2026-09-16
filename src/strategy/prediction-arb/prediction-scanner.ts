@@ -121,41 +121,49 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
     PREDICTION_ARB_CONFIG.scan.minDepthUsdBase,
     Number(config.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize) * PREDICTION_ARB_CONFIG.scan.depthMultiplier
   );
-  const evaluated: MarketOpportunity[] = [];
-  for (const m of candidates.slice(0, 30)) {
-    const book = await fetchBookSpread(m, minDepthUsdScan);
-    const gammaYes = toNum(m.outcomePrices?.[0]);
-    const gammaNo = toNum(m.outcomePrices?.[1]);
-    const yes = book.bidYes || gammaYes;
-    const no = book.bidNo || gammaNo;
-    const spreadPct = book.spreadPct || completenessSpreadPct({ yes, no });
 
-    let highCertaintySide: 'YES' | 'NO' | undefined;
-    let certaintyProb = 0;
+  // Consulta todos os books dos candidatos em PARALELO (alta velocidade sem bloquear em série)
+  const evaluatedResults = await Promise.all(
+    candidates.slice(0, 50).map(async (m) => {
+      try {
+        const book = await fetchBookSpread(m, minDepthUsdScan);
+        const gammaYes = toNum(m.outcomePrices?.[0]);
+        const gammaNo = toNum(m.outcomePrices?.[1]);
+        const yes = book.bidYes || gammaYes;
+        const no = book.bidNo || gammaNo;
+        const spreadPct = book.spreadPct || completenessSpreadPct({ yes, no });
 
-    if (yes >= minProb) {
-      highCertaintySide = 'YES';
-      certaintyProb = yes;
-    } else if (no >= minProb) {
-      highCertaintySide = 'NO';
-      certaintyProb = no;
-    }
+        let highCertaintySide: 'YES' | 'NO' | undefined;
+        let certaintyProb = 0;
 
-    if (highCertaintySide) {
-      evaluated.push({
-        market: m,
-        yes,
-        no,
-        spreadPct,
-        bidYes: book.bidYes,
-        bidNo: book.bidNo,
-        volume: toNum(m.volumeNum),
-        depthOk: book.depthOk,
-        highCertaintySide,
-        certaintyProb,
-      });
-    }
-  }
+        if (yes >= minProb) {
+          highCertaintySide = 'YES';
+          certaintyProb = yes;
+        } else if (no >= minProb) {
+          highCertaintySide = 'NO';
+          certaintyProb = no;
+        }
+
+        if (highCertaintySide) {
+          return {
+            market: m,
+            yes,
+            no,
+            spreadPct,
+            bidYes: book.bidYes,
+            bidNo: book.bidNo,
+            volume: toNum(m.volumeNum),
+            depthOk: book.depthOk,
+            highCertaintySide,
+            certaintyProb,
+          } as MarketOpportunity;
+        }
+      } catch {}
+      return null;
+    })
+  );
+
+  const evaluated = evaluatedResults.filter((e): e is MarketOpportunity => e !== null);
 
   return evaluated
     .filter((e) => e.depthOk !== false)

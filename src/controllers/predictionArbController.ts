@@ -281,6 +281,23 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
   }
 }
 
+export async function deletePredictionTrades(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    await (PredictionArbTrade as any).deleteMany({ userId });
+    await (PredictionArbStrategy as any).deleteMany({ userId });
+
+    const msg = 'Histórico e estratégias da Polymarket zerados com sucesso!';
+    if (isDashboard(req)) return res.json({ success: true, message: msg });
+    return res.json({ success: true, message: msg });
+  } catch (e: any) {
+    console.error('❌ [DELETE PredictionTrades] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
 export async function getPredictionTradesSummary(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
