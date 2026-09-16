@@ -282,7 +282,8 @@ export async function runMarketMaking(
 
   const highCertaintySide = strategy.highCertaintySide || (bYes.bid >= bNo.bid ? 'YES' : 'NO');
   const certaintyProb = Number(strategy.certaintyProb || (highCertaintySide === 'YES' ? bYes.bid : bNo.bid));
-  const minProb = Number(strategy.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
+  const settingsGlobal = await (PredictionArbSettings as any).findOne().lean().catch(() => null);
+  const minProb = Number(strategy.minHighCertaintyProb ?? settingsGlobal?.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
 
   const temLadoLeve = yesShares !== noShares;
   if (yesShares > 0 || noShares > 0) {

@@ -251,6 +251,7 @@ export async function createStrategiesFromMarkets(
       maxEntrySecondsBeforeExpiry5mMaj: Number(config.maxEntrySecondsBeforeExpiry5mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mMaj),
       maxEntrySecondsBeforeExpiry15mAlt: Number(config.maxEntrySecondsBeforeExpiry15mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mAlt),
       maxEntrySecondsBeforeExpiry15mMaj: Number(config.maxEntrySecondsBeforeExpiry15mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mMaj),
+      minHighCertaintyProb: Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb),
     });
     created++;
   }
