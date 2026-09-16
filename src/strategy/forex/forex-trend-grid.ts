@@ -244,7 +244,7 @@ export async function runTrendGridLoop() {
                   const sideUpper = pos.side.toUpperCase() as 'BUY' | 'SELL';
                   const lotSize = pos.volume || 0.01;
                   const volUnits = lotSize * 100000;
-                  const entryPrice = pos.entryPrice || ticker.bid;
+                  const entryPrice = (pos as any).entryPrice || ticker.bid;
                   const symbolKey = Array.from(livePositions.entries()).find(([k, v]) => v.positionId === pos.positionId && k.includes('/'))?.[0] || sym;
 
                   await ForexArbStrategy.create({
