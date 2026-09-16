@@ -24,6 +24,8 @@ export interface ScanConfig {
   marketCoins?: string[];
   /** Probabilidade mínima para entrada direcional de alta certeza (ex: 0.95 = 95%). */
   minHighCertaintyProb?: number;
+  /** Probabilidade mínima para radar / observação de perto (ex: 0.90 = 90%). */
+  minWatchCertaintyProb?: number;
 }
 
 function toNum(v: unknown): number {
@@ -57,6 +59,7 @@ export async function fetchBookSpread(
       for (const [p, size] of book.bids) {
         if (p <= 0) continue;
         depth += p * size;
+        if (depth >= minDepthUsd) break;
         if (depth >= minDepthUsd) break;
       }
       if (depth < minDepthUsd) depthOk = false;
@@ -94,17 +97,20 @@ export interface MarketOpportunity {
   volume: number;
   /** false se o book não tinha profundidade mínima. */
   depthOk?: boolean;
-  /** Direção de alta certeza (YES ou NO com prob >= 0.95) */
+  /** Direção de alta certeza (YES ou NO) */
   highCertaintySide?: 'YES' | 'NO';
   certaintyProb?: number;
+  /** Indica se está na fase de radar (ex: 90% <= prob < 95%) ou pronto para entrada (prob >= 95%) */
+  isWatchOnly?: boolean;
 }
 
-/** Filtra e ordena mercados (foco exclusivo em entradas direcionais com alta certeza). */
+/** Filtra e ordena mercados (foco em radar >= 90% e entradas >= 95%). */
 export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: ScanConfig): Promise<MarketOpportunity[]> {
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
   const maxHorizonMs = 60 * 60 * 1000; // Máximo 1 hora para vencer (descarta mercados longos)
   const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
+  const minWatchProb = Number(config.minWatchCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minWatchCertaintyProb ?? 0.90);
 
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;
@@ -136,15 +142,17 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
         let highCertaintySide: 'YES' | 'NO' | undefined;
         let certaintyProb = 0;
 
-        if (yes >= minProb) {
+        // Entra no radar se atingir o minWatchProb (ex: 90%)
+        if (yes >= minWatchProb) {
           highCertaintySide = 'YES';
           certaintyProb = yes;
-        } else if (no >= minProb) {
+        } else if (no >= minWatchProb) {
           highCertaintySide = 'NO';
           certaintyProb = no;
         }
 
         if (highCertaintySide) {
+          const isWatchOnly = certaintyProb < minProb;
           return {
             market: m,
             yes,
@@ -156,6 +164,7 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
             depthOk: book.depthOk,
             highCertaintySide,
             certaintyProb,
+            isWatchOnly,
           } as MarketOpportunity;
         }
       } catch {}

@@ -14,6 +14,7 @@ export const PREDICTION_ARB_CONFIG = {
     depthMultiplier: 4,           // tradeSize * multiplier = minDepthUsd
     minProbability: 0.02,         // Probabilidade mínima (2%) para evitar extremos
     minHighCertaintyProb: 0.95,   // Probabilidade mínima para entrada direcional de alta certeza (95%)
+    minWatchCertaintyProb: 0.90,  // Probabilidade mínima para radar/observação (90%)
   },
 
   // Risk Management

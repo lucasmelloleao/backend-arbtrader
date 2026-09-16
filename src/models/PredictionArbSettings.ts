@@ -35,6 +35,8 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   marketCoins: { type: [String], default: [] },
   // Probabilidade mínima para entrada direcional de alta certeza (ex: 0.95 = 95%)
   minHighCertaintyProb: { type: Number, default: 0.95 },
+  // Probabilidade mínima para o radar/observação de alta certeza (ex: 0.90 = 90%)
+  minWatchCertaintyProb: { type: Number, default: 0.90 },
   scanIntervalMs: { type: Number, default: 60000 },
 }, { timestamps: true });
 

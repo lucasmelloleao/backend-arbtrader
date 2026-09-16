@@ -301,9 +301,15 @@ export async function runMarketMaking(
   let attempt = Number(strategy.mmQuoteAttempt ?? 0);
 
   const highCertaintySide = strategy.highCertaintySide || (bYes.bid >= bNo.bid ? 'YES' : 'NO');
+  const certaintyProb = Number(strategy.certaintyProb || (highCertaintySide === 'YES' ? bYes.bid : bNo.bid));
+  const minProb = Number(PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
 
   const temLadoLeve = yesShares !== noShares;
   if (!temLadoLeve && yesShares === 0 && noShares === 0) {
+    if (certaintyProb < minProb) {
+      log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}% < ${(minProb * 100).toFixed(1)}%). Observando de perto sem enviar ordem.`);
+      return { quoted: false, orderIds: [] };
+    }
     const isYes = highCertaintySide === 'YES';
     const targetBid = isYes ? bYes.bid : bNo.bid;
     const targetAsk = isYes ? bYes.ask : bNo.ask;
