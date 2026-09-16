@@ -315,11 +315,13 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // Filtro de tempo: 30s para mercados de 5m e 60s para mercados de 15m
+  // Filtro de tempo: 120s (2 min) para mercados de 5m e 300s (5 min) para mercados de 15m
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
   const is15m = String(strategy.slug || '').toLowerCase().includes('-15m-');
-  const maxSegsEntrada = is15m ? 60 : 30;
+  const maxSegsEntrada = is15m
+    ? Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15m ?? 300)
+    : Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5m ?? 120);
 
   if (segsRestantes > maxSegsEntrada) {
     log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
