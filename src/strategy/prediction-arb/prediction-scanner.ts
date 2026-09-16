@@ -109,8 +109,8 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
   const maxHorizonMs = 60 * 60 * 1000; // Máximo 1 hora para vencer (descarta mercados longos)
-  const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
-  const minWatchProb = Number(config.minWatchCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minWatchCertaintyProb ?? 0.90);
+  const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.97);
+  const minWatchProb = Number(config.minWatchCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minWatchCertaintyProb ?? 0.92);
 
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;

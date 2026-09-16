@@ -33,10 +33,10 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   marketFilter: { type: String, default: '' },
   // Moedas voláteis para monitorar mercados updown (ex: ['btc','eth','sol','doge','xrp'])
   marketCoins: { type: [String], default: [] },
-  // Probabilidade mínima para entrada direcional de alta certeza (ex: 0.95 = 95%)
-  minHighCertaintyProb: { type: Number, default: 0.95 },
-  // Probabilidade mínima para o radar/observação de alta certeza (ex: 0.90 = 90%)
-  minWatchCertaintyProb: { type: Number, default: 0.90 },
+  // Probabilidade mínima para entrada direcional de alta certeza (ex: 0.97 = 97%)
+  minHighCertaintyProb: { type: Number, default: 0.97 },
+  // Probabilidade mínima para o radar/observação de alta certeza (ex: 0.92 = 92%)
+  minWatchCertaintyProb: { type: Number, default: 0.92 },
   scanIntervalMs: { type: Number, default: 60000 },
 }, { timestamps: true });
 
