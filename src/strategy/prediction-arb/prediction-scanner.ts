@@ -103,13 +103,10 @@ export interface MarketOpportunity {
 export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: ScanConfig): Promise<MarketOpportunity[]> {
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
-  const maxHorizonMs = 60 * 60 * 1000;
   const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
-
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;
     if (m.endDate && new Date(m.endDate).getTime() < Date.now()) return false;
-    if (m.endDate && new Date(m.endDate).getTime() > Date.now() + maxHorizonMs) return false;
     if (allowed.size > 0 && !allowed.has(String(m.slug || '').toLowerCase())) return false;
     if (filter && !String(m.slug || '').toLowerCase().includes(filter) && !String(m.question || '').toLowerCase().includes(filter)) return false;
     if (toNum(m.volumeNum) < config.minVolume24hUSD) return false;

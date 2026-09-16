@@ -410,24 +410,7 @@ async function runCycle() {
     }
   }
 
-  // 3. Market making com inventário nas estratégias monitoradas.
-  //    REGRA DOS 5 MIN: vale só para ABRIR posição NOVA (mercado sem posição).
-  //    Estratégia com hedge PARCIAL (um lado preenchido, outro não) PODE
-  //    completar a perna faltante até o fim — deixar sem hedge no vencimento
-  //    é risco direcional (perde tudo se o lado errado vencer).
-  //    - Sem posição: só entra entre 5 e 20 min restantes (janela boa).
-  //    - Com posição parcial (desbalanceada): pode completar o hedge mesmo
-  //      faltando < 5 min.
-  //    - Exclui mercados com > 20min (períodos futuros, sem referência).
-  const MIN_MINUTOS_PARA_VENCER = PREDICTION_ARB_CONFIG.timeWindows.mmMinMinutesToExpiry;
-  const MAX_MINUTOS_PARA_VENCER = PREDICTION_ARB_CONFIG.timeWindows.mmMaxMinutesToExpiry;
-  const limiteVencimento = new Date(Date.now() + MIN_MINUTOS_PARA_VENCER * 60 * 1000);
-  const limiteFuturo = new Date(Date.now() + MAX_MINUTOS_PARA_VENCER * 60 * 1000);
-
-  // Grupo A: mercados sem posição real (abrir posição nova) — respeita 5-20min.
-  //    Só roda se houver vaga no limite de pares abertos E saldo livre para o
-  //    par inteiro (o caso DOGE YES=10 NO=0 aconteceu por falta de orçamento
-  //    global: o MM checava saldo por estratégia e abria várias em paralelo).
+  // Market making com inventário nas estratégias monitoradas (sem restrição de tempo de vencimento).
   let mmTargets: any[] = [];
   if (podeAbrirNovo) {
     const orcamento = await saldoLivreEstimado(settings.userId, key);
@@ -441,7 +424,6 @@ async function runCycle() {
         userId: settings.userId,
         active: true,
         mmActive: true,
-        endDate: { $gte: limiteVencimento, $lte: limiteFuturo },
         $or: [
           { positionOpen: false },
           { positionOpen: true, yesShares: 0, noShares: 0 },
@@ -450,13 +432,11 @@ async function runCycle() {
     }
   }
 
-  // Grupo B: mercados com hedge PARCIAL (um lado preenchido) — pode completar
-  // a perna faltante até o fim (exceção à regra dos 5 min).
+  // Grupo B: mercados com hedge PARCIAL (um lado preenchido)
   const hedgeParcial = await (PredictionArbStrategy as any).find({
     userId: settings.userId,
     active: true,
     mmActive: true,
-    endDate: { $lte: limiteFuturo },
     $or: [
       { positionOpen: true, yesShares: { $gte: 1 }, noShares: 0 },
       { positionOpen: true, yesShares: 0, noShares: { $gte: 1 } },
