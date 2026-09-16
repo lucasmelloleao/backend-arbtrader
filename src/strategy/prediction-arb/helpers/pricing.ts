@@ -121,3 +121,33 @@ export async function fetchSpotPrice(symbol: string): Promise<number> {
   const sum = prices.reduce((acc, val) => acc + val, 0);
   return sum / prices.length;
 }
+
+/** Busca Preço Spot e calcula o ATR (1m, 14 períodos) via Binance */
+export async function fetchSpotAtrInfo(symbol: string): Promise<{ spotPrice: number; atrPct: number }> {
+  const asset = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+  const spotPrice = await fetchSpotPrice(asset);
+  if (spotPrice <= 0) return { spotPrice: 0, atrPct: 0 };
+
+  try {
+    const pairBinance = asset.endsWith('USDT') ? asset : `${asset}USDT`;
+    const res = await withTimeout(fetch(`https://api.binance.com/api/v3/klines?symbol=${pairBinance}&interval=1m&limit=15`), 4000, null);
+    if (res && res.ok) {
+      const klines = (await res.json()) as any[];
+      if (Array.isArray(klines) && klines.length >= 2) {
+        let trSum = 0;
+        for (let i = 1; i < klines.length; i++) {
+          const high = Number(klines[i][2]);
+          const low = Number(klines[i][3]);
+          const prevClose = Number(klines[i - 1][4]);
+          const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+          trSum += tr;
+        }
+        const atrValue = trSum / (klines.length - 1);
+        const atrPct = (atrValue / spotPrice) * 100;
+        return { spotPrice, atrPct };
+      }
+    }
+  } catch {}
+
+  return { spotPrice, atrPct: 0 };
+}

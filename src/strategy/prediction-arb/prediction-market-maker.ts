@@ -11,7 +11,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
-import { makerEntryPrices, fetchSpotPrice } from './helpers/pricing';
+import { makerEntryPrices, fetchSpotPrice, fetchSpotAtrInfo } from './helpers/pricing';
 import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
@@ -219,8 +219,6 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-
-
   // 3. Cap de inventário: se um lado já está no cap, NÃO acumula mais dele.
   //    MAS se está desbalanceado (um lado menor que o outro), permite completar
   //    pelo lado leve — o cap não pode travar o completar do par (era o que
@@ -247,15 +245,6 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-
-  // 4.1 Profundidade: só cotar se o(s) lado(s) a COMPRAR têm book para o
-  //     tamanho da ordem. No modo lado leve (completar hedge) só o lado leve
-  //     é comprado — exigir profundidade do lado pesado (que já está no
-  //     inventário) bloqueava o completar do par em mercado fino.
-  //     Compra no ASK (taker) exige profundidade no ask; maker no bid, no bid.
-  //     Além disso, exige um mínimo em USD (liquidez real): mercados finos
-  //     com bid ilusório (ex: 0.48 sem volume) não preenchem e travam o
-  //     capital — foi o caso das 2 ordens a 0.48 que ficaram no book.
   const MIN_LIQUIDEZ_USD = PREDICTION_ARB_CONFIG.marketMaking.minLiquidityUsd;
   const temLadoLeveProf = yesShares !== noShares;
   const ladoLeveProf = temLadoLeveProf ? (yesShares > noShares ? 'NO' : 'YES') : null;
@@ -274,24 +263,15 @@ export async function runMarketMaking(
     return true;
   };
   if (temLadoLeveProf) {
-    // Completando hedge: só o lado leve precisa de liquidez (bid OU ask)
     if (!(await checaProfundidade(ladoLeveProf))) return { quoted: false, orderIds: [] };
   } else if (!(await checaProfundidade(null))) {
     return { quoted: false, orderIds: [] };
   }
 
-  // 5. Preço do par: soma < 1 para garantir lucro no vencimento.
-  //    PRIORIDADE: entrada TAKER simultânea nos dois lados (preço = ask).
-  //    Se askYes + askNo + margem < 1, as duas ordens são colocadas no ask via
-  //    Promise.all — a Polymarket efetiva as duas no mesmo instante e o par
-  //    nasce balanceado (sem fill parcial desigual como o 21 vs 10).
-  //    Se não há folga no ask, NÃO cota (evita o maker GTC desbalanceado).
   const askSum = bYes.ask + bNo.ask;
   const TAKER_MARGEM = PREDICTION_ARB_CONFIG.marketMaking.takerMargin;
   const podeTaker = bYes.ask > 0 && bNo.ask > 0 && askSum + TAKER_MARGEM < 1;
 
-  // Preço maker (bid) — usado como fallback quando o mercado está em modo
-  // post-only (recém-aberto) e rejeita ordens taker no ask.
   const targetSpread = Math.max(Number(strategy.spreadPct || 0.5), 0.2);
   const baseEntry = makerEntryPrices(bYes.bid, bNo.bid, targetSpread);
 
@@ -311,26 +291,53 @@ export async function runMarketMaking(
     const tokenAberto = sideAberto === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
     const bAtual = sideAberto === 'YES' ? bYes : bNo;
 
-    // ── TRAILING STOP OUT DE EMERGÊNCIA NO CLOB ──────────────────────────────
-    // Se a cotação no livro despencar abaixo de 0.75 (75%), aciona DUMPING TAKER
-    // de emergência vendendo a mercado no bid para salvar ~75% do capital em vez
-    // de perder 100% no encerramento.
+    // ── REFINAMENTO 1: STOP LIMIT DE EMERGÊNCIA COM SLIPPAGE MÁXIMO ─────────
+    // Se a cotação no livro despencar abaixo de 0.75 (75%), aciona Venda Limitada
+    // aceitando slippage máximo até $0.65. Tenta por 2s no CLOB. Se não preencher,
+    // retém a posição (probabilidade de reversão ao strike é superior a aceitar vender a $0.05).
     const STOP_OUT_THRESHOLD = 0.75;
+    const MIN_STOP_LIMIT_PRICE = 0.65;
+
     if (bAtual.bid > 0 && bAtual.bid < STOP_OUT_THRESHOLD) {
-      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}). Vendendo ${sharesAbertas} ${sideAberto} no bid para estancar perda.`);
+      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}).`);
+      
+      const stopPrice = Math.max(MIN_STOP_LIMIT_PRICE, bAtual.bid);
+      log.info(`🎯 [${strategy.slug}] Enviando Stop Limit: Venda de ${sharesAbertas} ${sideAberto} @ min $${stopPrice.toFixed(4)} (slippage controlado).`);
+
       try {
+        let stopOrderId: string | null = null;
         if (useSdk) {
-          await placeOrderViaSdk(keyDoc, { tokenId: tokenAberto, side: 'SELL', price: bAtual.bid, size: sharesAbertas });
+          stopOrderId = await placeOrderViaSdk(keyDoc, { tokenId: tokenAberto, side: 'SELL', price: stopPrice, size: sharesAbertas });
         } else {
-          const sellOrd = await signOrder({ credentials, tokenId: tokenAberto, side: 'SELL', price: bAtual.bid, size: sharesAbertas });
-          await placeOrder(credentials, sellOrd);
+          const sellOrd = await signOrder({ credentials, tokenId: tokenAberto, side: 'SELL', price: stopPrice, size: sharesAbertas });
+          stopOrderId = await placeOrder(credentials, sellOrd);
         }
-        await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-          positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
-        });
-        log.info(`✅ [${strategy.slug}] Emergency Stop Out concluído: ${sharesAbertas} ${sideAberto} vendidas a ${bAtual.bid.toFixed(4)}.`);
+
+        // Aguarda 2 segundos para checar se a ordem preencheu
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Reconcilia saldo restante de posições
+        let posPosStop: any[] = [];
+        if (useSdk) posPosStop = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
+        else posPosStop = await fetchPositions(credentials).catch(() => []);
+        
+        const posPos = posPosStop.find((p: any) => String(p.asset || p.asset_id || p.token_id || '') === tokenAberto);
+        const sharesRestantes = Number(posPos?.size || 0);
+
+        if (sharesRestantes <= 0) {
+          log.info(`✅ [${strategy.slug}] Stop Limit Executado com Sucesso! Posição encerrada sem dump a preço vil.`);
+          await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+            positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
+          });
+        } else {
+          log.warn(`⚠️ [${strategy.slug}] Stop Limit não preencheu em 2s (restam ${sharesRestantes} cotas). Cancelando ordem e MANTENDO posição p/ reversão.`);
+          if (stopOrderId) {
+            if (useSdk) await cancelOrderViaSdk(keyDoc, stopOrderId).catch(() => {});
+            else await cancelOrder(credentials, stopOrderId).catch(() => {});
+          }
+        }
       } catch (e: any) {
-        log.warn(`⚠️ [${strategy.slug}] Falha no Emergency Stop Out: ${e.message}`);
+        log.warn(`⚠️ [${strategy.slug}] Falha ao processar Stop Limit: ${e.message}`);
       }
       return { quoted: false, orderIds: [] };
     }
@@ -344,9 +351,6 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // Filtro de tempo por tipo de ativo:
-  // - Altcoins de alta volatilidade (SOL, DOGE, XRP): últimos 45s (5m) / 120s (15m)
-  // - Major Coins (BTC, ETH): últimos 120s (5m) / 300s (15m)
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
   const slugLower = String(strategy.slug || '').toLowerCase();
@@ -362,24 +366,37 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // ── TRAVA DO PONTO DE CORTE (Spot Distance Guard Refinado) ────────────────
-  // Extrai o símbolo (ex: 'btc', 'eth', 'sol', 'doge', 'xrp') do slug
+  // ── REFINAMENTO 2: ATR DINÂMICO NO SPOT DISTANCE GUARD ────────────────────
   const coinMatch = slugLower.match(/^(btc|eth|sol|doge|xrp)/i);
   if (coinMatch) {
     const symbol = coinMatch[1].toUpperCase();
-    const spotPrice = await fetchSpotPrice(symbol);
+    const { spotPrice, atrPct } = await fetchSpotAtrInfo(symbol);
     const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
 
-    // Tolerância por volatilidade: Altcoins = 0.15% mínimo; BTC/ETH = 0.08% mínimo
-    const minDistPct = isAltcoin ? 0.15 : 0.08;
+    // Piso Fixo: Altcoins = 0.15%, Majors = 0.08%.
+    // Exigência Dinâmica: Math.max(piso, 0.5 × ATR(1m))
+    const pisoPct = isAltcoin ? 0.15 : 0.08;
+    const atrDinamicoPct = atrPct > 0 ? 0.5 * atrPct : 0;
+    const minDistPctRequired = Math.max(pisoPct, atrDinamicoPct);
 
     if (spotPrice > 0 && strikeEstimate > 0) {
       const distPct = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
-      if (distPct < minDistPct) {
-        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE: Preço spot ${symbol} ($${spotPrice}) colado na abertura ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < ${minDistPct}%. Entrada descartada devido ao risco de oscilação.`);
+      if (distPct < minDistPctRequired) {
+        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
         return { quoted: false, orderIds: [] };
       }
     }
+  }
+
+  // ── REFINAMENTO 3: SONDAGEM DE PROFUNDIDADE NO BID PARA ABSORÇÃO ──────────
+  // Antes de entrar, valida se o lado oposto (Bid de saída) possui profundidade suficiente
+  // para absorver a posição caso seja necessário acionar o Stop Limit a $0.75.
+  const targetTokenId = highCertaintySide === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
+  const valorPosicaoUsd = sharesPerQuote * 0.75;
+  const profundidadeBidUsd = await bookBidDepthUsd(targetTokenId, valorPosicaoUsd);
+  if (profundidadeBidUsd < valorPosicaoUsd) {
+    log.warn(`⚠️ [${strategy.slug}] SONDAGEM DE PROFUNDIDADE FALHOU: Bid oposto tem apenas $${profundidadeBidUsd.toFixed(2)} de liquidez (exigido mín $${valorPosicaoUsd.toFixed(2)} para absorver eventual Stop a 0.75). Entrada abortada.`);
+    return { quoted: false, orderIds: [] };
   }
 
   const isYes = highCertaintySide === 'YES';
@@ -388,7 +405,6 @@ export async function runMarketMaking(
   yesPrice = isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
   noPrice = !isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
   modoTaker = targetAsk > 0;
-  log.info(`🎯 [${strategy.slug}] Entrada Direcional (${highCertaintySide}): cotando ${highCertaintySide} @ ${(isYes ? yesPrice : noPrice).toFixed(4)}`);
   const pairSum = yesPrice + noPrice;
   if (pairSum >= 1 && !temLadoLeve && !highCertaintySide) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);
