@@ -11,7 +11,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
-import { makerEntryPrices } from './helpers/pricing';
+import { makerEntryPrices, fetchSpotPrice } from './helpers/pricing';
 import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
@@ -324,6 +324,24 @@ export async function runMarketMaking(
   if (segsRestantes > maxSegsEntrada) {
     log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
     return { quoted: false, orderIds: [] };
+  }
+
+  // ── TRAVA DO PONTO DE CORTE (Spot Distance Guard) ─────────────────────────
+  // Extrai o símbolo (ex: 'btc', 'eth', 'sol') do slug
+  const coinMatch = String(strategy.slug || '').match(/^(btc|eth|sol|doge|xrp)/i);
+  if (coinMatch) {
+    const symbol = coinMatch[1].toUpperCase();
+    const spotPrice = await fetchSpotPrice(symbol);
+    // Se temos preço spot e o mercado tem preço de abertura/linha de corte estimada
+    const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
+    if (spotPrice > 0 && strikeEstimate > 0) {
+      const distPct = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
+      const minDistPct = 0.05; // Mínimo 0.05% de distância da linha de corte
+      if (distPct < minDistPct) {
+        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE: Preço spot ($${spotPrice}) colado na abertura ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < ${minDistPct}%. Entrada descartada devido ao risco de oscilação.`);
+        return { quoted: false, orderIds: [] };
+      }
+    }
   }
 
   const isYes = highCertaintySide === 'YES';

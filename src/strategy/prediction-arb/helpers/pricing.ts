@@ -1,6 +1,4 @@
-// Núcleo de cálculo da estratégia de prediction markets.
-// Completeness arbitrage: comprar os dois lados de um mercado binário
-// quando preço(YES) + preço(NO) < 1 garante retorno no vencimento.
+import { withTimeout } from '../../perpetuals/helpers/ccxt-factory';
 
 // Fees da Polymarket (CLOB): maker ≈ 0% (limit order), taker varia por
 // categoria — crypto/volatilidade cobra ~1% (algumas categorias até 2%).
@@ -89,4 +87,18 @@ export function pairExitPnl(
   const sellProceeds = shares * exit.yes + shares * exit.no;
   const sellFee = estimateFee(feeRate, shares, exit.yes) + estimateFee(feeRate, shares, exit.no);
   return sellProceeds - sellFee - buyCost;
+}
+
+/** Busca o preço spot ao vivo na Binance para checar a distância do ponto de corte. */
+export async function fetchSpotPrice(symbol: string): Promise<number> {
+  try {
+    const asset = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+    const pair = asset.endsWith('USDT') ? asset : `${asset}USDT`;
+    const res = await withTimeout(fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`), 5000, null);
+    if (!res || !res.ok) return 0;
+    const data: any = await res.json();
+    return Number(data?.price || 0);
+  } catch {
+    return 0;
+  }
 }
