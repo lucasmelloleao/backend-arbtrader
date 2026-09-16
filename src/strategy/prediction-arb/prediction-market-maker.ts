@@ -305,40 +305,23 @@ export async function runMarketMaking(
   const minProb = Number(PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
 
   const temLadoLeve = yesShares !== noShares;
-  if (!temLadoLeve && yesShares === 0 && noShares === 0) {
-    if (certaintyProb < minProb) {
-      log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}% < ${(minProb * 100).toFixed(1)}%). Observando de perto sem enviar ordem.`);
-      return { quoted: false, orderIds: [] };
-    }
-    const isYes = highCertaintySide === 'YES';
-    const targetBid = isYes ? bYes.bid : bNo.bid;
-    const targetAsk = isYes ? bYes.ask : bNo.ask;
-    yesPrice = isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
-    noPrice = !isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
-    modoTaker = targetAsk > 0;
-    log.info(`🎯 [${strategy.slug}] Entrada Direcional (${highCertaintySide}): cotando ${highCertaintySide} @ ${(isYes ? yesPrice : noPrice).toFixed(4)}`);
-  } else if (temLadoLeve) {
-    const leveLado = yesShares > noShares ? 'NO' : 'YES';
-    const leveBid = leveLado === 'YES' ? bYes.bid : bNo.bid;
-    const leveAsk = leveLado === 'YES' ? bYes.ask : bNo.ask;
-    if (leveAsk > 0) {
-      yesPrice = leveLado === 'YES' ? leveAsk : bYes.bid;
-      noPrice = leveLado === 'NO' ? leveAsk : bNo.bid;
-      modoTaker = true;
-      log.info(`⚡ [${strategy.slug}] Completando hedge: ${leveLado} taker no ask ${leveAsk.toFixed(4)}.`);
-    } else if (leveBid > 0) {
-      yesPrice = leveLado === 'YES' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bYes.bid;
-      noPrice = leveLado === 'NO' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bNo.bid;
-      modoTaker = false;
-      log.info(`📌 [${strategy.slug}] Completando hedge: ${leveLado} maker progressivo (bid ${leveBid.toFixed(4)} + ${step * attempt})`);
-    } else {
-      log.warn(`⚠️ [${strategy.slug}] Sem book para completar hedge (${leveLado}).`);
-      return { quoted: false, orderIds: [] };
-    }
-  } else {
-    log.warn(`⚠️ [${strategy.slug}] Posição já aberta em ambos os lados.`);
+  if (yesShares > 0 || noShares > 0) {
+    log.info(`📌 [${strategy.slug}] Posição direcional aberta (${yesShares} YES / ${noShares} NO). Não faz hedge. Aguardando vencimento.`);
     return { quoted: false, orderIds: [] };
   }
+
+  if (certaintyProb < minProb) {
+    log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}% < ${(minProb * 100).toFixed(1)}%). Observando de perto sem enviar ordem.`);
+    return { quoted: false, orderIds: [] };
+  }
+
+  const isYes = highCertaintySide === 'YES';
+  const targetBid = isYes ? bYes.bid : bNo.bid;
+  const targetAsk = isYes ? bYes.ask : bNo.ask;
+  yesPrice = isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
+  noPrice = !isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
+  modoTaker = targetAsk > 0;
+  log.info(`🎯 [${strategy.slug}] Entrada Direcional (${highCertaintySide}): cotando ${highCertaintySide} @ ${(isYes ? yesPrice : noPrice).toFixed(4)}`);
   const pairSum = yesPrice + noPrice;
   if (pairSum >= 1 && !temLadoLeve && !highCertaintySide) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);

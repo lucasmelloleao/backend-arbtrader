@@ -245,17 +245,9 @@ async function monitorOpenStrategies(settings: any) {
         log.info(`⏰ [${strat.slug}] Vencimento próximo (${hoursToEnd.toFixed(1)}h). Segurando par até resolução.`);
         continue;
       }
-      // Perna única perto do vencimento: tenta completar o hedge via MM
-      // (o Grupo B do ciclo roda antes do monitor). Se o MM decidir não
-      // completar (custo > 1.1, saldo), ele mesmo cancela ordens e sinaliza.
+      // Posição direcional aberta: mantida até o vencimento sem tentativa de hedge
       if (hoursToEnd <= 1 && (yesSh >= 1 || noSh >= 1)) {
-        log.warn(`⚠️ [${strat.slug}] Perna única perto do vencimento (YES=${yesSh} NO=${noSh}). Tentando completar hedge antes da resolução...`);
-        try {
-          const live = await isPredictionLiveAllowed();
-          await runMarketMaking(strat, { dryRun: !live });
-        } catch (e: any) {
-          log.warn(`⚠️ [${strat.slug}] Falha ao tentar completar hedge: ${e.message}`);
-        }
+        log.info(`⏳ [${strat.slug}] Posição direcional aberta (YES=${yesSh} NO=${noSh}). Mantendo até o vencimento (${hoursToEnd.toFixed(1)}h restantes).`);
         continue;
       }
 
