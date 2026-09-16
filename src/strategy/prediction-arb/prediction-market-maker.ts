@@ -507,117 +507,22 @@ export async function runMarketMaking(
           return null;
         }
       };
-      if (highCertaintySide && !ladoLeve) {
-        const isYes = highCertaintySide === 'YES';
-        const tok = isYes ? strategy.tokenIdYes : strategy.tokenIdNo;
-        const prc = isYes ? yesPrice : noPrice;
-        log.info(`🚀 [${strategy.slug}] Enviando Ordem Direcional de Alta Certeza (${highCertaintySide}): ${tamanhoLadoLeve} sh @ ${prc.toFixed(4)}`);
-        const id = await colocaLado(tok, prc, highCertaintySide, tamanhoLadoLeve);
-        if (id) orderIds.push(id);
-      } else if (ladoLeve) {
-        // Completar o hedge SÓ se a soma média final ficar < 1.0 — completar
-        // com soma >= 1.0 é PREJUÍZO GARANTIDO no vencimento (paga $1 mas
-        // custou >= $1). Caso real: XRP comprou YES@0.407 e completou NO no
-        // ask 0.663 → soma 1.070, perda certa de $0.69. A trava antiga de 1.1
-        // deixava passar 1.07; o correto é nunca completar acima de ~1.0.
-        // Se não der para completar lucrativamente:
-        //   - Perto do vencimento (<= hedgeCompletionMaxMinutes): SEGURA a perna única — vender
-        //     agora realiza perda certa, e segurar dá 50% de o lado certo
-        //     vencer (redeem paga $1, podendo até lucrar).
-        //   - Com tempo ( > hedgeCompletionMaxMinutes): VENDE a perna pesada no bid — encerra o
-        //     risco direcional com perda pequena agora e libera o capital.
-        const precoMedioPesado = ladoLeve === 'NO' ? yesAvg : noAvg;
-        const precoLeve = ladoLeve === 'YES' ? yesPrice : noPrice;
-        if (precoMedioPesado > 0 && precoMedioPesado + precoLeve >= PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold) {
-          const somaHedge = precoMedioPesado + precoLeve;
-          const endMsGuard = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
-          const minRestante = endMsGuard > 0 ? (endMsGuard - Date.now()) / 60000 : Infinity;
-          const pernaPesadaSide = ladoLeve === 'NO' ? 'YES' : 'NO';
-          const pernaPesadaShares = Math.max(yesShares, noShares);
-          const pernaPesadaToken = pernaPesadaSide === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
-
-          // Cancela ordens pendentes do outro lado (evita fill acidental)
-          for (const oid of strategy.openOrderIds || []) {
-            if (useSdk) await cancelOrderViaSdk(keyDoc, oid).catch(() => {});
-            else await cancelOrder(credentials, oid).catch(() => {});
-          }
-
-          if (minRestante <= PREDICTION_ARB_CONFIG.timeWindows.hedgeCompletionMaxMinutes) {
-            log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ ${PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold}). Vencimento em ${minRestante.toFixed(1)}min — SEGURANDO perna única (${pernaPesadaSide} ${pernaPesadaShares}).`);
-            return { quoted: false, orderIds: [] };
-          }
-
-          // Com tempo sobrando: vende a perna pesada no bid para zerar o risco
-          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesado.toFixed(4)} + ${ladoLeve} ${precoLeve.toFixed(4)} = ${somaHedge.toFixed(4)} ≥ ${PREDICTION_ARB_CONFIG.risk.hedgeCompletionThreshold}, vencimento em ${minRestante.toFixed(1)}min). Vendendo perna pesada ${pernaPesadaSide} ${pernaPesadaShares} no bid.`);
-          try {
-            const bookPesada = await bookPrices(pernaPesadaToken);
-            if (bookPesada.bid > 0) {
-              if (useSdk) {
-                await placeOrderViaSdk(keyDoc, { tokenId: pernaPesadaToken, side: 'SELL', price: bookPesada.bid, size: pernaPesadaShares });
-              } else {
-                const sellPesada = await signOrder({ credentials, tokenId: pernaPesadaToken, side: 'SELL', price: bookPesada.bid, size: pernaPesadaShares });
-                await placeOrder(credentials, sellPesada);
-              }
-              log.info(`✅ [${strategy.slug}] Perna pesada ${pernaPesadaSide} vendida (${pernaPesadaShares} @ ${bookPesada.bid}). Posição zerada.`);
-              await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-                openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
-              });
-            } else {
-              log.warn(`⚠️ [${strategy.slug}] Sem bid para vender a perna pesada. Mantendo posição (ciclo tenta de novo).`);
-            }
-          } catch (e: any) {
-            log.warn(`⚠️ [${strategy.slug}] Falha ao vender perna pesada: ${e.message}`);
-          }
-          return { quoted: false, orderIds: [] };
-        }
-        log.info(`🎯 [${strategy.slug}] Completando par: comprar ${tamanhoLadoLeve} ${ladoLeve} (diferença ${sharesCompletar}).`);
-        const id = await colocaLado(
-          ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo,
-          ladoLeve === 'YES' ? yesPrice : noPrice,
-          ladoLeve,
-          tamanhoLadoLeve,
-        );
-        if (id) orderIds.push(id);
-      } else {
-        const [yesId, noId] = await Promise.all([
-          colocaLado(strategy.tokenIdYes, yesPrice, 'YES', sharesPerQuote),
-          colocaLado(strategy.tokenIdNo, noPrice, 'NO', sharesPerQuote),
-        ]);
-        if (yesId) orderIds.push(yesId);
-        if (noId) orderIds.push(noId);
-      }
+      const isYes = highCertaintySide === 'YES';
+      const tok = isYes ? strategy.tokenIdYes : strategy.tokenIdNo;
+      const prc = isYes ? yesPrice : noPrice;
+      log.info(`🚀 [${strategy.slug}] Enviando Ordem Direcional (${highCertaintySide}): ${tamanhoLadoLeve} sh @ ${prc.toFixed(4)}`);
+      const id = await colocaLado(tok, prc, highCertaintySide, tamanhoLadoLeve);
+      if (id) orderIds.push(id);
     } else {
-      if (ladoLeve) {
-        // Mesmo guard de hedge do ramo SDK (caminho sem SDK é legacy, mas a
-        // proteção contra prejuízo garantido vale igual): nunca completar com
-        // soma média >= 1.0.
-        const precoMedioPesadoNSdk = ladoLeve === 'NO' ? yesAvg : noAvg;
-        const precoLeveNSdk = ladoLeve === 'YES' ? yesPrice : noPrice;
-        if (precoMedioPesadoNSdk > 0 && precoMedioPesadoNSdk + precoLeveNSdk >= 0.998) {
-          log.warn(`⚠️ [${strategy.slug}] Hedge sairia com prejuízo (média pesada ${precoMedioPesadoNSdk.toFixed(4)} + ${ladoLeve} ${precoLeveNSdk.toFixed(4)} = ${(precoMedioPesadoNSdk + precoLeveNSdk).toFixed(4)} ≥ 0.998). NÃO completando — mantendo perna única.`);
-          for (const oid of strategy.openOrderIds || []) {
-            await cancelOrder(credentials, oid).catch(() => {});
-          }
-          return { quoted: false, orderIds: [] };
-        }
-        const tokenId = ladoLeve === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
-        const price = ladoLeve === 'YES' ? yesPrice : noPrice;
-        const ordem = await signOrder({ credentials, tokenId, side: 'BUY', price, size: tamanhoLadoLeve });
-        const id = await placeOrder(credentials, ordem).catch((e: any) => {
-          log.warn(`⚠️ [${strategy.slug}] Ordem ${ladoLeve} falhou: ${e.message}`);
-          return null;
-        });
-        if (id) orderIds.push(id);
-      } else {
-        const yesOrder = await signOrder({ credentials, tokenId: strategy.tokenIdYes, side: 'BUY', price: yesPrice, size: sharesPerQuote });
-        const noOrder = await signOrder({ credentials, tokenId: strategy.tokenIdNo, side: 'BUY', price: noPrice, size: sharesPerQuote });
-        const [yesId, noId] = await Promise.all([
-          placeOrder(credentials, yesOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem YES falhou: ${e.message}`); return null; }),
-          placeOrder(credentials, noOrder).catch((e: any) => { log.warn(`⚠️ [${strategy.slug}] Ordem NO falhou: ${e.message}`); return null; }),
-        ]);
-        if (yesId) orderIds.push(yesId);
-        if (noId) orderIds.push(noId);
-      }
+      const isYes = highCertaintySide === 'YES';
+      const tok = isYes ? strategy.tokenIdYes : strategy.tokenIdNo;
+      const prc = isYes ? yesPrice : noPrice;
+      const ordem = await signOrder({ credentials, tokenId: tok, side: 'BUY', price: prc, size: tamanhoLadoLeve });
+      const id = await placeOrder(credentials, ordem).catch((e: any) => {
+        log.warn(`⚠️ [${strategy.slug}] Ordem Direcional falhou: ${e.message}`);
+        return null;
+      });
+      if (id) orderIds.push(id);
     }
 
     // Corr. 3: PROGRIDE o preço a cada ciclo enquanto a ordem não casar —
