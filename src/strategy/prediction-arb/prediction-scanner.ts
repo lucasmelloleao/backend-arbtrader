@@ -64,7 +64,7 @@ export async function fetchBookSpread(
       }
       if (depth < minDepthUsd) depthOk = false;
     }
-  } catch {}
+  } catch { }
   try {
     if (m.clobTokenIds?.[1]) {
       const book = await fetchBook(m.clobTokenIds[1]);
@@ -80,7 +80,7 @@ export async function fetchBookSpread(
       }
       if (depthNo < minDepthUsd) depthOk = false;
     }
-  } catch {}
+  } catch { }
 
   // Spread executável: comprar nos bids dos dois lados
   const spreadPct = bidYes > 0 && bidNo > 0 ? completenessSpreadPct({ yes: bidYes, no: bidNo }) : 0;
@@ -114,11 +114,23 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
 
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;
-    if (m.endDate && new Date(m.endDate).getTime() < Date.now()) return false;
-    // Elimina mercados que vão vencer daqui a mais de 1 hora
-    if (m.endDate && new Date(m.endDate).getTime() > Date.now() + maxHorizonMs) return false;
-    if (allowed.size > 0 && !allowed.has(String(m.slug || '').toLowerCase())) return false;
-    if (filter && !String(m.slug || '').toLowerCase().includes(filter) && !String(m.question || '').toLowerCase().includes(filter)) return false;
+    const endMs = m.endDate ? new Date(m.endDate).getTime() : 0;
+    const now = Date.now();
+    if (endMs && endMs < now) return false;
+
+    // Regra de tempo restante:
+    // Mercados de 15m só são avaliados quando faltar <= 5 minutos para o vencimento
+    const slug = String(m.slug || '').toLowerCase();
+    const is15m = slug.includes('-15m-');
+    if (is15m) {
+      const minRestantes = endMs > 0 ? (endMs - now) / 60000 : Infinity;
+      if (minRestantes > 5) return false;
+    }
+
+    // Elimina mercados com mais de 1 hora de horizonte geral
+    if (endMs && endMs > now + maxHorizonMs) return false;
+    if (allowed.size > 0 && !allowed.has(slug)) return false;
+    if (filter && !slug.includes(filter) && !String(m.question || '').toLowerCase().includes(filter)) return false;
     if (toNum(m.volumeNum) < config.minVolume24hUSD) return false;
     return m.clobTokenIds?.length >= 2;
   });
@@ -167,7 +179,7 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
             isWatchOnly,
           } as MarketOpportunity;
         }
-      } catch {}
+      } catch { }
       return null;
     })
   );
