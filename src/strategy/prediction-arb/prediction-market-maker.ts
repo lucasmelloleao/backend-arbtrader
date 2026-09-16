@@ -315,13 +315,14 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // Filtro de tempo: só dispara entrada real nos últimos 90 segundos antes do vencimento
+  // Filtro de tempo: 60s para mercados de 5m e 90s para mercados de 15m
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
-  const maxSegsEntrada = Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry ?? 90);
+  const is15m = String(strategy.slug || '').toLowerCase().includes('-15m-');
+  const maxSegsEntrada = is15m ? 90 : 60;
 
   if (segsRestantes > maxSegsEntrada) {
-    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s). Aguardando últimos 90s para disparar.`);
+    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
     return { quoted: false, orderIds: [] };
   }
 
