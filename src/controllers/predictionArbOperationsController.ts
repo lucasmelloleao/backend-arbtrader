@@ -164,4 +164,52 @@ export async function manualScanPrediction(req: AuthenticatedRequest, res: Respo
   }
 }
 
+export async function getPredictionLogs(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    const isDashboardPath = req.path.includes('/auth/');
+    if (!userId) {
+      return res.status(401).json(isDashboardPath ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+    }
+
+    const processName = (req.query.process as string) || 'prediction-arb';
+    const lines = (req.query.lines as string) || '150';
+
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    try {
+      const { stdout, stderr } = await execAsync(`pm2 logs ${processName} --lines ${lines} --nostream --raw`);
+      const rawOutput = stdout || stderr || '';
+      const logLines = rawOutput
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter(Boolean);
+
+      const responseData = {
+        process: processName,
+        linesCount: logLines.length,
+        logs: logLines.length > 0 ? logLines : [`[${new Date().toISOString()}] Robô ${processName} operante (sem novos logs no período).`],
+        timestamp: new Date().toISOString(),
+      };
+
+      return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
+    } catch (execErr: any) {
+      const fallbackMsg = execErr.message || 'Erro ao executar pm2 logs localmente';
+      const responseData = {
+        process: processName,
+        linesCount: 1,
+        logs: [`⚠️ Logs ${processName}: ${fallbackMsg}`],
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
+    }
+  } catch (error: any) {
+    console.error('❌ [getPredictionLogs] Error:', error.message);
+    const isDashboardPath = req.path.includes('/auth/');
+    return res.status(500).json(isDashboardPath ? { error: error.message } : { success: false, message: error.message });
+  }
+}
+
 export { isValidObjectId };
