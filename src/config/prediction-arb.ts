@@ -13,6 +13,7 @@ export const PREDICTION_ARB_CONFIG = {
     minDepthUsdBase: 20,          // Liquidez mínima base por lado (USD)
     depthMultiplier: 4,           // tradeSize * multiplier = minDepthUsd
     minProbability: 0.02,         // Probabilidade mínima (2%) para evitar extremos
+    minHighCertaintyProb: 0.95,   // Probabilidade mínima para entrada direcional de alta certeza (95%)
   },
 
   // Risk Management

@@ -90,21 +90,22 @@ export interface MarketOpportunity {
   bidYes: number;
   bidNo: number;
   volume: number;
-  /** false se o book do lado YES não tinha profundidade mínima (book fino). */
+  /** false se o book não tinha profundidade mínima. */
   depthOk?: boolean;
+  /** Direção de alta certeza (YES ou NO com prob >= 0.95) */
+  highCertaintySide?: 'YES' | 'NO';
+  certaintyProb?: number;
 }
 
-/** Filtra e ordena mercados (usa o spread do book quando disponível). */
+/** Filtra e ordena mercados (foco exclusivo em entradas direcionais com alta certeza >= 95%). */
 export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: ScanConfig): Promise<MarketOpportunity[]> {
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
-  // Descarta mercados cujo vencimento está além de 1h — o MM só opera entre
-  // 5-20min antes do vencimento; mercados de evento longo ficariam parados.
   const maxHorizonMs = 60 * 60 * 1000;
+  const minProb = PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb || 0.95;
 
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;
-    // Descarta mercados já vencidos (evita criar estratégia para updown expirado)
     if (m.endDate && new Date(m.endDate).getTime() < Date.now()) return false;
     if (m.endDate && new Date(m.endDate).getTime() > Date.now() + maxHorizonMs) return false;
     if (allowed.size > 0 && !allowed.has(String(m.slug || '').toLowerCase())) return false;
@@ -113,9 +114,6 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
     return m.clobTokenIds?.length >= 2;
   });
 
-  // Busca o book de cada candidato (com limite para não estourar rate-limit).
-  // A profundidade mínima exigida é proporcional ao tradeSize (4× o par):
-  // mercado com menos liquidez que isso não tem contraparte real para o par.
   const minDepthUsdScan = Math.max(
     PREDICTION_ARB_CONFIG.scan.minDepthUsdBase,
     Number(config.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize) * PREDICTION_ARB_CONFIG.scan.depthMultiplier
@@ -128,34 +126,37 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
     const yes = book.bidYes || gammaYes;
     const no = book.bidNo || gammaNo;
     const spreadPct = book.spreadPct || completenessSpreadPct({ yes, no });
-    evaluated.push({
-      market: m,
-      yes,
-      no,
-      spreadPct,
-      bidYes: book.bidYes,
-      bidNo: book.bidNo,
-      volume: toNum(m.volumeNum),
-      depthOk: book.depthOk,
-    });
+
+    let highCertaintySide: 'YES' | 'NO' | undefined;
+    let certaintyProb = 0;
+
+    if (yes >= minProb) {
+      highCertaintySide = 'YES';
+      certaintyProb = yes;
+    } else if (no >= minProb) {
+      highCertaintySide = 'NO';
+      certaintyProb = no;
+    }
+
+    if (highCertaintySide) {
+      evaluated.push({
+        market: m,
+        yes,
+        no,
+        spreadPct,
+        bidYes: book.bidYes,
+        bidNo: book.bidNo,
+        volume: toNum(m.volumeNum),
+        depthOk: book.depthOk,
+        highCertaintySide,
+        certaintyProb,
+      });
+    }
   }
 
   return evaluated
-    .filter((e) => {
-      if (e.spreadPct < config.minSpreadPct) return false;
-      // Corr. 3: descarta mercados sem profundidade executável no book —
-      // o spread pode aparecer grande na teoria (Gamma) mas não ter contraparte
-      // real no CLOB (as maiores perdas vieram de book fino com fill parcial).
-      if (e.depthOk === false) return false;
-      // Evita mercados de probabilidade extrema (p < 2% ou p > 98%) onde o
-      // bid mínimo de 0.01 distorce o spread de completude.
-      if (e.yes > 0 && e.no > 0) {
-        const pMin = Math.min(e.yes, e.no);
-        if (pMin < PREDICTION_ARB_CONFIG.scan.minProbability) return false;
-      }
-      return true;
-    })
-    .sort((a, b) => b.spreadPct - a.spreadPct)
+    .filter((e) => e.depthOk !== false)
+    .sort((a, b) => (b.certaintyProb || 0) - (a.certaintyProb || 0))
     .slice(0, config.maxStrategiesPerScan);
 }
 
