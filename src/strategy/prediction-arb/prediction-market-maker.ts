@@ -315,32 +315,39 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // Filtro de tempo: 120s (2 min) para mercados de 5m e 300s (5 min) para mercados de 15m
+  // Filtro de tempo por tipo de ativo:
+  // - Altcoins de alta volatilidade (SOL, DOGE, XRP): últimos 45s (5m) / 120s (15m)
+  // - Major Coins (BTC, ETH): últimos 120s (5m) / 300s (15m)
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
-  const is15m = String(strategy.slug || '').toLowerCase().includes('-15m-');
-  const maxSegsEntrada = is15m
-    ? Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15m ?? 300)
-    : Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5m ?? 120);
+  const slugLower = String(strategy.slug || '').toLowerCase();
+  const is15m = slugLower.includes('-15m-');
+  const isAltcoin = /^(sol|doge|xrp)/i.test(slugLower);
+
+  const maxSegsEntrada = isAltcoin
+    ? (is15m ? 120 : 45)
+    : (is15m ? 300 : 120);
 
   if (segsRestantes > maxSegsEntrada) {
-    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
+    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${isAltcoin ? 'Altcoin' : 'Major'} ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
     return { quoted: false, orderIds: [] };
   }
 
-  // ── TRAVA DO PONTO DE CORTE (Spot Distance Guard) ─────────────────────────
-  // Extrai o símbolo (ex: 'btc', 'eth', 'sol') do slug
-  const coinMatch = String(strategy.slug || '').match(/^(btc|eth|sol|doge|xrp)/i);
+  // ── TRAVA DO PONTO DE CORTE (Spot Distance Guard Refinado) ────────────────
+  // Extrai o símbolo (ex: 'btc', 'eth', 'sol', 'doge', 'xrp') do slug
+  const coinMatch = slugLower.match(/^(btc|eth|sol|doge|xrp)/i);
   if (coinMatch) {
     const symbol = coinMatch[1].toUpperCase();
     const spotPrice = await fetchSpotPrice(symbol);
-    // Se temos preço spot e o mercado tem preço de abertura/linha de corte estimada
     const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
+
+    // Tolerância por volatilidade: Altcoins = 0.15% mínimo; BTC/ETH = 0.08% mínimo
+    const minDistPct = isAltcoin ? 0.15 : 0.08;
+
     if (spotPrice > 0 && strikeEstimate > 0) {
       const distPct = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
-      const minDistPct = 0.05; // Mínimo 0.05% de distância da linha de corte
       if (distPct < minDistPct) {
-        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE: Preço spot ($${spotPrice}) colado na abertura ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < ${minDistPct}%. Entrada descartada devido ao risco de oscilação.`);
+        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE: Preço spot ${symbol} ($${spotPrice}) colado na abertura ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < ${minDistPct}%. Entrada descartada devido ao risco de oscilação.`);
         return { quoted: false, orderIds: [] };
       }
     }
