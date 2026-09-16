@@ -62,7 +62,6 @@ module.exports = {
       kill_timeout: 8000,
     },
     */
-    /* Desativado temporariamente
     {
       name: "prediction-arb",
       script: "dist/strategy/prediction-arb/prediction-arb.js",
@@ -73,7 +72,6 @@ module.exports = {
       restart_delay: 10000,
       kill_timeout: 8000,
     },
-    */
     /* Desativado em favor do robô isolado Trend Grid
     {
       name: "forex-scalper",
