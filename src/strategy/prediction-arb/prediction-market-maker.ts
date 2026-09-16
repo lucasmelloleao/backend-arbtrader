@@ -7,6 +7,7 @@
 // rebalanceado quando desbalanceia.
 import PredictionArbStrategy from '../../models/PredictionArbStrategy';
 import PredictionArbTrade from '../../models/PredictionArbTrade';
+import PredictionArbSettings from '../../models/PredictionArbSettings';
 import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
