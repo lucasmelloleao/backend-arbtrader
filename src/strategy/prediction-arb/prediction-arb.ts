@@ -402,15 +402,14 @@ async function runCycle() {
     }
   }
 
-  // Market making com inventário nas estratégias monitoradas (sem restrição de tempo de vencimento).
+  // Market making direcional (100% single-sided): só exige o custo de 1 lado
   let mmTargets: any[] = [];
   if (podeAbrirNovo) {
     const orcamento = await saldoLivreEstimado(settings.userId, key);
-    // Custo estimado do par novo: tradeSize aplicado nos dois lados (pior caso)
-    const tradeSizeConf = Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
-    const custoParNovo = tradeSizeConf * 2;
-    if (orcamento.livre < custoParNovo) {
-      log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir par novo (livre $${orcamento.livre.toFixed(2)} < custo $${custoParNovo.toFixed(2)} de ${tradeSizeConf}/lado; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
+    // Custo estimado da entrada direcional: apenas 1 lado (tradeSize)
+    const custoPosicaoNova = Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
+    if (orcamento.livre < custoPosicaoNova) {
+      log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir posição direcional (livre $${orcamento.livre.toFixed(2)} < custo $${custoPosicaoNova.toFixed(2)} de 1 lado; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
     } else {
       mmTargets = await (PredictionArbStrategy as any).find({
         userId: settings.userId,
