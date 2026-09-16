@@ -248,7 +248,7 @@ export async function redeemPositionsViaSdk(exchangeKeyDoc: any, conditionId: st
   await withRpcFailover(async (provider) => {
     const wallet = new ethers.Wallet(pk, provider);
     const contract = new ethers.Contract(target, redeemAbi, wallet);
-    const tx = await contract.redeemPositions(COLLATERAL, ZERO, conditionId, [0, 1], { gasLimit: 500000 });
+    const tx = await contract.redeemPositions(COLLATERAL, ZERO, conditionId, [1, 2], { gasLimit: 500000 });
     await tx.wait();
     console.warn(`✅ [redeem] Redeem direto OK (tx ${tx.hash}).`);
   });
