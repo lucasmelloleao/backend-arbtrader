@@ -570,15 +570,44 @@ export async function runMarketMaking(
     // attempt sobe sempre que a ordem foi aceita no CLOB (mesmo sem fill); o
     // preço avança um step por ciclo até casar ou estourar a trava de soma.
     const proximoAttempt = orderIds.length > 0 ? attempt + 1 : attempt;
-    // Se enviou ordem de completar hedge (lado leve), marca ultimoHedgeAt p/
-    // o debounce do próximo ciclo (a Data API demora a refletir o fill).
     const enviouHedge = Boolean(ladoLeve) && orderIds.length > 0;
-    await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-      openOrderIds: orderIds,
-      mmQuoteAttempt: proximoAttempt,
-      mmActive: true,
-      ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
-    });
+
+    // ── TRATAMENTO DE PREENCHIMENTO PARCIAL (PARTIAL FILL RECONCILIATION) ────
+    // Aguarda 500ms para a ordens taker (com expiração de 5s) liquidarem e reconcilia
+    // o inventário real on-chain/Data API para registrar exatamente o filled_size.
+    if (orderIds.length > 0) {
+      await new Promise(r => setTimeout(r, 500));
+      let freshPositions: any[] = [];
+      if (useSdk) {
+        freshPositions = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
+        if (freshPositions.length === 0) freshPositions = await fetchPositionsViaSdk(keyDoc).catch(() => []);
+      } else {
+        freshPositions = await fetchPositions(credentials).catch(() => []);
+      }
+      const freshYes = Number(freshPositions.find((p: any) => String(p.asset || p.asset_id || p.token_id || '') === strategy.tokenIdYes || p.side === 'Up')?.size || 0);
+      const freshNo = Number(freshPositions.find((p: any) => String(p.asset || p.asset_id || p.token_id || '') === strategy.tokenIdNo || p.side === 'Down')?.size || 0);
+
+      const filledSize = Math.max(freshYes, freshNo);
+      log.info(`📊 [${strategy.slug}] Posição real pós-ordem (Filled Size registrado): YES=${freshYes} NO=${freshNo} (Solicitado: ${tamanhoLadoLeve})`);
+
+      await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+        openOrderIds: orderIds,
+        mmQuoteAttempt: proximoAttempt,
+        mmActive: true,
+        yesShares: freshYes,
+        noShares: freshNo,
+        positionSize: filledSize,
+        positionOpen: freshYes >= 1 || freshNo >= 1,
+        ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
+      });
+    } else {
+      await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+        openOrderIds: orderIds,
+        mmQuoteAttempt: proximoAttempt,
+        mmActive: true,
+        ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
+      });
+    }
 
     if (orderIds.length > 0) {
       log.info(`📣 [${strategy.slug}] Cotações (${modoTaker ? 'TAKER' : 'maker'}): YES ${sharesPerQuote} @ ${yesPrice.toFixed(4)} + NO ${sharesPerQuote} @ ${noPrice.toFixed(4)} (soma ${pairSum.toFixed(4)}) | attempt=${proximoAttempt}`);
