@@ -37,6 +37,11 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   minHighCertaintyProb: { type: Number, default: 0.97 },
   // Probabilidade mínima para o radar/observação de alta certeza (ex: 0.92 = 92%)
   minWatchCertaintyProb: { type: Number, default: 0.92 },
+  // Janelas temporais de entrada (em segundos antes do vencimento)
+  maxEntrySecondsBeforeExpiry5mAlt: { type: Number, default: 60 },
+  maxEntrySecondsBeforeExpiry5mMaj: { type: Number, default: 120 },
+  maxEntrySecondsBeforeExpiry15mAlt: { type: Number, default: 120 },
+  maxEntrySecondsBeforeExpiry15mMaj: { type: Number, default: 300 },
   scanIntervalMs: { type: Number, default: 60000 },
 }, { timestamps: true });
 

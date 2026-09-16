@@ -379,9 +379,14 @@ export async function runMarketMaking(
   const is15m = slugLower.includes('-15m-');
   const isAltcoin = /^(sol|doge|xrp)/i.test(slugLower);
 
+  const t5mAlt = Number(strategy.maxEntrySecondsBeforeExpiry5mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mAlt);
+  const t5mMaj = Number(strategy.maxEntrySecondsBeforeExpiry5mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mMaj);
+  const t15mAlt = Number(strategy.maxEntrySecondsBeforeExpiry15mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mAlt);
+  const t15mMaj = Number(strategy.maxEntrySecondsBeforeExpiry15mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mMaj);
+
   const maxSegsEntrada = isAltcoin
-    ? (is15m ? 120 : 60)
-    : (is15m ? 300 : 120);
+    ? (is15m ? t15mAlt : t5mAlt)
+    : (is15m ? t15mMaj : t5mMaj);
 
   if (segsRestantes > maxSegsEntrada) {
     log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(currentProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${isAltcoin ? 'Altcoin' : 'Major'} ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);

@@ -47,6 +47,10 @@ const PredictionArbStrategySchema = new mongoose.Schema({
   peakProfitPct: { type: Number, default: 0 },
   lastCheckAt: { type: Date, default: null },
   errorMessage: { type: String },
+  maxEntrySecondsBeforeExpiry5mAlt: { type: Number, default: 60 },
+  maxEntrySecondsBeforeExpiry5mMaj: { type: Number, default: 120 },
+  maxEntrySecondsBeforeExpiry15mAlt: { type: Number, default: 120 },
+  maxEntrySecondsBeforeExpiry15mMaj: { type: Number, default: 300 },
 }, { timestamps: true });
 
 PredictionArbStrategySchema.index({ userId: 1, marketId: 1 }, { unique: true });

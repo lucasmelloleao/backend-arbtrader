@@ -26,6 +26,10 @@ export interface ScanConfig {
   minHighCertaintyProb?: number;
   /** Probabilidade mínima para radar / observação de perto (ex: 0.90 = 90%). */
   minWatchCertaintyProb?: number;
+  maxEntrySecondsBeforeExpiry5mAlt?: number;
+  maxEntrySecondsBeforeExpiry5mMaj?: number;
+  maxEntrySecondsBeforeExpiry15mAlt?: number;
+  maxEntrySecondsBeforeExpiry15mMaj?: number;
 }
 
 function toNum(v: unknown): number {
@@ -243,6 +247,10 @@ export async function createStrategiesFromMarkets(
       mmActive: autoExecute,
       isAutoCreated: true,
       lastCheckAt: new Date(),
+      maxEntrySecondsBeforeExpiry5mAlt: Number(config.maxEntrySecondsBeforeExpiry5mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mAlt),
+      maxEntrySecondsBeforeExpiry5mMaj: Number(config.maxEntrySecondsBeforeExpiry5mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mMaj),
+      maxEntrySecondsBeforeExpiry15mAlt: Number(config.maxEntrySecondsBeforeExpiry15mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mAlt),
+      maxEntrySecondsBeforeExpiry15mMaj: Number(config.maxEntrySecondsBeforeExpiry15mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mMaj),
     });
     created++;
   }

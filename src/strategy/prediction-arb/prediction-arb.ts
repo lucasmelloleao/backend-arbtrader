@@ -334,8 +334,12 @@ async function runCycle() {
     allowedMarkets: settings.allowedMarkets || [],
     marketFilter: settings.marketFilter || '',
     marketCoins: settings.marketCoins || [],
-    minHighCertaintyProb: Number(settings.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.97),
-    minWatchCertaintyProb: Number(settings.minWatchCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minWatchCertaintyProb ?? 0.92),
+    minHighCertaintyProb: Number(settings.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95),
+    minWatchCertaintyProb: Number(settings.minWatchCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minWatchCertaintyProb ?? 0.90),
+    maxEntrySecondsBeforeExpiry5mAlt: Number(settings.maxEntrySecondsBeforeExpiry5mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mAlt),
+    maxEntrySecondsBeforeExpiry5mMaj: Number(settings.maxEntrySecondsBeforeExpiry5mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry5mMaj),
+    maxEntrySecondsBeforeExpiry15mAlt: Number(settings.maxEntrySecondsBeforeExpiry15mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mAlt),
+    maxEntrySecondsBeforeExpiry15mMaj: Number(settings.maxEntrySecondsBeforeExpiry15mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mMaj),
   };
   const scan = podeAbrirHoje
     ? await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
