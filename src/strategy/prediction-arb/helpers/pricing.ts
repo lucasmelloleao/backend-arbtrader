@@ -89,16 +89,35 @@ export function pairExitPnl(
   return sellProceeds - sellFee - buyCost;
 }
 
-/** Busca o preço spot ao vivo na Binance para checar a distância do ponto de corte. */
+/** Busca o preço spot médio agregando Binance + Coinbase para evitar divergência de oráculo. */
 export async function fetchSpotPrice(symbol: string): Promise<number> {
+  const asset = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+  const prices: number[] = [];
+
+  // 1. Binance Spot
   try {
-    const asset = symbol.toUpperCase().replace(/[^A-Z]/g, '');
-    const pair = asset.endsWith('USDT') ? asset : `${asset}USDT`;
-    const res = await withTimeout(fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`), 5000, null);
-    if (!res || !res.ok) return 0;
-    const data: any = await res.json();
-    return Number(data?.price || 0);
-  } catch {
-    return 0;
-  }
+    const pairBinance = asset.endsWith('USDT') ? asset : `${asset}USDT`;
+    const resB = await withTimeout(fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pairBinance}`), 4000, null);
+    if (resB && resB.ok) {
+      const dataB: any = await resB.json();
+      const p = Number(dataB?.price || 0);
+      if (p > 0) prices.push(p);
+    }
+  } catch {}
+
+  // 2. Coinbase Pro / Exchange Spot
+  try {
+    const pairCoinbase = `${asset}-USD`;
+    const resC = await withTimeout(fetch(`https://api.exchange.coinbase.com/products/${pairCoinbase}/ticker`), 4000, null);
+    if (resC && resC.ok) {
+      const dataC: any = await resC.json();
+      const p = Number(dataC?.price || 0);
+      if (p > 0) prices.push(p);
+    }
+  } catch {}
+
+  if (prices.length === 0) return 0;
+  // Retorna a média agregada das exchanges
+  const sum = prices.reduce((acc, val) => acc + val, 0);
+  return sum / prices.length;
 }

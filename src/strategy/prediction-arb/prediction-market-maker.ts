@@ -306,7 +306,36 @@ export async function runMarketMaking(
 
   const temLadoLeve = yesShares !== noShares;
   if (yesShares > 0 || noShares > 0) {
-    log.info(`📌 [${strategy.slug}] Posição direcional aberta (${yesShares} YES / ${noShares} NO). Não faz hedge. Aguardando vencimento.`);
+    const sideAberto = yesShares > 0 ? 'YES' : 'NO';
+    const sharesAbertas = Math.max(yesShares, noShares);
+    const tokenAberto = sideAberto === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
+    const bAtual = sideAberto === 'YES' ? bYes : bNo;
+
+    // ── TRAILING STOP OUT DE EMERGÊNCIA NO CLOB ──────────────────────────────
+    // Se a cotação no livro despencar abaixo de 0.75 (75%), aciona DUMPING TAKER
+    // de emergência vendendo a mercado no bid para salvar ~75% do capital em vez
+    // de perder 100% no encerramento.
+    const STOP_OUT_THRESHOLD = 0.75;
+    if (bAtual.bid > 0 && bAtual.bid < STOP_OUT_THRESHOLD) {
+      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}). Vendendo ${sharesAbertas} ${sideAberto} no bid para estancar perda.`);
+      try {
+        if (useSdk) {
+          await placeOrderViaSdk(keyDoc, { tokenId: tokenAberto, side: 'SELL', price: bAtual.bid, size: sharesAbertas });
+        } else {
+          const sellOrd = await signOrder({ credentials, tokenId: tokenAberto, side: 'SELL', price: bAtual.bid, size: sharesAbertas });
+          await placeOrder(credentials, sellOrd);
+        }
+        await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+          positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
+        });
+        log.info(`✅ [${strategy.slug}] Emergency Stop Out concluído: ${sharesAbertas} ${sideAberto} vendidas a ${bAtual.bid.toFixed(4)}.`);
+      } catch (e: any) {
+        log.warn(`⚠️ [${strategy.slug}] Falha no Emergency Stop Out: ${e.message}`);
+      }
+      return { quoted: false, orderIds: [] };
+    }
+
+    log.info(`📌 [${strategy.slug}] Posição direcional aberta (${yesShares} YES / ${noShares} NO @ ${bAtual.bid.toFixed(3)}). Não faz hedge. Aguardando vencimento.`);
     return { quoted: false, orderIds: [] };
   }
 
