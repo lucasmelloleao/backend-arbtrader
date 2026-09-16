@@ -291,18 +291,16 @@ export async function runMarketMaking(
     const tokenAberto = sideAberto === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
     const bAtual = sideAberto === 'YES' ? bYes : bNo;
 
-    // ── REFINAMENTO 1: STOP LIMIT DE EMERGÊNCIA COM SLIPPAGE MÁXIMO ─────────
-    // Se a cotação no livro despencar abaixo de 0.75 (75%), aciona Venda Limitada
-    // aceitando slippage máximo até $0.65. Tenta por 2s no CLOB. Se não preencher,
-    // retém a posição (probabilidade de reversão ao strike é superior a aceitar vender a $0.05).
-    const STOP_OUT_THRESHOLD = 0.75;
-    const MIN_STOP_LIMIT_PRICE = 0.65;
+    // ── REFINAMENTO 1: ENCERRAMENTO DE EMERGÊNCIA IMEDIATO (< 0.70) ─────────
+    // Se a cotação no livro despencar abaixo de 0.70, encerra IMEDIATAMENTE ao preço disponível no livro.
+    // Sobrepõe qualquer outra trava ou blackout.
+    const STOP_OUT_THRESHOLD = 0.70;
 
-    if (bAtual.bid > 0 && bAtual.bid < STOP_OUT_THRESHOLD) {
-      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}).`);
+    if (bAtual.bid < STOP_OUT_THRESHOLD) {
+      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}). Fechando ao preço de mercado (${bAtual.bid.toFixed(4)}).`);
       
-      const stopPrice = Math.max(MIN_STOP_LIMIT_PRICE, bAtual.bid);
-      log.info(`🎯 [${strategy.slug}] Enviando Stop Limit: Venda de ${sharesAbertas} ${sideAberto} @ min $${stopPrice.toFixed(4)} (slippage controlado).`);
+      const stopPrice = Math.max(0.01, bAtual.bid);
+      log.info(`🎯 [${strategy.slug}] Enviando Ordem de Encerramento: Venda de ${sharesAbertas} ${sideAberto} @ $${stopPrice.toFixed(4)} (melhor bid do mercado).`);
 
       try {
         let stopOrderId: string | null = null;
@@ -313,10 +311,8 @@ export async function runMarketMaking(
           stopOrderId = await placeOrder(credentials, sellOrd);
         }
 
-        // Aguarda 2 segundos para checar se a ordem preencheu
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 1500));
 
-        // Reconcilia saldo restante de posições
         let posPosStop: any[] = [];
         if (useSdk) posPosStop = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
         else posPosStop = await fetchPositions(credentials).catch(() => []);
@@ -325,19 +321,16 @@ export async function runMarketMaking(
         const sharesRestantes = Number(posPos?.size || 0);
 
         if (sharesRestantes <= 0) {
-          log.info(`✅ [${strategy.slug}] Stop Limit Executado com Sucesso! Posição encerrada sem dump a preço vil.`);
-          await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-            positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
-          });
+          log.info(`✅ [${strategy.slug}] Fechamento de Emergência Executado com Sucesso! Posição encerrada.`);
         } else {
-          log.warn(`⚠️ [${strategy.slug}] Stop Limit não preencheu em 2s (restam ${sharesRestantes} cotas). Cancelando ordem e MANTENDO posição p/ reversão.`);
-          if (stopOrderId) {
-            if (useSdk) await cancelOrderViaSdk(keyDoc, stopOrderId).catch(() => {});
-            else await cancelOrder(credentials, stopOrderId).catch(() => {});
-          }
+          log.warn(`⚠️ [${strategy.slug}] Ordem enviada mas restam ${sharesRestantes} cotas. Mantendo tentativas.`);
         }
+
+        await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+          positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
+        });
       } catch (e: any) {
-        log.warn(`⚠️ [${strategy.slug}] Falha ao processar Stop Limit: ${e.message}`);
+        log.warn(`⚠️ [${strategy.slug}] Falha ao processar Fechamento de Emergência: ${e.message}`);
       }
       return { quoted: false, orderIds: [] };
     }
