@@ -126,12 +126,14 @@ async function formatStrategy(s: any) {
   };
 }
 
+const CUTOFF_DATE = new Date('2026-09-15T00:00:00.000Z');
+
 export async function getPredictionStrategies(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const list = await (PredictionArbStrategy as any).find({ userId }).lean();
+    const list = await (PredictionArbStrategy as any).find({ userId, createdAt: { $gte: CUTOFF_DATE } }).lean();
     if (isDashboard(req)) return res.json(list);
     const formatted = await Promise.all(list.map(formatStrategy));
     return res.json({ success: true, message: 'ok', data: formatted });
@@ -241,7 +243,7 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const trades = await (PredictionArbTrade as any).find({ userId })
+    const trades = await (PredictionArbTrade as any).find({ userId, createdAt: { $gte: CUTOFF_DATE } })
       .sort({ createdAt: -1 })
       .limit(300)
       .populate({ path: 'strategyId', model: 'PredictionArbStrategy', select: 'slug question' })
@@ -303,8 +305,8 @@ export async function getPredictionTradesSummary(req: AuthenticatedRequest, res:
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const closes = await (PredictionArbTrade as any).find({ userId, type: 'close_pair', status: 'executed' }).lean();
-    const opens = await (PredictionArbTrade as any).find({ userId, type: 'open_pair', status: { $in: ['executed', 'simulated'] } }).lean();
+    const closes = await (PredictionArbTrade as any).find({ userId, type: 'close_pair', status: 'executed', createdAt: { $gte: CUTOFF_DATE } }).lean();
+    const opens = await (PredictionArbTrade as any).find({ userId, type: 'open_pair', status: { $in: ['executed', 'simulated'] }, createdAt: { $gte: CUTOFF_DATE } }).lean();
 
     const totalClosed = closes.length;
     const totalPnl = closes.reduce((acc: number, t: any) => acc + Number(t.pnl || 0), 0);
