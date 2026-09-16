@@ -22,6 +22,8 @@ export interface ScanConfig {
   marketFilter?: string;
   /** Moedas para monitorar mercados updown (ex: ['btc','eth','sol']) — busca os slugs gerados. */
   marketCoins?: string[];
+  /** Probabilidade mínima para entrada direcional de alta certeza (ex: 0.95 = 95%). */
+  minHighCertaintyProb?: number;
 }
 
 function toNum(v: unknown): number {
@@ -102,7 +104,7 @@ export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: S
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
   const maxHorizonMs = 60 * 60 * 1000;
-  const minProb = PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb || 0.95;
+  const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
 
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;

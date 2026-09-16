@@ -370,6 +370,7 @@ async function runCycle() {
     allowedMarkets: settings.allowedMarkets || [],
     marketFilter: settings.marketFilter || '',
     marketCoins: settings.marketCoins || [],
+    minHighCertaintyProb: Number(settings.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95),
   };
   const scan = podeAbrirHoje
     ? await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
