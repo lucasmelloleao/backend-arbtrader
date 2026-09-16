@@ -365,21 +365,26 @@ for (const oid of strategy.openOrderIds || []) {
   let modoTaker = false;
   let attempt = Number(strategy.mmQuoteAttempt ?? 0);
 
-  // Corr. 2: completar hedge (lado leve) SEMPRE tenta no ask (taker) primeiro —
-  // se o par está desbalanceado, o importante é casar a perna faltante rápido
-  // (esperar maker no bid é o que deixava YES@0.50 preso sem fill). A regra
-  // do ≤1.1 (passo 7) ainda protege contra completar com prejuízo absurdo.
+  const highCertaintySide = strategy.highCertaintySide || (bYes.bid >= bNo.bid ? 'YES' : 'NO');
+
   const temLadoLeve = yesShares !== noShares;
-  if (temLadoLeve) {
+  if (!temLadoLeve && yesShares === 0 && noShares === 0) {
+    const isYes = highCertaintySide === 'YES';
+    const targetBid = isYes ? bYes.bid : bNo.bid;
+    const targetAsk = isYes ? bYes.ask : bNo.ask;
+    yesPrice = isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
+    noPrice = !isYes ? (targetAsk > 0 ? targetAsk : targetBid) : 0;
+    modoTaker = targetAsk > 0;
+    log.info(`🎯 [${strategy.slug}] Entrada Direcional (${highCertaintySide}): cotando ${highCertaintySide} @ ${(isYes ? yesPrice : noPrice).toFixed(4)}`);
+  } else if (temLadoLeve) {
     const leveLado = yesShares > noShares ? 'NO' : 'YES';
     const leveBid = leveLado === 'YES' ? bYes.bid : bNo.bid;
     const leveAsk = leveLado === 'YES' ? bYes.ask : bNo.ask;
-    // Tenta taker no ask se houver ask; senão maker progressivo no bid
     if (leveAsk > 0) {
-      yesPrice = leveLado === 'YES' ? leveAsk : bYes.bid; // lado pesado nem é cotado
+      yesPrice = leveLado === 'YES' ? leveAsk : bYes.bid;
       noPrice = leveLado === 'NO' ? leveAsk : bNo.bid;
       modoTaker = true;
-      log.info(`⚡ [${strategy.slug}] Completando hedge: ${leveLado} taker no ask ${leveAsk.toFixed(4)} (foco lado leve).`);
+      log.info(`⚡ [${strategy.slug}] Completando hedge: ${leveLado} taker no ask ${leveAsk.toFixed(4)}.`);
     } else if (leveBid > 0) {
       yesPrice = leveLado === 'YES' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bYes.bid;
       noPrice = leveLado === 'NO' ? progressiveQuotePrice(leveBid, 0, step, attempt) : bNo.bid;
@@ -389,26 +394,12 @@ for (const oid of strategy.openOrderIds || []) {
       log.warn(`⚠️ [${strategy.slug}] Sem book para completar hedge (${leveLado}).`);
       return { quoted: false, orderIds: [] };
     }
-  } else if (podeTaker && baseEntry) {
-    // Entrada taker: preço = ask dos dois lados (efetiva junto)
-    yesPrice = bYes.ask;
-    noPrice = bNo.ask;
-    modoTaker = true;
-    attempt = 0; // taker não progride — efetiva direto
-    log.info(`⚡ [${strategy.slug}] Entrada taker simultânea: YES ${yesPrice.toFixed(4)} + NO ${noPrice.toFixed(4)} (soma ${(yesPrice + noPrice).toFixed(4)})`);
   } else {
-    // Sem folga no ask (ou sem baseEntry): cota maker no bid com progressão —
-    // a cada ciclo sem fill o preço sobe um step em direção a casar (Corr. 3).
-    if (!baseEntry) {
-      log.warn(`⚠️ [${strategy.slug}] Não foi possível montar par maker (bids ${bYes.bid}/${bNo.bid}).`);
-      return { quoted: false, orderIds: [] };
-    }
-    yesPrice = progressiveQuotePrice(baseEntry.yes, bYes.ask || 0, step, attempt);
-    noPrice = progressiveQuotePrice(baseEntry.no, bNo.ask || 0, step, attempt);
-    modoTaker = false;
+    log.warn(`⚠️ [${strategy.slug}] Posição já aberta em ambos os lados.`);
+    return { quoted: false, orderIds: [] };
   }
   const pairSum = yesPrice + noPrice;
-  if (pairSum >= 1 && !temLadoLeve) {
+  if (pairSum >= 1 && !temLadoLeve && !highCertaintySide) {
     log.warn(`⚠️ [${strategy.slug}] Preços progrediram demais (soma ${pairSum.toFixed(4)} ≥ 1). Resetando cotação.`);
     await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, { mmQuoteAttempt: 0 });
     return { quoted: false, orderIds: [] };
@@ -506,7 +497,12 @@ for (const oid of strategy.openOrderIds || []) {
     log.warn(`⚠️ [${strategy.slug}] Lado sub-mínimo exigiria inflar demais (${minShares}sh > 2x tradeSize ${tradeSizeOriginal}). Não cotando.`);
     return false;
   };
-  if (ladoLeveCalc) {
+  if (highCertaintySide && !ladoLeveCalc) {
+    const isYes = highCertaintySide === 'YES';
+    const val = isYes ? valorYes : valorNo;
+    const prc = isYes ? yesPrice : noPrice;
+    if (!verificarMinimo(val, prc)) return { quoted: false, orderIds: [] };
+  } else if (ladoLeveCalc) {
     const valorLeve = ladoLeveCalc === 'YES' ? valorYes : valorNo;
     const precoLeve = ladoLeveCalc === 'YES' ? yesPrice : noPrice;
     if (!verificarMinimo(valorLeve, precoLeve)) return { quoted: false, orderIds: [] };
@@ -522,11 +518,11 @@ for (const oid of strategy.openOrderIds || []) {
 
   // 7. Coloca as ordens do par (via SDK quando possível — suporta deposit wallet)
   //    Se o inventário está desbalanceado, cota SÓ o lado leve com o tamanho
-  //    EXATO da diferença (completa o par até balancear — nunca ultrapassa);
-  //    senão cota os dois lados juntos (taker) ou o par maker.
+  //    EXACT da diferença; se for alta certeza, cota SÓ o lado de alta certeza;
+  //    senão cota os dois lados juntos.
   const orderIds: string[] = [];
   try {
-    // Usa o lado leve já calculado na checagem de saldo (mesma definição)
+    // Usa o lado leve já calculated na checagem de saldo
     const ladoLeve = ladoLeveCalc;
     const sharesCompletar = ladoLeve ? sharesCompletarCalc : 0;
     const tamanhoLadoLeve = ladoLeve ? tamanhoRealCalc : sharesPerQuote;
@@ -536,8 +532,6 @@ for (const oid of strategy.openOrderIds || []) {
           const id = await placeOrderViaSdk(keyDoc, { tokenId, side: 'BUY', price, size });
           return id;
         } catch (e: any) {
-          // Modo post-only (mercado recém-aberto): o CLOB rejeita ordens taker
-          // no ask. Recota no bid (maker), que é permitido em post-only.
           if (e?.code === 'post_only_mode' && modoTaker && baseEntry) {
             const precoMaker = lado === 'YES' ? baseEntry.yes : baseEntry.no;
             log.warn(`⚠️ [${strategy.slug}] Post-only: recotando ${lado} no bid (${precoMaker.toFixed(4)}) em vez de taker.`);
@@ -553,7 +547,14 @@ for (const oid of strategy.openOrderIds || []) {
           return null;
         }
       };
-      if (ladoLeve) {
+      if (highCertaintySide && !ladoLeve) {
+        const isYes = highCertaintySide === 'YES';
+        const tok = isYes ? strategy.tokenIdYes : strategy.tokenIdNo;
+        const prc = isYes ? yesPrice : noPrice;
+        log.info(`🚀 [${strategy.slug}] Enviando Ordem Direcional de Alta Certeza (${highCertaintySide}): ${tamanhoLadoLeve} sh @ ${prc.toFixed(4)}`);
+        const id = await colocaLado(tok, prc, highCertaintySide, tamanhoLadoLeve);
+        if (id) orderIds.push(id);
+      } else if (ladoLeve) {
         // Completar o hedge SÓ se a soma média final ficar < 1.0 — completar
         // com soma >= 1.0 é PREJUÍZO GARANTIDO no vencimento (paga $1 mas
         // custou >= $1). Caso real: XRP comprou YES@0.407 e completou NO no

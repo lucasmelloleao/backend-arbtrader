@@ -20,6 +20,8 @@ const PredictionArbStrategySchema = new mongoose.Schema({
   active: { type: Boolean, default: true },
   autoExecute: { type: Boolean, default: false },
   isAutoCreated: { type: Boolean, default: false },
+  highCertaintySide: { type: String, enum: ['YES', 'NO', null], default: null },
+  certaintyProb: { type: Number, default: 0 },
   // Posição real (CLOB)
   positionOpen: { type: Boolean, default: false },
   positionSize: { type: Number, default: 0 },

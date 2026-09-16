@@ -189,6 +189,8 @@ export async function createStrategiesFromMarkets(
         yesPrice: opp.yes,
         noPrice: opp.no,
         spreadPct: opp.spreadPct,
+        highCertaintySide: opp.highCertaintySide || null,
+        certaintyProb: opp.certaintyProb || 0,
         endDate: m.endDate ? new Date(m.endDate) : null,
         lastCheckAt: new Date(),
         // No modo colheita, garante que estratégias existentes também executem
@@ -209,6 +211,8 @@ export async function createStrategiesFromMarkets(
       yesPrice: opp.yes,
       noPrice: opp.no,
       spreadPct: opp.spreadPct,
+      highCertaintySide: opp.highCertaintySide || null,
+      certaintyProb: opp.certaintyProb || 0,
       endDate: m.endDate ? new Date(m.endDate) : null,
       tradeSize: config.tradeSize,
       active: true,
