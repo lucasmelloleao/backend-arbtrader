@@ -251,24 +251,7 @@ async function monitorOpenStrategies(settings: any) {
         continue;
       }
 
-      // Convergência: soma >= 1 → lucro garantido no vencimento
-      const sum = Number(strat.yesPrice || 0) + Number(strat.noPrice || 0);
-      const realizedPct = strat.positionSize > 0 && Number(strat.avgYesPrice || 0) > 0 && Number(strat.avgNoPrice || 0) > 0
-        ? ((1 - (Number(strat.avgYesPrice) + Number(strat.avgNoPrice))) / (Number(strat.avgYesPrice) + Number(strat.avgNoPrice))) * 100
-        : 0;
-
-      const target = Number(settings.targetProfitPct || strat.targetProfitPct || 1.0);
-      if (sum >= 1 || realizedPct >= target) {
-        const reason = sum >= 1
-          ? `Par convergiu (yes+no=${sum.toFixed(4)})`
-          : `Take-profit atingido (${realizedPct.toFixed(2)}%)`;
-        log.info(`🎯 [${strat.slug}] ${reason}. Fechando.`);
-        if (settings.isScanningEnabled) {
-          closeStrategy(String(strat._id), { dryRun: !liveAllowed, reason }).catch((e: any) => {
-            log.error(`❌ Erro no fechamento [${strat.slug}]: ${e.message}`);
-          });
-        }
-      }
+      // Posição direcional aberta ou segurando até resolução: não tenta fechamento por convergência de par antigo
     } catch (e: any) {
       log.warn(`⚠️ Erro no monitoramento de ${strat.slug}: ${e.message}`);
     }
