@@ -15,6 +15,7 @@ export const PREDICTION_ARB_CONFIG = {
     minProbability: 0.02,         // Probabilidade mínima (2%) para evitar extremos
     minHighCertaintyProb: 0.95,   // Probabilidade mínima para entrada direcional de alta certeza (95%)
     minWatchCertaintyProb: 0.90,  // Probabilidade mínima para radar/observação (90%)
+    maxEntrySecondsBeforeExpiry: 90, // Janela máxima de entrada: nos últimos 90s antes do vencimento
   },
 
   // Risk Management

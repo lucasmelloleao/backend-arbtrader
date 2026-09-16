@@ -315,6 +315,16 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
+  // Filtro de tempo: só dispara entrada real nos últimos 90 segundos antes do vencimento
+  const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
+  const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
+  const maxSegsEntrada = Number(PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry ?? 90);
+
+  if (segsRestantes > maxSegsEntrada) {
+    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s). Aguardando últimos 90s para disparar.`);
+    return { quoted: false, orderIds: [] };
+  }
+
   const isYes = highCertaintySide === 'YES';
   const targetBid = isYes ? bYes.bid : bNo.bid;
   const targetAsk = isYes ? bYes.ask : bNo.ask;
