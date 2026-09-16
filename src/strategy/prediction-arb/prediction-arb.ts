@@ -196,21 +196,12 @@ async function monitorOpenStrategies(settings: any) {
       const endMs = strat.endDate ? new Date(strat.endDate).getTime() : 0;
       const hoursToEnd = endMs > 0 ? (endMs - now) / 3600000 : Infinity;
 
-      // Mercado venceu: marca como encerrado para o Batch Redeem resgatar em lote (economiza gás Polygon)
+      // Mercado venceu: marca como encerrado instantaneamente para desobstruir o painel e libera o capital.
+      // O resgate de colateral on-chain roda em background sem bloquear o loop principal.
       if (hoursToEnd <= 0 && strat.positionOpen) {
-        log.info(`⏰ [${strat.slug}] Mercado venceu. Marcando para Batch Redeem / encerramento.`);
-        let redeemOk = false;
-        try {
-          const key = await resolvePolymarketKey(settings.userId);
-          if (key && strat.conditionId) {
-            const keyDoc = await ExchangeKey.findById(key._id).lean().catch(() => key);
-            await redeemPositionsViaSdk(keyDoc, strat.conditionId);
-            log.info(`✅ [${strat.slug}] Batch Redeem executado.`);
-            redeemOk = true;
-          }
-        } catch (e: any) {
-          log.warn(`⚠️ [${strat.slug}] Redeem aguardando finalização do oráculo: ${e.message}`);
-        }
+        log.info(`⏰ [${strat.slug}] Mercado venceu. Encerrando estratégia e agendando Redeem on-chain.`);
+        
+        // Atualiza a estratégia imediatamente para false no banco (limpa no front na hora)
         await (PredictionArbStrategy as any).findByIdAndUpdate(strat._id, {
           positionOpen: false,
           positionSize: 0,
@@ -219,6 +210,21 @@ async function monitorOpenStrategies(settings: any) {
           active: false,
           lastCheckAt: new Date(),
         });
+
+        // Dispara o resgate on-chain em background sem travar o bot por 5 minutos
+        (async () => {
+          try {
+            const key = await resolvePolymarketKey(settings.userId);
+            if (key && strat.conditionId) {
+              const keyDoc = await ExchangeKey.findById(key._id).lean().catch(() => key);
+              await redeemPositionsViaSdk(keyDoc, strat.conditionId);
+              log.info(`✅ [${strat.slug}] Batch Redeem on-chain concluído com sucesso.`);
+            }
+          } catch (e: any) {
+            log.warn(`⚠️ [${strat.slug}] Redeem aguardando liberação do oráculo: ${e.message}`);
+          }
+        })();
+
         continue;
       }
 
