@@ -168,6 +168,21 @@ router.post('/auth/perp-arb-settings', authMiddleware as any, updatePerpArbSetti
 
 
 // --- PREDICTION ARB DASHBOARD ENDPOINTS ---
+router.get('/prediction-arb/strategies', authMiddleware as any, getPredictionStrategies as any);
+router.post('/prediction-arb/strategies', authMiddleware as any, createPredictionStrategy as any);
+router.put('/prediction-arb/strategies', authMiddleware as any, updatePredictionStrategy as any);
+router.delete('/prediction-arb/strategies/:id', authMiddleware as any, deletePredictionStrategy as any);
+router.delete('/prediction-arb/strategies', authMiddleware as any, deletePredictionStrategy as any);
+router.get('/prediction-arb/trades', authMiddleware as any, getPredictionTrades as any);
+router.get('/prediction-arb/trades/resumo', authMiddleware as any, getPredictionTradesSummary as any);
+router.get('/prediction-arb/settings', authMiddleware as any, getPredictionArbSettings as any);
+router.post('/prediction-arb/settings', authMiddleware as any, updatePredictionArbSettings as any);
+router.get('/prediction-arb/bot-status', authMiddleware as any, getPredictionBotStatus as any);
+router.post('/prediction-arb/close', authMiddleware as any, closePredictionStrategy as any);
+router.post('/prediction-arb/increase', authMiddleware as any, increasePredictionStrategy as any);
+router.post('/prediction-arb/void-close', authMiddleware as any, voidClosePredictionStrategy as any);
+router.get('/prediction-arb/manual-scan', authMiddleware as any, manualScanPrediction as any);
+
 router.get('/auth/prediction-arb/strategies', authMiddleware as any, getPredictionStrategies as any);
 router.post('/auth/prediction-arb/strategies', authMiddleware as any, createPredictionStrategy as any);
 router.put('/auth/prediction-arb/strategies', authMiddleware as any, updatePredictionStrategy as any);
