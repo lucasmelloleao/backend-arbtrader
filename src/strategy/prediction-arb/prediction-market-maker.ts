@@ -312,20 +312,6 @@ for (const oid of strategy.openOrderIds || []) {
     return { quoted: false, orderIds: [] };
   }
 
-  // 4.0 Mercado quase-resolvido: se um lado já convergiu (bid < 0.10 ou >
-  //     0.90), o "spread" de completude é ilusório — o lado barato não tem
-  //     book nem liquidez para fill, e o lado caro arrisca perda na resolução.
-  //     Não cotar: foi o que causou o par 25+25 comprado a 0.82/0.17.
-  //     EXCEÇÃO: se já há posição (hedge parcial), COMPLETA a perna faltante
-  //     mesmo em quase-resolvido — deixar sem hedge no vencimento é pior
-  //     (risco direcional de perder tudo).
-  const temPosicaoParcial = yesShares >= 1 || noShares >= 1;
-  const bidMenor = Math.min(bYes.bid, bNo.bid);
-  const bidMaior = Math.max(bYes.bid, bNo.bid);
-  if ((bidMenor < 0.10 || bidMaior > 0.90) && !temPosicaoParcial) {
-    log.warn(`⚠️ [${strategy.slug}] Mercado quase-resolvido (bidYes=${bYes.bid} bidNo=${bNo.bid}). Não cotando (risco direcional).`);
-    return { quoted: false, orderIds: [] };
-  }
 
   // 4.1 Profundidade: só cotar se o(s) lado(s) a COMPRAR têm book para o
   //     tamanho da ordem. No modo lado leve (completar hedge) só o lado leve
