@@ -297,7 +297,9 @@ export async function signOrder(params: {
   negRisk?: boolean;
 }): Promise<{ order: any; signature: string }> {
   const { credentials, tokenId, side, price, size } = params;
-  const expirationSec = Math.floor((Date.now() + (params.expirationMs ?? 60 * 60 * 1000)) / 1000);
+  // Expiração ultracurta para ordens Taker (default: 5s se não especificado)
+  const defaultExpMs = 5000;
+  const expirationSec = Math.floor((Date.now() + (params.expirationMs ?? defaultExpMs)) / 1000);
   const timestamp = BigInt(Date.now()); // ms — substitui nonce p/ unicidade
 
   // makerAmount = custo em pUSD (6 casas), takerAmount = ações (6 casas)

@@ -346,13 +346,36 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  if (certaintyProb < minProb) {
-    log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}% < ${(minProb * 100).toFixed(1)}%). Observando de perto sem enviar ordem.`);
+  // ── AJUSTE 4: CIRCUIT BREAKER (TILT GUARD DE PERDAS CONSECUTIVAS) ──────────
+  const cooldownMs = 30 * 60 * 1000; // 30 minutos de pausa
+  const lastLoss = strategy.lastLossAt ? new Date(strategy.lastLossAt).getTime() : 0;
+  if (lastLoss > 0 && (Date.now() - lastLoss) < cooldownMs) {
+    const minsRestantes = Math.ceil((cooldownMs - (Date.now() - lastLoss)) / 60000);
+    log.info(`🛑 [${strategy.slug}] CIRCUIT BREAKER ATIVO: Pausa pós-loss em vigor (faltam ${minsRestantes}m). Não opera neste mercado.`);
     return { quoted: false, orderIds: [] };
   }
 
+  // ── AJUSTE 1: PREÇO DE ENTRADA SEMÂNTICO (ASK >= 0.97 E ASK <= 0.99) ─────────
+  const targetAskProb = highCertaintySide === 'YES' ? bYes.ask : bNo.ask;
+  const targetBidProb = highCertaintySide === 'YES' ? bYes.bid : bNo.bid;
+  // O preço do Ask de entrada precisa refletir probabilidade entre 97% ($0.97) e 99% ($0.99)
+  const currentProb = targetAskProb > 0 ? targetAskProb : targetBidProb;
+
+  if (currentProb < minProb || currentProb > 0.99) {
+    log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} Ask=${targetAskProb.toFixed(3)} / Bid=${targetBidProb.toFixed(3)} prob=${(currentProb * 100).toFixed(1)}% fora do intervalo 97%-99%). Observando.`);
+    return { quoted: false, orderIds: [] };
+  }
+
+  // ── AJUSTE 2: CORTE FINAL DE ENTRADA (BLACKOUT HARD CUTOFF - 8 SEGUNDOS) ────
   const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
   const segsRestantes = endMs > 0 ? (endMs - Date.now()) / 1000 : Infinity;
+  
+  const HARD_CUTOFF_SEGS = 8;
+  if (segsRestantes <= HARD_CUTOFF_SEGS) {
+    log.warn(`🛑 [${strategy.slug}] CORTE FINAL DE BLACKOUT: Faltam apenas ${segsRestantes.toFixed(1)}s (<= ${HARD_CUTOFF_SEGS}s). CLOB entrando em freeze/halt. Novas ordens bloqueadas.`);
+    return { quoted: false, orderIds: [] };
+  }
+
   const slugLower = String(strategy.slug || '').toLowerCase();
   const is15m = slugLower.includes('-15m-');
   const isAltcoin = /^(sol|doge|xrp)/i.test(slugLower);
@@ -362,7 +385,7 @@ export async function runMarketMaking(
     : (is15m ? 300 : 120);
 
   if (segsRestantes > maxSegsEntrada) {
-    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(certaintyProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${isAltcoin ? 'Altcoin' : 'Major'} ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
+    log.info(`⏳ [${strategy.slug}] RADAR DE TEMPO (${highCertaintySide} prob=${(currentProb * 100).toFixed(1)}%): Faltam ${segsRestantes.toFixed(0)}s (> ${maxSegsEntrada}s em ${isAltcoin ? 'Altcoin' : 'Major'} ${is15m ? '15m' : '5m'}). Aguardando janela final de ${maxSegsEntrada}s para disparar.`);
     return { quoted: false, orderIds: [] };
   }
 
