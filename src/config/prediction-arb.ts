@@ -13,8 +13,8 @@ export const PREDICTION_ARB_CONFIG = {
     minDepthUsdBase: 20,          // Liquidez mínima base por lado (USD)
     depthMultiplier: 4,           // tradeSize * multiplier = minDepthUsd
     minProbability: 0.02,         // Probabilidade mínima (2%) para evitar extremos
-    minHighCertaintyProb: 0.97,   // Probabilidade mínima para entrada direcional de alta certeza (97%)
-    minWatchCertaintyProb: 0.92,  // Probabilidade mínima para radar/observação (92%)
+    minHighCertaintyProb: 0.95,   // Probabilidade mínima para entrada direcional de alta certeza (95%)
+    minWatchCertaintyProb: 0.90,  // Probabilidade mínima para radar/observação (90%)
     maxEntrySecondsBeforeExpiry5m: 120, // Janela de entrada para 5m: últimos 120s (2 min)
     maxEntrySecondsBeforeExpiry15m: 300, // Janela de entrada para 15m: últimos 300s (5 min)
   },

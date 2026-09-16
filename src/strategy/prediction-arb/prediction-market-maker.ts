@@ -282,7 +282,7 @@ export async function runMarketMaking(
 
   const highCertaintySide = strategy.highCertaintySide || (bYes.bid >= bNo.bid ? 'YES' : 'NO');
   const certaintyProb = Number(strategy.certaintyProb || (highCertaintySide === 'YES' ? bYes.bid : bNo.bid));
-  const minProb = Number(strategy.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.97);
+  const minProb = Number(strategy.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
 
   const temLadoLeve = yesShares !== noShares;
   if (yesShares > 0 || noShares > 0) {
@@ -355,14 +355,13 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // ── AJUSTE 1: PREÇO DE ENTRADA SEMÂNTICO (ASK >= 0.97 E ASK <= 0.99) ─────────
+  // ── AJUSTE 1: PREÇO DE ENTRADA SEMÂNTICO (ASK >= minProb E ASK <= 0.99) ─────────
   const targetAskProb = highCertaintySide === 'YES' ? bYes.ask : bNo.ask;
   const targetBidProb = highCertaintySide === 'YES' ? bYes.bid : bNo.bid;
-  // O preço do Ask de entrada precisa refletir probabilidade entre 97% ($0.97) e 99% ($0.99)
   const currentProb = targetAskProb > 0 ? targetAskProb : targetBidProb;
 
   if (currentProb < minProb || currentProb > 0.99) {
-    log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} Ask=${targetAskProb.toFixed(3)} / Bid=${targetBidProb.toFixed(3)} prob=${(currentProb * 100).toFixed(1)}% fora do intervalo 97%-99%). Observando.`);
+    log.info(`👀 [${strategy.slug}] RADAR ATIVO (${highCertaintySide} Ask=${targetAskProb.toFixed(3)} / Bid=${targetBidProb.toFixed(3)} prob=${(currentProb * 100).toFixed(1)}% fora do intervalo ${(minProb * 100).toFixed(0)}%-99%). Observando.`);
     return { quoted: false, orderIds: [] };
   }
 
