@@ -685,14 +685,18 @@ export class CtraderAdapter {
       log.warn(`⚠️ CtraderAdapter: erro no reconcile: ${rec.errorCode} ${rec.description || ''}`);
       return out;
     }
-    const positionToSymbol = new Map<string, { symbol: string; volume: number; side: string }>();
+    const positionToSymbol = new Map<string, { symbol: string; volume: number; side: string; entryPrice: number }>();
     for (const pos of (rec.position || []) as any[]) {
       const market = this.marketsById.get(String(pos.tradeData?.symbolId));
       const volume = Number(pos.tradeData?.volume || 0) / VOLUME_DIVISOR;
+      const rawPrice = pos.price != null ? Number(pos.price) : (pos.tradeData?.openPrice != null ? Number(pos.tradeData.openPrice) : 0);
+      // cTrader salva preço de entrada em unidades inteiras divididas por 100000 (PRICE_DIVISOR)
+      const entryPrice = rawPrice > 1000 ? rawPrice / PRICE_DIVISOR : rawPrice;
       positionToSymbol.set(String(pos.positionId), {
         symbol: market?.symbol || String(pos.tradeData?.symbolId || pos.positionId),
         volume,
         side: pos.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
+        entryPrice,
       });
     }
     if (positionToSymbol.size === 0) return out;
@@ -719,14 +723,16 @@ export class CtraderAdapter {
         grossPnl: Number(row.grossUnrealizedPnL || 0) / div,
         volume: meta.volume,
         side: meta.side,
+        entryPrice: meta.entryPrice,
       };
-      out.set(meta.symbol, data);
       out.set(String(row.positionId), data);
+      if (!out.has(meta.symbol)) out.set(meta.symbol, data);
       if (meta.symbol.includes('/')) {
-        out.set(meta.symbol.replace('/', ''), data);
+        const flatSym = meta.symbol.replace('/', '');
+        if (!out.has(flatSym)) out.set(flatSym, data);
       } else {
         const m = meta.symbol.match(/^([A-Z]{3})([A-Z]{3})$/);
-        if (m) out.set(`${m[1]}/${m[2]}`, data);
+        if (m && !out.has(`${m[1]}/${m[2]}`)) out.set(`${m[1]}/${m[2]}`, data);
       }
     }
     return out;
