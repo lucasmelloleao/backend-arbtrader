@@ -111,7 +111,9 @@ async function formatStrategy(s: any) {
     volume24hr: info?.volume24hrClob ?? info?.volumeClob ?? 0,
     liquidity: info?.liquidityClob ?? info?.liquidityNum ?? 0,
     oneHourPriceChange: info?.oneHourPriceChange ?? 0,
-    openInterest: info?.openInterest ?? 0,
+    segundosParaVencer: s.endDate
+      ? Math.max(0, Math.floor((new Date(s.endDate).getTime() - Date.now()) / 1000))
+      : 0,
     minutosParaVencer: s.endDate
       ? Math.max(0, Math.floor((new Date(s.endDate).getTime() - Date.now()) / 60000))
       : null,
