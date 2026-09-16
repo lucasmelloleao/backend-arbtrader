@@ -99,14 +99,18 @@ export interface MarketOpportunity {
   certaintyProb?: number;
 }
 
-/** Filtra e ordena mercados (foco exclusivo em entradas direcionais com alta certeza >= 95%). */
+/** Filtra e ordena mercados (foco exclusivo em entradas direcionais com alta certeza). */
 export async function evaluateMarketsWithBooks(markets: GammaMarket[], config: ScanConfig): Promise<MarketOpportunity[]> {
   const allowed = new Set((config.allowedMarkets || []).map((s) => s.toLowerCase()));
   const filter = String(config.marketFilter || '').toLowerCase();
+  const maxHorizonMs = 60 * 60 * 1000; // Máximo 1 hora para vencer (descarta mercados longos)
   const minProb = Number(config.minHighCertaintyProb ?? PREDICTION_ARB_CONFIG.scan.minHighCertaintyProb ?? 0.95);
+
   const candidates = markets.filter((m) => {
     if (!m.active || m.closed) return false;
     if (m.endDate && new Date(m.endDate).getTime() < Date.now()) return false;
+    // Elimina mercados que vão vencer daqui a mais de 1 hora
+    if (m.endDate && new Date(m.endDate).getTime() > Date.now() + maxHorizonMs) return false;
     if (allowed.size > 0 && !allowed.has(String(m.slug || '').toLowerCase())) return false;
     if (filter && !String(m.slug || '').toLowerCase().includes(filter) && !String(m.question || '').toLowerCase().includes(filter)) return false;
     if (toNum(m.volumeNum) < config.minVolume24hUSD) return false;
@@ -218,22 +222,32 @@ export async function findMarket(slug: string): Promise<GammaMarket | null> {
 }
 
 /**
- * Gera slugs de mercados updown com padrão previsível (ex: btc-updown-15m-<timestamp>)
- * para os próximos N períodos e busca na Gamma. Permite monitorar BTC/ETH
- * mesmo quando não aparecem no top por volume.
+ * Gera slugs de mercados updown rápidos de 5m e 15m (ex: btc-updown-5m-<ts>, btc-updown-15m-<ts>)
+ * para os próximos N períodos e busca na Gamma.
  */
 export async function fetchUpdownMarkets(filter: string, periodsAhead = 4): Promise<GammaMarket[]> {
   const raw = String(filter || '').toLowerCase().trim();
-  // Mapeia o filtro para o prefixo do slug updown (btc → btc-updown, eth → eth-updown)
   const prefix = raw.includes('updown') ? raw.replace(/[^a-z0-9]/g, '-') : `${raw.replace(/[^a-z0-9]/g, '-')}-updown`;
   const now = Math.floor(Date.now() / 1000);
-  // Período VIGENTE (o que está rodando agora): floor alinha para o início do
-  // slot atual de 15min. Antes usava ceil (próximo slot), pulando o mercado
-  // vigente — a aba só mostrava futuros (ex: vence em 69min).
-  const currentSlot = Math.floor(now / 900) * 900;
   const out: GammaMarket[] = [];
+
+  // 1. Slugs de 5 Minutos (slots de 300s)
+  const currentSlot5m = Math.floor(now / 300) * 300;
   for (let i = 0; i < periodsAhead; i++) {
-    const ts = currentSlot + i * 900;
+    const ts = currentSlot5m + i * 300;
+    const slug = `${prefix}-5m-${ts}`;
+    try {
+      const m = await fetchMarketBySlug(slug);
+      if (m && m.active && !m.closed && m.clobTokenIds?.length >= 2) out.push(m);
+    } catch {
+      // período ainda não criado — ignora
+    }
+  }
+
+  // 2. Slugs de 15 Minutos (slots de 900s)
+  const currentSlot15m = Math.floor(now / 900) * 900;
+  for (let i = 0; i < periodsAhead; i++) {
+    const ts = currentSlot15m + i * 900;
     const slug = `${prefix}-15m-${ts}`;
     try {
       const m = await fetchMarketBySlug(slug);
