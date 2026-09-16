@@ -219,80 +219,15 @@ export async function runMarketMaking(
     return { quoted: false, orderIds: [] };
   }
 
-  // 2.5 Inventário desbalanceado: quando um lado tem MUITO mais que o outro
-  //     (ex: YES=15, NO=10), o robô fica com risco direcional. Duas frentes:
-  //     - Se o mercado está MUITO perto do vencimento (< 5min), VENDE o
-  //       excesso do lado pesado para não carregar risco até o fim.
-  //     - Senão, cotar SÓ o lado leve (completar o par) e nunca o lado
-  //       pesado — assim o par converge para balanceado.
-  //     NOTA: antes era < 30min — agressivo demais para mercados de 15min:
-  //       vendia o lado recém-comprado antes do par completar (o caso do
-  //       mercado 8:15, onde o DOWN comprado a 0.50 foi vendido a 0.44
-  //       13s depois, realizando perda desnecessária).
-  const oneSideOnly = (yesShares >= 1) !== (noShares >= 1);
-  const desbalanceado = !oneSideOnly && imbalance > 0.1;
-  const excesso = Math.abs(yesShares - noShares);
-  if (oneSideOnly || desbalanceado) {
-    const endMs = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
-    const hoursToEnd = endMs > 0 ? (endMs - Date.now()) / 3600000 : Infinity;
-    const exposedShares = Math.max(yesShares, noShares);
-    const exposedSide = yesShares >= noShares ? 'YES' : 'NO';
-    const exposedToken = yesShares >= noShares ? strategy.tokenIdYes : strategy.tokenIdNo;
 
-    // Se falta < 5min para vencer e o par não está completo, reverte o excesso.
-    if (hoursToEnd < 5 / 60) {
-      log.warn(`⚠️ [${strategy.slug}] Inventário desbalanceado (${exposedSide} ${exposedShares}, diff ${excesso}) com vencimento em ${hoursToEnd.toFixed(2)}h. Vendendo excesso para não perder.`);
-      try {
-        // Vende o excesso no bid atual para reduzir o risco direcional
-        const book = await bookPrices(exposedToken);
-        if (book.bid > 0 && useSdk) {
-          await placeOrderViaSdk(keyDoc, { tokenId: exposedToken, side: 'SELL', price: book.bid, size: excesso });
-          log.info(`✅ [${strategy.slug}] Excesso ${exposedSide} vendido (${excesso} @ ${book.bid}).`);
-        } else if (book.bid > 0) {
-          const sell = await signOrder({ credentials, tokenId: exposedToken, side: 'SELL', price: book.bid, size: excesso });
-          await placeOrder(credentials, sell);
-          log.info(`✅ [${strategy.slug}] Excesso ${exposedSide} vendido (${excesso} @ ${book.bid}).`);
-        }
-      } catch (e: any) {
-        log.warn(`⚠️ [${strategy.slug}] Falha ao vender excesso: ${e.message}`);
-      }
-      // Cancela ordens do outro lado e marca como fechada (sem posição útil)
-for (const oid of strategy.openOrderIds || []) {
-      try {
-        if (useSdk) await cancelOrderViaSdk(keyDoc, oid);
-        else await cancelOrder(credentials, oid);
-      } catch (e: any) {
-        log.warn(`⚠️ falha ao cancelar ordem ${oid}: ${e.message}`);
-      }
-    }
-      await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-        openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
-      });
-      return { quoted: false, orderIds: [] };
-    }
-
-    // ── DEBOUNCE DE HEDGE (Corr. bola de neve) ─────────────────────────────
-    // A Data API reflete o fill com atraso (vários segundos). Se o MM mandou
-    // uma ordem de completar hedge há pouco e a API ainda não mostrou o fill,
-    // ele "vê" desbalanceamento fantasma e compra de novo — empilhando posição
-    // (SOL 5→10→15). Só completa de novo depois de 90s (≈3 ciclos), tempo p/ a
-    // API refletir o fill real.
-    const hedgeAnt = strategy.ultimoHedgeAt ? new Date(strategy.ultimoHedgeAt).getTime() : 0;
-    const msDesdeHedge = Date.now() - hedgeAnt;
-    const DEBOUNCE_HEDGE_MS = 90_000;
-    if (hedgeAnt > 0 && msDesdeHedge < DEBOUNCE_HEDGE_MS) {
-      log.info(`⏳ [${strategy.slug}] Hedge recente há ${(msDesdeHedge / 1000).toFixed(0)}s (debounce ${DEBOUNCE_HEDGE_MS / 1000}s). Aguardando Data API refletir o fill antes de reavaliar.`);
-      return { quoted: false, orderIds: [] };
-    }
-
-    // Ainda tem tempo: tenta completar o par (cotar o lado leve com prioridade)
-    log.info(`🎯 [${strategy.slug}] Inventário desbalanceado (YES=${yesShares} NO=${noShares}). Tentando completar o par (foco no lado leve)...`);
-  }
 
   // 3. Cap de inventário: se um lado já está no cap, NÃO acumula mais dele.
   //    MAS se está desbalanceado (um lado menor que o outro), permite completar
   //    pelo lado leve — o cap não pode travar o completar do par (era o que
   //    deixava 15 vs 10: o UP bateu o cap e o MM parou antes de comprar o DOWN).
+  const oneSideOnly = (yesShares >= 1) !== (noShares >= 1);
+  const excesso = Math.abs(yesShares - noShares);
+  const desbalanceado = !oneSideOnly && excesso > 0;
   const capReached = yesShares >= cap || noShares >= cap;
   const desbalanceadoParaCompletar = (oneSideOnly || desbalanceado) && excesso > 0;
   if (capReached && !desbalanceadoParaCompletar) {
@@ -439,38 +374,7 @@ for (const oid of strategy.openOrderIds || []) {
   const custoOrdensAtivas = (strategy.openOrderIds || []).length * sharesPerQuote * pairSum;
   const custoPar = ladoLeveCalc ? custoPernaLeve : sharesPerQuote * pairSum;
   if (saldoDisponivel > 0 && custoOrdensAtivas + custoPar > saldoDisponivel) {
-    // Se é PERNA ÚNICA (um lado preenchido, outro não) e o capital não cobre
-    // o hedge, segurar até o vencimento é risco direcional total (o caso real
-    // da DOGE YES=10 NO=0). Com o vencimento próximo, o menor prejuízo é
-    // VENDER a perna existente no bid — recupera parte do capital em vez de
-    // arriscar perder tudo na resolução. Só faz isso com vencimento razoável
-    // (o bid ainda tem liquidez); senão, apenas não cota.
-    const endMsSaldo = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
-    const minParaVencer = endMsSaldo > 0 ? (endMsSaldo - Date.now()) / 60000 : Infinity;
-    const pernaUnicaSemSaldo = oneSideOnly && minParaVencer <= PREDICTION_ARB_CONFIG.timeWindows.singleLegSellMinutes && minParaVencer > 0;
-    if (pernaUnicaSemSaldo) {
-      log.warn(`⚠️ [${strategy.slug}] Perna única (${yesShares >= 1 ? 'YES' : 'NO'} ${Math.max(yesShares, noShares)}) sem saldo p/ hedge (${minParaVencer.toFixed(1)}min p/ vencer). Vendendo a perna para não perder tudo.`);
-      try {
-        const pernaToken = yesShares >= 1 ? strategy.tokenIdYes : strategy.tokenIdNo;
-        const pernaQtd = Math.max(yesShares, noShares);
-        const bookPerna = await bookPrices(pernaToken);
-        if (bookPerna.bid > 0) {
-          if (useSdk) {
-            await placeOrderViaSdk(keyDoc, { tokenId: pernaToken, side: 'SELL', price: bookPerna.bid, size: pernaQtd });
-          } else {
-            const sellPerna = await signOrder({ credentials, tokenId: pernaToken, side: 'SELL', price: bookPerna.bid, size: pernaQtd });
-            await placeOrder(credentials, sellPerna);
-          }
-          log.info(`✅ [${strategy.slug}] Perna única vendida (${pernaQtd} @ ${bookPerna.bid}).`);
-          await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
-            openOrderIds: [], positionOpen: false, yesShares: 0, noShares: 0, active: false, mmActive: false,
-          });
-          return { quoted: false, orderIds: [] };
-        }
-      } catch (e: any) {
-        log.warn(`⚠️ [${strategy.slug}] Falha ao vender perna única: ${e.message}`);
-      }
-    }
+
     log.warn(`⚠️ [${strategy.slug}] Saldo insuficiente (custo ${custoOrdensAtivas.toFixed(2)}+${custoPar.toFixed(2)} > disponível $${saldoDisponivel.toFixed(2)}). Não cotando.`);
     return { quoted: false, orderIds: [] };
   }
