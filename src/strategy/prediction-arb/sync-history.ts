@@ -20,12 +20,20 @@ function getDataBase(): string {
   return base;
 }
 
-/** Busca a activity da deposit wallet na Data API. */
-async function fetchActivity(address: string, limit = 500): Promise<any[]> {
-  const res = await withTimeout(fetch(`${getDataBase()}/activity?user=${address}&limit=${limit}`), 20000, null);
-  if (!res || !res.ok) return [];
+/** Busca a activity da deposit wallet na Data API (filtra últimas 12h por padrão). */
+async function fetchActivity(address: string, limit = 500, hours = 12): Promise<any[]> {
+  const minTs = Math.floor((Date.now() - hours * 3600 * 1000) / 1000);
+  const res = await withTimeout(fetch(`${getDataBase()}/activity?user=${address}&limit=${limit}&start_ts=${minTs}`), 20000, null);
+  if (!res || !res.ok) {
+    // Fallback sem start_ts caso a API exija chamada simples
+    const fallbackRes = await withTimeout(fetch(`${getDataBase()}/activity?user=${address}&limit=${limit}`), 20000, null);
+    if (!fallbackRes || !fallbackRes.ok) return [];
+    const fallbackData = await fallbackRes.json();
+    return Array.isArray(fallbackData) ? fallbackData.filter((a: any) => (a.timestamp || 0) >= minTs) : [];
+  }
   const data = await res.json();
-  return Array.isArray(data) ? data : [];
+  const list = Array.isArray(data) ? data : [];
+  return list.filter((a: any) => (a.timestamp || 0) >= minTs);
 }
 
 /**
