@@ -311,15 +311,19 @@ export async function getPredictionTradesSummary(req: AuthenticatedRequest, res:
 
     const totalClosed = closes.length;
     const totalPnl = closes.reduce((acc: number, t: any) => acc + Number(t.pnl || 0), 0);
-    const totalEntradaUsd = opens.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
-    const monthlyPct = totalEntradaUsd > 0 ? Number(((totalPnl / totalEntradaUsd) * 100).toFixed(2)) : 0;
-    const aprPct = Number((monthlyPct * 12).toFixed(2));
+    // Usa a soma dos aportes reais negociados nas operacoes encerradas (ou nas entradas)
+    const sumClosesInvested = closes.reduce((acc: number, t: any) => acc + Number(t.investedUsd || t.amount || 0), 0);
+    const sumOpensInvested = opens.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
+    const totalEntradaUsd = Math.max(sumClosesInvested, sumOpensInvested);
+    const returnPct = totalEntradaUsd > 0 ? Number(((totalPnl / totalEntradaUsd) * 100).toFixed(2)) : 0;
+    // APR proporcional projetado simples (base 30 dias / 360 dias)
+    const aprPct = Number((returnPct * 12).toFixed(2));
 
     const data = {
       operacoesEncerradas: totalClosed,
       totalPnl: Number(totalPnl.toFixed(2)),
       aprPct,
-      monthlyPct,
+      monthlyPct: returnPct,
       totalEntradaUsd: Number(totalEntradaUsd.toFixed(2)),
       totalSaidaUsd: Number((totalEntradaUsd + totalPnl).toFixed(2)),
     };
