@@ -240,8 +240,10 @@ async function monitorOpenStrategies(settings: any) {
         log.info(`⏰ [${strat.slug}] Vencimento próximo (${hoursToEnd.toFixed(1)}h). Segurando par até resolução.`);
         continue;
       }
-      // Posição direcional aberta: mantida até o vencimento sem tentativa de hedge
+
+      // Posição direcional aberta: executa Market Maker para monitorar STOP OUT DE EMERGÊNCIA (< 0.70)
       if (hoursToEnd <= 1 && (yesSh >= 1 || noSh >= 1)) {
+        await runMarketMaking(strat, { dryRun: !liveAllowed }).catch(() => {});
         log.info(`⏳ [${strat.slug}] Posição direcional aberta (YES=${yesSh} NO=${noSh}). Mantendo até o vencimento (${hoursToEnd.toFixed(1)}h restantes).`);
         continue;
       }
