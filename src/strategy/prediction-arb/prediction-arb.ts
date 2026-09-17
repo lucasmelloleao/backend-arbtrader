@@ -34,6 +34,11 @@ let syncCycleCount = 0;
 // Timestamp do último scan executado
 let lastScanTs = 0;
 
+// Timestamps para otimização de consultas de banco
+let lastHeartbeatTs = 0;
+let lastCleanupTs = 0;
+let lastScannedAtUpdateTs = 0;
+
 // Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
 let liveAnterior = false;
 
@@ -283,10 +288,19 @@ async function runCycle() {
     return;
   }
 
-  // Descarta estratégias cujo mercado já venceu
-  await cleanupExpiredStrategies(settings.userId);
+  const nowTs = Date.now();
 
-  await heartbeat(settings.userId);
+  // Descarta estratégias cujo mercado já venceu (a cada 30s)
+  if (nowTs - lastCleanupTs >= 30_000) {
+    lastCleanupTs = nowTs;
+    await cleanupExpiredStrategies(settings.userId);
+  }
+
+  // Heartbeat do robô (a cada 15s)
+  if (nowTs - lastHeartbeatTs >= 15_000) {
+    lastHeartbeatTs = nowTs;
+    await heartbeat(settings.userId);
+  }
 
   if (settings.isScanningEnabled !== true) {
     log.info('⏸️ [PREDICTION-ARB] Scan desabilitado (isScanningEnabled=false).');
@@ -463,8 +477,11 @@ async function runCycle() {
     }
   }
 
-  // Atualiza lastScannedAt
-  await (PredictionArbSettings as any).findByIdAndUpdate(settings._id, { lastScannedAt: new Date() });
+  // Atualiza lastScannedAt no banco a cada 10 segundos para economizar writes
+  if (nowTs - lastScannedAtUpdateTs >= 10_000) {
+    lastScannedAtUpdateTs = nowTs;
+    await (PredictionArbSettings as any).findByIdAndUpdate(settings._id, { lastScannedAt: new Date() });
+  }
 
   log.info(`🔁 [PREDICTION-ARB] Ciclo concluído (scanned=${scan.scanned}, created=${scan.created}).`);
 }
