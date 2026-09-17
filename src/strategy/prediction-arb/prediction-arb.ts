@@ -334,8 +334,8 @@ async function runCycle() {
   }
   liveAnterior = liveAllowed;
 
-  // 1. Scan (executado a cada 30 segundos para evitar chamadas excessivas e rate limit da API)
-  const SCAN_INTERVAL_MS = 30_000;
+  // 1. Scan (executado a cada 60 segundos para acompanhar abertura de novas velas sem sobrecarregar a API)
+  const SCAN_INTERVAL_MS = 60_000;
   const config = {
     minSpreadPct: Number(settings.minSpreadPct ?? PREDICTION_ARB_CONFIG.scan.minSpreadPct),
     minVolume24hUSD: Number(settings.minVolume24hUSD ?? PREDICTION_ARB_CONFIG.scan.minVolume24hUsd),
