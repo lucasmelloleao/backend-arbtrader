@@ -498,8 +498,8 @@ async function main() {
     });
   }
 
-  // Intervalo do ciclo: 1 segundo (1_000ms) para verificação em tempo real
-  const FAST_INTERVAL_MS = 1_000;
+  // Intervalo do ciclo: 700 milissegundos para reação ultra-rápida em ordens e stop-loss
+  const FAST_INTERVAL_MS = 700;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
