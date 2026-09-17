@@ -490,8 +490,8 @@ async function main() {
     });
   }
 
-  // Intervalo do ciclo: 3 segundos (3_000ms) para execução ultra-rápida sem perder oportunidades de 5m
-  const FAST_INTERVAL_MS = 3_000;
+  // Intervalo do ciclo: 2 segundos (2_000ms) para execução ultra-rápida sem perder oportunidades de 5m
+  const FAST_INTERVAL_MS = 2_000;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
