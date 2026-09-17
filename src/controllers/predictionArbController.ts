@@ -63,10 +63,11 @@ async function formatStrategy(s: any) {
   let bidYesAtual = 0;
   let bidNoAtual = 0;
 
+  const [bookYes, bookNo] = await Promise.all([getTokenBook(s.tokenIdYes), getTokenBook(s.tokenIdNo)]);
+  bidYesAtual = bookYes.bid;
+  bidNoAtual = bookNo.bid;
+
   if (yesShares > 0 || noShares > 0) {
-    const [bookYes, bookNo] = await Promise.all([getTokenBook(s.tokenIdYes), getTokenBook(s.tokenIdNo)]);
-    bidYesAtual = bookYes.bid;
-    bidNoAtual = bookNo.bid;
     valorAtual = yesShares * bidYesAtual + noShares * bidNoAtual;
     // Custo: usa o preço médio gravado; se ausente (posição antiga), usa o
     // yesPrice/noPrice da estratégia (preços de entrada do MM) como aproximação.
@@ -86,8 +87,8 @@ async function formatStrategy(s: any) {
     slug: s.slug,
     marketId: s.marketId,
     conditionId: s.conditionId,
-    yesPrice: s.yesPrice,
-    noPrice: s.noPrice,
+    yesPrice: bidYesAtual > 0 ? bidYesAtual : (info?.outcomePrices?.[0] ? Number(info.outcomePrices[0]) : s.yesPrice),
+    noPrice: bidNoAtual > 0 ? bidNoAtual : (info?.outcomePrices?.[1] ? Number(info.outcomePrices[1]) : s.noPrice),
     spreadPct: s.spreadPct,
     tradeSize: s.tradeSize,
     ativo: s.active,
