@@ -31,6 +31,9 @@ const DEFAULT_INTERVAL_MS = PREDICTION_ARB_CONFIG.scan.intervalMs;
 // Contador de ciclos para o sync periódico do histórico
 let syncCycleCount = 0;
 
+// Timestamp do último scan executado
+let lastScanTs = 0;
+
 // Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
 let liveAnterior = false;
 
@@ -331,7 +334,8 @@ async function runCycle() {
   }
   liveAnterior = liveAllowed;
 
-  // 1. Scan (pulado quando o stop diário está ativo — não criar risco novo)
+  // 1. Scan (executado a cada 30 segundos para evitar chamadas excessivas e rate limit da API)
+  const SCAN_INTERVAL_MS = 30_000;
   const config = {
     minSpreadPct: Number(settings.minSpreadPct ?? PREDICTION_ARB_CONFIG.scan.minSpreadPct),
     minVolume24hUSD: Number(settings.minVolume24hUSD ?? PREDICTION_ARB_CONFIG.scan.minVolume24hUsd),
@@ -347,12 +351,16 @@ async function runCycle() {
     maxEntrySecondsBeforeExpiry15mAlt: Number(settings.maxEntrySecondsBeforeExpiry15mAlt ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mAlt),
     maxEntrySecondsBeforeExpiry15mMaj: Number(settings.maxEntrySecondsBeforeExpiry15mMaj ?? PREDICTION_ARB_CONFIG.scan.maxEntrySecondsBeforeExpiry15mMaj),
   };
-  const scan = podeAbrirHoje
-    ? await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
-        log.error(`❌ Erro no scan: ${e.message}`);
-        return { scanned: 0, created: 0, updated: 0 };
-      })
-    : { scanned: 0, created: 0, updated: 0 };
+
+  const now = Date.now();
+  let scan = { scanned: 0, created: 0, updated: 0 };
+  if (podeAbrirHoje && (now - lastScanTs >= SCAN_INTERVAL_MS)) {
+    lastScanTs = now;
+    scan = await runScan(settings.userId, config, liveAllowed).catch((e: any) => {
+      log.error(`❌ Erro no scan: ${e.message}`);
+      return { scanned: 0, created: 0, updated: 0 };
+    });
+  }
 
   // 2. Auto-execução (fluxo antigo — estratégias SEM mmActive usam ordem única)
   //    Respeita o limite de pares abertos configurado (settings.maxOpenPairs)
