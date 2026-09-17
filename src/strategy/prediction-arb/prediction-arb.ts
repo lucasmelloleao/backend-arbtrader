@@ -498,8 +498,8 @@ async function main() {
     });
   }
 
-  // Intervalo do ciclo: 700 milissegundos para reação ultra-rápida em ordens e stop-loss
-  const FAST_INTERVAL_MS = 700;
+  // Intervalo do ciclo: 600 milissegundos para reação otimizada em ordens e stop-loss
+  const FAST_INTERVAL_MS = 600;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
