@@ -10,14 +10,13 @@ import { fetchBook } from '../strategy/prediction-arb/helpers/clob-client';
 
 const isDashboard = (req: AuthenticatedRequest) => req.path.includes('/auth/');
 
-// Cache curto dos mercados da Gamma (30s) para não estourar rate-limit
-// ao enriquecer N estratégias com dados ao vivo.
+// Cache curto dos mercados da Gamma (3s) para não estourar rate-limit
 const marketInfoCache = new Map<string, { data: any; at: number }>();
-const MARKET_INFO_TTL_MS = 30_000;
+const MARKET_INFO_TTL_MS = 3_000;
 
-// Cache curto dos books (bid/ask) por token (30s)
+// Cache curto dos books (bid/ask) por token (3s)
 const bookCache = new Map<string, { data: { bid: number; ask: number }; at: number }>();
-const BOOK_TTL_MS = 30_000;
+const BOOK_TTL_MS = 3_000;
 
 async function getMarketInfo(slug: string): Promise<any | null> {
   const cached = marketInfoCache.get(slug);
