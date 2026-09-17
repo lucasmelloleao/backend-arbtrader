@@ -116,10 +116,6 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     const lastTs = Math.max(...evs.map((e: any) => e.timestamp));
     const saiu = realized > 0; // houve venda ou redeem
 
-    // Corr. 4: classifica o TIPO de saída — redeem (mercado resolveu no
-    // vencimento) vs venda antecipada no CLOB. Permite medir onde o PnL é
-    // gerado/perdido (os dados mostram que venda antecipada concentra as
-    // maiores perdas — sem essa distinção o painel não separa os dois).
     const soRedeem = realizedSell <= 0 && realizedRedeem > 0;
     const soVenda = realizedSell > 0 && realizedRedeem <= 0;
     const saidaTipo = soRedeem
@@ -128,10 +124,6 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     const motivoSaida = saiu ? `Sincronizado da Polymarket [saída: ${saidaTipo}]` : 'Sincronizado da Polymarket';
 
     const marketId = String(evs[0]?.asset || cond);
-    // Busca o trade existente PELO conditionId (marketId = cond). O strategyId
-    // SÓ entra no $or se a estratégia existir — com strategyId: null o Mongo
-    // casa com QUALQUER trade sem estratégia (pega o errado: atualizava o
-    // mercado 1788229800 em vez do correto, deixando o close_pair sem criar).
     const buscaExistente = strategy
       ? { userId, $or: [{ marketId: cond }, { strategyId: strategy._id }] }
       : { userId, marketId: cond };
@@ -143,7 +135,7 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
           slug,
           question,
           strategyId: strategy?._id,
-          marketId: cond, // padroniza (o MM grava o ID numérico da Gamma)
+          marketId: cond,
           yesShares,
           noShares,
           ...(avgYesPrice > 0 ? { avgYesPrice } : {}),
@@ -155,6 +147,8 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
           type: saiu ? 'close_pair' : 'open_pair',
           status: 'executed',
           reason: motivoSaida,
+          openedAt: existente.openedAt || new Date(firstTs * 1000),
+          createdAt: saiu ? new Date(lastTs * 1000) : (existente.createdAt || new Date(firstTs * 1000)),
         },
       });
       atualizados++;
@@ -176,8 +170,8 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
         realizedUsd: realized,
         pnl: Number(pnl.toFixed(4)),
         reason: motivoSaida,
-        createdAt: new Date(firstTs * 1000),
         openedAt: new Date(firstTs * 1000),
+        createdAt: new Date(lastTs * 1000),
       });
       criados++;
     }

@@ -275,6 +275,7 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
       spreadPct: t.spreadPct ?? 0,
       reason: t.reason || '',
       orderIds: t.orderIds || [],
+      openedAt: t.openedAt ? new Date(t.openedAt).toISOString() : (t.createdAt ? new Date(t.createdAt).toISOString() : ''),
       createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : '',
     }));
 
