@@ -242,7 +242,7 @@ async function monitorOpenStrategies(settings: any) {
       }
 
       // Posição direcional aberta: executa Market Maker para monitorar STOP OUT DE EMERGÊNCIA (< 0.70)
-      if (hoursToEnd <= 1 && (yesSh >= 1 || noSh >= 1)) {
+      if (hoursToEnd > 0 && hoursToEnd <= 1 && (yesSh >= 1 || noSh >= 1)) {
         await runMarketMaking(strat, { dryRun: !liveAllowed }).catch(() => {});
         log.info(`⏳ [${strat.slug}] Posição direcional aberta (YES=${yesSh} NO=${noSh}). Mantendo até o vencimento (${hoursToEnd.toFixed(1)}h restantes).`);
         continue;
