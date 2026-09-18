@@ -112,6 +112,9 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     }, 0);
     const pnl = realized - invested - feeVendas;
 
+    const firstTs = Math.min(...evs.map((e: any) => e.timestamp || Math.floor(Date.now() / 1000)));
+    const lastTs = Math.max(...evs.map((e: any) => e.timestamp || Math.floor(Date.now() / 1000)));
+
     // Considera encerrado se houve venda/redeem (realized > 0) OU se o mercado já fechou (closed/expirou)
     const endMsMarket = strategy?.endDate ? new Date(strategy.endDate).getTime() : 0;
     const mercadoExpirou = endMsMarket > 0 && endMsMarket < Date.now();
