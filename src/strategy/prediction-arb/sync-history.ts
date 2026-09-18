@@ -112,15 +112,16 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
     }, 0);
     const pnl = realized - invested - feeVendas;
 
-    const firstTs = Math.min(...evs.map((e: any) => e.timestamp));
-    const lastTs = Math.max(...evs.map((e: any) => e.timestamp));
-    const saiu = realized > 0; // houve venda ou redeem
+    // Considera encerrado se houve venda/redeem (realized > 0) OU se o mercado já fechou (closed/expirou)
+    const endMsMarket = strategy?.endDate ? new Date(strategy.endDate).getTime() : 0;
+    const mercadoExpirou = endMsMarket > 0 && endMsMarket < Date.now();
+    const saiu = realized > 0 || mercadoExpirou;
 
     const soRedeem = realizedSell <= 0 && realizedRedeem > 0;
     const soVenda = realizedSell > 0 && realizedRedeem <= 0;
     const saidaTipo = soRedeem
       ? 'redeem-vencimento'
-      : (soVenda ? 'venda-antecipada' : 'mista');
+      : (soVenda ? 'venda-antecipada' : (mercadoExpirou ? 'vencimento-perda-total' : 'mista'));
     const motivoSaida = saiu ? `Sincronizado da Polymarket [saída: ${saidaTipo}]` : 'Sincronizado da Polymarket';
 
     const marketId = String(evs[0]?.asset || cond);
