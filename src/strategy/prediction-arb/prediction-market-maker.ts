@@ -337,6 +337,49 @@ export async function runMarketMaking(
       return { quoted: false, orderIds: [] };
     }
 
+    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO (>= 80% E < 45s) ──
+    // Se a posição acumulou alto lucro (cotação de saída >= 0.80) e faltam menos de 45 segundos para o fim,
+    // realiza a venda antecipada a mercado para garantir o lucro contra viradas de última hora.
+    const endMsPos = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
+    const segsRestantesPos = endMsPos > 0 ? (endMsPos - Date.now()) / 1000 : Infinity;
+    const TAKE_PROFIT_BID_THRESHOLD = 0.80; // Cotação >= 0.80
+    const TAKE_PROFIT_SEGS_LEFT = 45;       // Restando menos de 45s
+
+    if (bAtual.bid >= TAKE_PROFIT_BID_THRESHOLD && segsRestantesPos <= TAKE_PROFIT_SEGS_LEFT && segsRestantesPos > 8) {
+      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro elevado em ${sideAberto} (Bid=${bAtual.bid.toFixed(3)}) restando ${segsRestantesPos.toFixed(1)}s (< ${TAKE_PROFIT_SEGS_LEFT}s). Garantindo lucro a mercado.`);
+
+      const lockPrice = Math.max(0.01, bAtual.bid);
+      try {
+        let tpOrderId: string | null = null;
+        if (useSdk) {
+          tpOrderId = await placeOrderViaSdk(keyDoc, { tokenId: tokenAberto, side: 'SELL', price: lockPrice, size: sharesAbertas });
+        } else {
+          const sellOrd = await signOrder({ credentials, tokenId: tokenAberto, side: 'SELL', price: lockPrice, size: sharesAbertas });
+          tpOrderId = await placeOrder(credentials, sellOrd);
+        }
+
+        await new Promise(r => setTimeout(r, 1000));
+
+        let posCheck: any[] = [];
+        if (useSdk) posCheck = await fetchPositionsViaDataApi(keyDoc).catch(() => []);
+        else posCheck = await fetchPositions(credentials).catch(() => []);
+
+        const posRem = posCheck.find((p: any) => String(p.asset || p.asset_id || p.token_id || '') === tokenAberto);
+        const remSize = Number(posRem?.size || 0);
+
+        if (remSize <= 0) {
+          log.info(`✅ [${strategy.slug}] Lucro Antecipado Garantido com Sucesso! Position fechada a $${lockPrice.toFixed(3)}.`);
+        }
+
+        await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
+          positionOpen: false, yesShares: 0, noShares: 0, positionSize: 0, active: false, mmActive: false,
+        });
+        return { quoted: false, orderIds: [] };
+      } catch (e: any) {
+        log.warn(`⚠️ [${strategy.slug}] Falha ao processar Take Profit Antecipado: ${e.message}`);
+      }
+    }
+
     log.info(`📌 [${strategy.slug}] Posição direcional aberta (${yesShares} YES / ${noShares} NO @ ${bAtual.bid.toFixed(3)}). Não faz hedge. Aguardando vencimento.`);
     return { quoted: false, orderIds: [] };
   }

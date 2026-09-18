@@ -17,8 +17,8 @@ export const PREDICTION_ARB_CONFIG = {
     minWatchCertaintyProb: 0.90,  // Probabilidade mínima para radar/observação (90%)
     maxEntrySecondsBeforeExpiry5mAlt: 60,   // Janela 5m Altcoins: 60s (1 min)
     maxEntrySecondsBeforeExpiry5mMaj: 120,  // Janela 5m Majors: 120s (2 min)
-    maxEntrySecondsBeforeExpiry15mAlt: 120, // Janela 15m Altcoins: 120s (2 min)
-    maxEntrySecondsBeforeExpiry15mMaj: 300, // Janela 15m Majors: 300s (5 min)
+    maxEntrySecondsBeforeExpiry15mAlt: 240, // Janela 15m Altcoins: 240s (4 min) - restringe entradas no final
+    maxEntrySecondsBeforeExpiry15mMaj: 300, // Janela 15m Majors: 300s (5 min) - restringe entradas no final
   },
 
   // Risk Management
