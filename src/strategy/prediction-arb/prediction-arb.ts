@@ -38,6 +38,7 @@ let lastScanTs = 0;
 let lastHeartbeatTs = 0;
 let lastCleanupTs = 0;
 let lastScannedAtUpdateTs = 0;
+let lastDisabledLogTs = 0;
 
 // Estado anterior do modo live — usado para detectar a transição DRY-RUN → LIVE
 let liveAnterior = false;
@@ -303,7 +304,10 @@ async function runCycle() {
   }
 
   if (settings.isScanningEnabled !== true) {
-    log.info('⏸️ [PREDICTION-ARB] Scan desabilitado (isScanningEnabled=false).');
+    if (nowTs - lastDisabledLogTs >= 30_000) {
+      lastDisabledLogTs = nowTs;
+      log.info('⏸️ [PREDICTION-ARB] Scan desabilitado (isScanningEnabled=false).');
+    }
     return;
   }
 
