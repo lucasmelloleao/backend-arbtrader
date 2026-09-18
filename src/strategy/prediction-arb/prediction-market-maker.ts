@@ -12,7 +12,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
-import { makerEntryPrices, fetchSpotPrice, fetchSpotAtrInfo } from './helpers/pricing';
+import { makerEntryPrices, fetchSpotPrice, fetchSpotAtrInfo, checkSpotSpike } from './helpers/pricing';
 import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
@@ -435,6 +435,14 @@ export async function runMarketMaking(
   const coinMatch = slugLower.match(/^(btc|eth|sol|doge|xrp)/i);
   if (coinMatch) {
     const symbol = coinMatch[1].toUpperCase();
+
+    // ── SPIKE GUARD: BLOQUEIA ENTRADAS NA "PONTA DA AGULHA" (> 3x ATR 1m) ─────
+    const spikeCheck = await checkSpotSpike(symbol, 3.0);
+    if (spikeCheck.isSpike) {
+      log.warn(`🚨 [${strategy.slug}] SPIKE GUARD ATIVADO: Movimento atípico de ${symbol} no mercado à vista no último 1m (${spikeCheck.movePct.toFixed(2)}% > 3x ATR de ${spikeCheck.atrPct.toFixed(2)}%). Bloqueando entrada na "ponta da agulha".`);
+      return { quoted: false, orderIds: [] };
+    }
+
     const { spotPrice, atrPct } = await fetchSpotAtrInfo(symbol);
     const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
 

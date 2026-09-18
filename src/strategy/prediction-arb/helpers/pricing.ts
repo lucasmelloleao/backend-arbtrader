@@ -151,3 +151,46 @@ export async function fetchSpotAtrInfo(symbol: string): Promise<{ spotPrice: num
 
   return { spotPrice, atrPct: 0 };
 }
+
+/**
+ * Verifica se o movimento da moeda no mercado à vista (Binance) no último 1m
+ * ultrapassou a trava de segurança (Spike > 3x ATR). Se exceder, retorna isSpike=true
+ * para bloquear a entrada na "ponta da agulha".
+ */
+export async function checkSpotSpike(symbol: string, thresholdMultiplier = 3.0): Promise<{ isSpike: boolean; movePct: number; atrPct: number }> {
+  const asset = symbol.toUpperCase().replace(/[^A-Z]/g, '');
+  if (!asset) return { isSpike: false, movePct: 0, atrPct: 0 };
+
+  try {
+    const pairBinance = asset.endsWith('USDT') ? asset : `${asset}USDT`;
+    const res = await withTimeout(fetch(`https://api.binance.com/api/v3/klines?symbol=${pairBinance}&interval=1m&limit=15`), 4000, null);
+    if (res && res.ok) {
+      const klines = (await res.json()) as any[];
+      if (Array.isArray(klines) && klines.length >= 2) {
+        let trSum = 0;
+        for (let i = 1; i < klines.length - 1; i++) {
+          const high = Number(klines[i][2]);
+          const low = Number(klines[i][3]);
+          const prevClose = Number(klines[i - 1][4]);
+          const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+          trSum += tr;
+        }
+        const atrValue = trSum / (klines.length - 2 || 1);
+        
+        // Candle de 1m atual (último)
+        const currentCandle = klines[klines.length - 1];
+        const openPrice = Number(currentCandle[1]);
+        const currentPrice = Number(currentCandle[4]);
+        const moveAbs = Math.abs(currentPrice - openPrice);
+        
+        const isSpike = atrValue > 0 && moveAbs > (atrValue * thresholdMultiplier);
+        const movePct = openPrice > 0 ? (moveAbs / openPrice) * 100 : 0;
+        const atrPct = currentPrice > 0 ? (atrValue / currentPrice) * 100 : 0;
+
+        return { isSpike, movePct, atrPct };
+      }
+    }
+  } catch {}
+
+  return { isSpike: false, movePct: 0, atrPct: 0 };
+}
