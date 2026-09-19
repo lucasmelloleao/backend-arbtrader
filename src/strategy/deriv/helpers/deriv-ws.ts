@@ -1,24 +1,119 @@
 import WebSocket from 'ws';
+import https from 'https';
 
 export class DerivWsClient {
   private ws: WebSocket | null = null;
   private reqId = 1;
   private pendingRequests = new Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>();
-  private authorized = false;
+  private isPatToken = false;
+  private selectedAccount: any = null;
 
-  constructor(private appId: string, private apiToken: string) {}
+  constructor(
+    private appId: string,
+    private apiToken: string,
+    private accountType: 'demo' | 'real' = 'demo'
+  ) {
+    this.isPatToken = this.apiToken.startsWith('pat_');
+  }
+
+  private async fetchAccounts(): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: 'api.derivws.com',
+          path: '/trading/v1/options/accounts',
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer ' + this.apiToken,
+            'Deriv-App-ID': this.appId,
+          },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (d) => (body += d));
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(body);
+              if (json.data && Array.isArray(json.data)) {
+                resolve(json.data);
+              } else {
+                reject(new Error(json.message || 'Falha ao obter contas Deriv PAT'));
+              }
+            } catch (err) {
+              reject(err);
+            }
+          });
+        }
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  private async fetchOtp(accountId: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: 'api.derivws.com',
+          path: `/trading/v1/options/accounts/${accountId}/otp`,
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + this.apiToken,
+            'Deriv-App-ID': this.appId,
+            'Content-Type': 'application/json',
+          },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (d) => (body += d));
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(body);
+              const wsUrl = json.data?.url;
+              if (wsUrl) {
+                resolve(wsUrl);
+              } else {
+                reject(new Error(json.message || 'Falha ao obter OTP da Deriv'));
+              }
+            } catch (err) {
+              reject(err);
+            }
+          });
+        }
+      );
+      req.on('error', reject);
+      req.write('{}');
+      req.end();
+    });
+  }
 
   public async connect(): Promise<void> {
+    let wsUrl: string;
+
+    if (this.isPatToken) {
+      const accounts = await this.fetchAccounts();
+      this.selectedAccount =
+        accounts.find((acc) => acc.account_type === this.accountType) ||
+        accounts[0];
+
+      if (!this.selectedAccount) {
+        throw new Error(`Nenhuma conta ${this.accountType} encontrada para este PAT.`);
+      }
+
+      wsUrl = await this.fetchOtp(this.selectedAccount.account_id);
+    } else {
+      wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+    }
+
     return new Promise((resolve, reject) => {
-      const url = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      this.ws = new WebSocket(url);
+      this.ws = new WebSocket(wsUrl);
 
       this.ws.on('open', async () => {
-        if (this.apiToken) {
+        if (!this.isPatToken && this.apiToken) {
           try {
             await this.authorize();
           } catch (e) {
-            console.warn('⚠️ [DerivWsClient] Falha na autorização do token:', e);
+            console.warn('⚠️ [DerivWsClient] Falha na autorização do token clássico:', e);
           }
         }
         resolve();
@@ -45,7 +140,7 @@ export class DerivWsClient {
       });
 
       this.ws.on('close', () => {
-        this.authorized = false;
+        this.selectedAccount = null;
       });
     });
   }
@@ -70,13 +165,26 @@ export class DerivWsClient {
   }
 
   public async authorize(): Promise<any> {
+    if (this.isPatToken) {
+      return {
+        loginid: this.selectedAccount?.account_id,
+        is_virtual: this.selectedAccount?.account_type === 'demo' ? 1 : 0,
+        balance: this.selectedAccount?.balance,
+        currency: this.selectedAccount?.currency,
+      };
+    }
     const res = await this.send({ authorize: this.apiToken });
-    this.authorized = true;
     return res.authorize;
   }
 
-  public async getProposal(params: { symbol: string; contract_type: string; amount: number; duration: number; duration_unit: string }): Promise<any> {
-    const res = await this.send({
+  public async getProposal(params: {
+    symbol: string;
+    contract_type: string;
+    amount: number;
+    duration: number;
+    duration_unit: string;
+  }): Promise<any> {
+    const payload: any = {
       proposal: 1,
       amount: params.amount,
       basis: 'stake',
@@ -84,8 +192,15 @@ export class DerivWsClient {
       currency: 'USD',
       duration: params.duration,
       duration_unit: params.duration_unit,
-      symbol: params.symbol,
-    });
+    };
+
+    if (this.isPatToken) {
+      payload.underlying_symbol = params.symbol;
+    } else {
+      payload.symbol = params.symbol;
+    }
+
+    const res = await this.send(payload);
     return res.proposal;
   }
 
@@ -120,3 +235,4 @@ export class DerivWsClient {
     }
   }
 }
+

@@ -31,7 +31,11 @@ export async function runDerivCycle(): Promise<void> {
       continue;
     }
 
-    const client = new DerivWsClient(settings.appId || '1089', activeToken);
+    const client = new DerivWsClient(
+      settings.appId || '1089',
+      activeToken,
+      settings.accountType === 'real' ? 'real' : 'demo'
+    );
 
   try {
     await client.connect();
