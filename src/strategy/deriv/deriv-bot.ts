@@ -112,15 +112,20 @@ export async function runDerivCycle(): Promise<void> {
 
         // B. Saída Antecipada (Take Profit ou Emergency Stop)
         const profitPct = buyPrice > 0 ? (currentProfit / buyPrice) * 100 : 0;
+        const tradeAgeSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
 
-        // Take Profit Antecipado (ganho % >= minTakeProfitPct)
-        if (profitPct >= (settings.minTakeProfitPct || 2.0)) {
+        // Evitar stop imediato por oscilação normal de spread nos primeiros 60 segundos
+        const minHoldPeriodSec = Math.min(60, (settings.contractDurationSec || 300) * 0.25);
+
+        // Take Profit Antecipado (ganho real considerável >= minTakeProfitPct, mínimo 25%)
+        const targetTakeProfit = Math.max(Number(settings.minTakeProfitPct || 2.0), 25.0);
+        if (profitPct >= targetTakeProfit) {
           log.info(`🎯 [${trade.symbol}] TAKE PROFIT ANTECIPADO: Lucro de +${profitPct.toFixed(2)}% ($${currentProfit.toFixed(2)}). Vendendo contrato...`);
           await client.sellContract(trade.contractId, 0).catch(() => {});
         }
-        // Emergency Stop Out (perda % >= emergencyStopPct)
-        else if (profitPct <= -(settings.emergencyStopPct || 20.0)) {
-          log.warn(`🚨 [${trade.symbol}] EMERGENCY STOP OUT: Prejuízo de ${profitPct.toFixed(2)}%. Vendendo contrato...`);
+        // Emergency Stop Out (só aciona após carência de maturação para evitar ruído de spread)
+        else if (tradeAgeSec >= minHoldPeriodSec && profitPct <= -(Math.max(Number(settings.emergencyStopPct || 20.0), 50.0))) {
+          log.warn(`🚨 [${trade.symbol}] EMERGENCY STOP OUT (${tradeAgeSec.toFixed(0)}s decorridos): Prejuízo de ${profitPct.toFixed(2)}%. Vendendo contrato...`);
           await client.sellContract(trade.contractId, 0).catch(() => {});
         }
       } catch (e: any) {
@@ -144,17 +149,21 @@ export async function runDerivCycle(): Promise<void> {
       ? settings.allowedSymbols
       : ['frxBTCUSD', 'frxETHUSD', 'R_100', 'R_50'];
 
-    const minCertainty = Number(settings.minHighCertaintyProb || 0.75);
+    const minCertainty = Number(settings.minHighCertaintyProb || 0.80);
 
     for (const sym of symbols) {
       try {
-        // 1. Busca os últimos 50 ticks para análise estatística aprofundada
-        const prices = await client.getTicksHistory(sym, 50).catch(() => []);
+        // Análise multi-timeframe: 60 velas de 1 minuto para contratos de 5m (300s)
+        const candles = await client.getCandlesHistory(sym, 60, 60).catch(() => []);
+        const prices = candles.length >= 30 
+          ? candles.map((c: any) => c.close)
+          : await client.getTicksHistory(sym, 60).catch(() => []);
+
         if (!prices || prices.length < 30) continue;
 
         const latestPrice = prices[prices.length - 1];
 
-        // Cálculo de EMA Rápida (8 períodos) e EMA Lenta (21 períodos)
+        // EMA 9 (Rápida) e EMA 21 (Lenta)
         const calcEma = (data: number[], period: number) => {
           const k = 2 / (period + 1);
           let ema = data[0];
@@ -164,10 +173,10 @@ export async function runDerivCycle(): Promise<void> {
           return ema;
         };
 
-        const emaFast = calcEma(prices.slice(-15), 8);
+        const emaFast = calcEma(prices, 9);
         const emaSlow = calcEma(prices, 21);
 
-        // Cálculo de RSI de 14 períodos
+        // RSI de 14 períodos
         let gains = 0;
         let losses = 0;
         const rsiPeriod = 14;
@@ -182,71 +191,106 @@ export async function runDerivCycle(): Promise<void> {
         const rs = avgGain / avgLoss;
         const rsi = 100 - (100 / (1 + rs));
 
-        // Consistência de Ticks Recentes (últimos 15 ticks)
-        let upTicks = 0;
-        let downTicks = 0;
-        const last15 = prices.slice(-15);
-        for (let i = 1; i < last15.length; i++) {
-          if (last15[i] > last15[i - 1]) upTicks++;
-          else if (last15[i] < last15[i - 1]) downTicks++;
+        // Consistência das últimas 5 velas/períodos
+        const last5 = prices.slice(-5);
+        let upBars = 0;
+        let downBars = 0;
+        for (let i = 1; i < last5.length; i++) {
+          if (last5[i] > last5[i - 1]) upBars++;
+          else if (last5[i] < last5[i - 1]) downBars++;
         }
-        const tickConsistencyUp = upTicks / (last15.length - 1);
-        const tickConsistencyDown = downTicks / (last15.length - 1);
+        const barTrendUp = upBars / (last5.length - 1);
+        const barTrendDown = downBars / (last5.length - 1);
 
         let decidedType: 'CALL' | 'PUT' | null = null;
         let calculatedProb = 0;
 
-        // Condições Estritas para ALTA CERTEZA (CALL)
-        // 1. Preço acima da EMA rápida E EMA rápida acima da EMA lenta (Tendência Forte)
-        // 2. RSI saudável (entre 50 e 72, não sobrecomprado)
-        // 3. Consistência de micro-ticks >= 70%
-        if (latestPrice > emaFast && emaFast > emaSlow && rsi >= 52 && rsi <= 72 && tickConsistencyUp >= 0.70) {
+        // Condições de Alta Probabilidade (CALL)
+        // 1. Tendência definida: Preço > EMA9 > EMA21
+        // 2. Momentum saudável: RSI entre 52 e 68 (não sobrecomprado)
+        // 3. Pelo menos 75% das barras recentes apontando para cima
+        if (latestPrice > emaFast && emaFast > emaSlow && rsi >= 52 && rsi <= 68 && barTrendUp >= 0.75) {
           decidedType = 'CALL';
-          const emaWeight = Math.min((latestPrice - emaSlow) / emaSlow * 100, 1.0);
-          calculatedProb = Number((0.65 + (tickConsistencyUp * 0.20) + ((rsi - 50) / 100) + (emaWeight * 0.05)).toFixed(3));
+          const trendStrength = Math.min(((emaFast - emaSlow) / emaSlow) * 1000, 0.10);
+          const rsiBonus = ((rsi - 50) / 100) * 0.10;
+          calculatedProb = Number(Math.min(0.70 + (barTrendUp * 0.15) + trendStrength + rsiBonus, 0.96).toFixed(3));
         }
-        // Condições Estritas para ALTA CERTEZA (PUT)
-        // 1. Preço abaixo da EMA rápida E EMA rápida abaixo da EMA lenta (Tendência Forte Baixa)
-        // 2. RSI saudável de baixa (entre 28 e 48, não sobrevendido)
-        // 3. Consistência de micro-ticks de baixa >= 70%
-        else if (latestPrice < emaFast && emaFast < emaSlow && rsi >= 28 && rsi <= 48 && tickConsistencyDown >= 0.70) {
+        // Condições de Alta Probabilidade (PUT)
+        // 1. Tendência definida: Preço < EMA9 < EMA21
+        // 2. Momentum saudável de baixa: RSI entre 32 e 48 (não sobrevendido)
+        // 3. Pelo menos 75% das barras recentes apontando para baixo
+        else if (latestPrice < emaFast && emaFast < emaSlow && rsi >= 32 && rsi <= 48 && barTrendDown >= 0.75) {
           decidedType = 'PUT';
-          const emaWeight = Math.min((emaSlow - latestPrice) / emaSlow * 100, 1.0);
-          calculatedProb = Number((0.65 + (tickConsistencyDown * 0.20) + ((50 - rsi) / 100) + (emaWeight * 0.05)).toFixed(3));
+          const trendStrength = Math.min(((emaSlow - emaFast) / emaSlow) * 1000, 0.10);
+          const rsiBonus = ((50 - rsi) / 100) * 0.10;
+          calculatedProb = Number(Math.min(0.70 + (barTrendDown * 0.15) + trendStrength + rsiBonus, 0.96).toFixed(3));
         }
 
-        // Filtro de Alta Certeza Real
+        // Filtro de Probabilidade Mínima
         if (!decidedType || calculatedProb < minCertainty) {
-          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência)';
+          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem alinhamento)';
           log.info(`🔍 [${sym}] Certeza calculada: ${probMsg} | Mínima exigida: ${(minCertainty * 100).toFixed(1)}% | RSI: ${rsi.toFixed(1)} | EMA Fast/Slow: ${emaFast.toFixed(2)}/${emaSlow.toFixed(2)}. Entrada descartada.`);
           continue;
         }
 
-        // 2. Requisita proposta para o tipo de contrato escolhido
-        const proposal = await client.getProposal({
+        // Cálculo da Barreira Protetora (Margem de Segurança)
+        // Para HIGHER: Barreira negativa (ex: -0.3% a -0.5% abaixo do preço), garantindo alta probabilidade
+        // Para LOWER: Barreira positiva (ex: +0.3% a +0.5% acima do preço), garantindo alta probabilidade
+        const isForexOrCrypto = sym.startsWith('frx');
+        const barrierOffsetPct = 0.003; // 0.3% de margem de proteção
+        const barrierOffset = isForexOrCrypto 
+          ? (latestPrice * barrierOffsetPct).toFixed(2)
+          : (latestPrice * barrierOffsetPct).toFixed(1);
+
+        let contractType = 'HIGHER';
+        let barrierValue = `-${barrierOffset}`;
+
+        if (decidedType === 'PUT') {
+          contractType = 'LOWER';
+          barrierValue = `+${barrierOffset}`;
+        }
+
+        // 3. Requisita proposta HIGHER / LOWER com barreira de margem
+        let proposal = await client.getProposal({
           symbol: sym,
-          contract_type: decidedType,
+          contract_type: contractType,
           amount: settings.tradeSize || 5,
           duration: settings.contractDurationSec || 300,
           duration_unit: 's',
+          barrier: barrierValue,
         }).catch(() => null);
+
+        // Fallback para CALL / PUT caso o ativo não suporte barreira no momento
+        if (!proposal || !proposal.id) {
+          contractType = decidedType === 'CALL' ? 'CALL' : 'PUT';
+          proposal = await client.getProposal({
+            symbol: sym,
+            contract_type: contractType,
+            amount: settings.tradeSize || 5,
+            duration: settings.contractDurationSec || 300,
+            duration_unit: 's',
+          }).catch(() => null);
+        }
 
         if (proposal && proposal.id) {
           const bought = await client.buyContract(proposal.id, proposal.ask_price).catch(() => null);
           if (bought && bought.contract_id) {
+            const displayType = contractType === 'HIGHER' ? 'HIGHER' : contractType === 'LOWER' ? 'LOWER' : decidedType === 'CALL' ? 'RISE' : 'FALL';
+            const displayBarrier = proposal.barrier ? ` [Barreira: ${proposal.barrier}]` : '';
+
             await DerivTrade.create({
               userId: settings.userId,
               contractId: String(bought.contract_id),
               symbol: sym,
-              question: `Opção ${sym} (${decidedType} ${(calculatedProb * 100).toFixed(0)}% Certeza)`,
-              contractType: decidedType === 'CALL' ? 'RISE' : 'FALL',
+              question: `Opção ${sym} (${displayType}${displayBarrier} ${(calculatedProb * 100).toFixed(0)}% Certeza)`,
+              contractType: displayType,
               status: 'open',
               buyPrice: Number(bought.buy_price || settings.tradeSize || 5),
               investedUsd: Number(bought.buy_price || settings.tradeSize || 5),
-              reason: `Entrada de Alta Probabilidade (${(calculatedProb * 100).toFixed(1)}% Certeza)`,
+              reason: `Entrada Higher/Lower (${(calculatedProb * 100).toFixed(1)}% Certeza)`,
               openedAt: new Date(),
             });
-            log.info(`🚀 [${sym}] Contrato de ALTA CERTEZA (${decidedType} | ${(calculatedProb * 100).toFixed(1)}%) executado! ID: ${bought.contract_id}`);
+            log.info(`🚀 [${sym}] Contrato de ALTA CERTEZA (${displayType}${displayBarrier} | ${(calculatedProb * 100).toFixed(1)}%) executado! ID: ${bought.contract_id}`);
             break; // Abre 1 contrato por ciclo para manter gerenciamento de risco
           }
         }

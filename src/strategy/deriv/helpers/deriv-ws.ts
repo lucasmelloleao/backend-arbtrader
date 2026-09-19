@@ -183,6 +183,7 @@ export class DerivWsClient {
     amount: number;
     duration: number;
     duration_unit: string;
+    barrier?: string | number;
   }): Promise<any> {
     const payload: any = {
       proposal: 1,
@@ -193,6 +194,10 @@ export class DerivWsClient {
       duration: params.duration,
       duration_unit: params.duration_unit,
     };
+
+    if (params.barrier !== undefined && params.barrier !== null) {
+      payload.barrier = String(params.barrier);
+    }
 
     if (this.isPatToken) {
       payload.underlying_symbol = params.symbol;
@@ -236,6 +241,23 @@ export class DerivWsClient {
       style: 'ticks',
     });
     return res.history?.prices || [];
+  }
+
+  public async getCandlesHistory(symbol: string, count = 60, granularity = 60): Promise<Array<{ open: number; high: number; low: number; close: number; epoch: number }>> {
+    const res = await this.send({
+      ticks_history: symbol,
+      count: count,
+      end: 'latest',
+      style: 'candles',
+      granularity: granularity,
+    });
+    return (res.candles || []).map((c: any) => ({
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      epoch: Number(c.epoch),
+    }));
   }
 
   public close(): void {
