@@ -140,35 +140,118 @@ export async function runDerivCycle(): Promise<void> {
       return;
     }
 
-    // Exemplo de abertura estratégica rápida em um dos símbolos permitidos
-    const symbols = settings.allowedSymbols || ['frxBTCUSD', 'frxETHUSD', 'R_100'];
-    const selectedSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+    const symbols = settings.allowedSymbols && settings.allowedSymbols.length > 0
+      ? settings.allowedSymbols
+      : ['frxBTCUSD', 'frxETHUSD', 'R_100', 'R_50'];
 
-    // Requisita proposta para um contrato RISE (Call) de 5 minutos
-    const proposal = await client.getProposal({
-      symbol: selectedSymbol,
-      contract_type: 'CALL',
-      amount: settings.tradeSize || 5,
-      duration: settings.contractDurationSec || 300,
-      duration_unit: 's',
-    }).catch(() => null);
+    const minCertainty = Number(settings.minHighCertaintyProb || 0.75);
 
-    if (proposal && proposal.id) {
-      const bought = await client.buyContract(proposal.id, proposal.ask_price).catch(() => null);
-      if (bought && bought.contract_id) {
-        await DerivTrade.create({
-          userId: settings.userId,
-          contractId: String(bought.contract_id),
-          symbol: selectedSymbol,
-          question: `Opção ${selectedSymbol} (RISE 5m)`,
-          contractType: 'RISE',
-          status: 'open',
-          buyPrice: Number(bought.buy_price || settings.tradeSize || 5),
-          investedUsd: Number(bought.buy_price || settings.tradeSize || 5),
-          reason: 'Entrada automática via scanner WebSocket Deriv',
-          openedAt: new Date(),
-        });
-        log.info(`🚀 [${selectedSymbol}] Novo contrato comprado na Deriv ID: ${bought.contract_id}`);
+    for (const sym of symbols) {
+      try {
+        // 1. Busca os últimos 50 ticks para análise estatística aprofundada
+        const prices = await client.getTicksHistory(sym, 50).catch(() => []);
+        if (!prices || prices.length < 30) continue;
+
+        const latestPrice = prices[prices.length - 1];
+
+        // Cálculo de EMA Rápida (8 períodos) e EMA Lenta (21 períodos)
+        const calcEma = (data: number[], period: number) => {
+          const k = 2 / (period + 1);
+          let ema = data[0];
+          for (let i = 1; i < data.length; i++) {
+            ema = data[i] * k + ema * (1 - k);
+          }
+          return ema;
+        };
+
+        const emaFast = calcEma(prices.slice(-15), 8);
+        const emaSlow = calcEma(prices, 21);
+
+        // Cálculo de RSI de 14 períodos
+        let gains = 0;
+        let losses = 0;
+        const rsiPeriod = 14;
+        const recentPrices = prices.slice(-(rsiPeriod + 1));
+        for (let i = 1; i < recentPrices.length; i++) {
+          const diff = recentPrices[i] - recentPrices[i - 1];
+          if (diff > 0) gains += diff;
+          else losses += Math.abs(diff);
+        }
+        const avgGain = gains / rsiPeriod;
+        const avgLoss = losses / rsiPeriod || 0.00001;
+        const rs = avgGain / avgLoss;
+        const rsi = 100 - (100 / (1 + rs));
+
+        // Consistência de Ticks Recentes (últimos 15 ticks)
+        let upTicks = 0;
+        let downTicks = 0;
+        const last15 = prices.slice(-15);
+        for (let i = 1; i < last15.length; i++) {
+          if (last15[i] > last15[i - 1]) upTicks++;
+          else if (last15[i] < last15[i - 1]) downTicks++;
+        }
+        const tickConsistencyUp = upTicks / (last15.length - 1);
+        const tickConsistencyDown = downTicks / (last15.length - 1);
+
+        let decidedType: 'CALL' | 'PUT' | null = null;
+        let calculatedProb = 0;
+
+        // Condições Estritas para ALTA CERTEZA (CALL)
+        // 1. Preço acima da EMA rápida E EMA rápida acima da EMA lenta (Tendência Forte)
+        // 2. RSI saudável (entre 50 e 72, não sobrecomprado)
+        // 3. Consistência de micro-ticks >= 70%
+        if (latestPrice > emaFast && emaFast > emaSlow && rsi >= 52 && rsi <= 72 && tickConsistencyUp >= 0.70) {
+          decidedType = 'CALL';
+          const emaWeight = Math.min((latestPrice - emaSlow) / emaSlow * 100, 1.0);
+          calculatedProb = Number((0.65 + (tickConsistencyUp * 0.20) + ((rsi - 50) / 100) + (emaWeight * 0.05)).toFixed(3));
+        }
+        // Condições Estritas para ALTA CERTEZA (PUT)
+        // 1. Preço abaixo da EMA rápida E EMA rápida abaixo da EMA lenta (Tendência Forte Baixa)
+        // 2. RSI saudável de baixa (entre 28 e 48, não sobrevendido)
+        // 3. Consistência de micro-ticks de baixa >= 70%
+        else if (latestPrice < emaFast && emaFast < emaSlow && rsi >= 28 && rsi <= 48 && tickConsistencyDown >= 0.70) {
+          decidedType = 'PUT';
+          const emaWeight = Math.min((emaSlow - latestPrice) / emaSlow * 100, 1.0);
+          calculatedProb = Number((0.65 + (tickConsistencyDown * 0.20) + ((50 - rsi) / 100) + (emaWeight * 0.05)).toFixed(3));
+        }
+
+        // Filtro de Alta Certeza Real
+        if (!decidedType || calculatedProb < minCertainty) {
+          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência)';
+          log.info(`🔍 [${sym}] Certeza calculada: ${probMsg} | Mínima exigida: ${(minCertainty * 100).toFixed(1)}% | RSI: ${rsi.toFixed(1)} | EMA Fast/Slow: ${emaFast.toFixed(2)}/${emaSlow.toFixed(2)}. Entrada descartada.`);
+          continue;
+        }
+
+        // 2. Requisita proposta para o tipo de contrato escolhido
+        const proposal = await client.getProposal({
+          symbol: sym,
+          contract_type: decidedType,
+          amount: settings.tradeSize || 5,
+          duration: settings.contractDurationSec || 300,
+          duration_unit: 's',
+        }).catch(() => null);
+
+        if (proposal && proposal.id) {
+          const bought = await client.buyContract(proposal.id, proposal.ask_price).catch(() => null);
+          if (bought && bought.contract_id) {
+            await DerivTrade.create({
+              userId: settings.userId,
+              contractId: String(bought.contract_id),
+              symbol: sym,
+              question: `Opção ${sym} (${decidedType} ${(calculatedProb * 100).toFixed(0)}% Certeza)`,
+              contractType: decidedType === 'CALL' ? 'RISE' : 'FALL',
+              status: 'open',
+              buyPrice: Number(bought.buy_price || settings.tradeSize || 5),
+              investedUsd: Number(bought.buy_price || settings.tradeSize || 5),
+              reason: `Entrada de Alta Probabilidade (${(calculatedProb * 100).toFixed(1)}% Certeza)`,
+              openedAt: new Date(),
+            });
+            log.info(`🚀 [${sym}] Contrato de ALTA CERTEZA (${decidedType} | ${(calculatedProb * 100).toFixed(1)}%) executado! ID: ${bought.contract_id}`);
+            break; // Abre 1 contrato por ciclo para manter gerenciamento de risco
+          }
+        }
+      } catch (errSym: any) {
+        log.warn(`⚠️ [${sym}] Erro ao analisar ativo: ${errSym.message}`);
       }
     }
   } catch (e: any) {
@@ -178,3 +261,4 @@ export async function runDerivCycle(): Promise<void> {
   }
   }
 }
+

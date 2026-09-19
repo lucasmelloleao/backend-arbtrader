@@ -228,6 +228,16 @@ export class DerivWsClient {
     return res.proposal_open_contract;
   }
 
+  public async getTicksHistory(symbol: string, count = 20): Promise<number[]> {
+    const res = await this.send({
+      ticks_history: symbol,
+      count: count,
+      end: 'latest',
+      style: 'ticks',
+    });
+    return res.history?.prices || [];
+  }
+
   public close(): void {
     if (this.ws) {
       this.ws.close();
