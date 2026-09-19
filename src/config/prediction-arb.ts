@@ -49,6 +49,7 @@ export const PREDICTION_ARB_CONFIG = {
   exit: {
     convergenceThreshold: 1.0,    // Soma YES+NO >= 1 = convergência
     takeProfitPctDefault: 1.0,    // Take-profit padrão (%)
+    minTakeProfitPct: 2.0,        // Lucro líquido mínimo (%) para autorizar saída antecipada
     minRealizableMargin: 0.002,   // Margem mínima sobre custo para fechar (0.2%)
     redeemRetryWindowHours: 1,    // Janela para tentar redeem após vencimento
   },

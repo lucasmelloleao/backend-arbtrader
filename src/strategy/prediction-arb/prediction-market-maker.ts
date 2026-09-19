@@ -351,8 +351,9 @@ export async function runMarketMaking(
       return { quoted: false, orderIds: [] };
     }
 
-    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO (COM COOLDOWN APENAS PARA LUCRO) ──
-    // O Cooldown de 60s é aplicado EXCLUSIVAMENTE para saídas em Take Profit.
+    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO POR GANHO LÍQUIDO (%) ──
+    // Permite encerrar antecipadamente a QUALQUER MOMENTO, desde que o valor realizável no Bid atual
+    // pague um Lucro Líquido Real mínimo configurado (ex: minTakeProfitPct = 2.0%).
     // O Emergency Stop (< STOP_OUT_THRESHOLD) continua 100% ativo a qualquer momento para cortar perdas.
     const endMsPos = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const segsRestantesPos = endMsPos > 0 ? (endMsPos - Date.now()) / 1000 : Infinity;
@@ -360,25 +361,31 @@ export async function runMarketMaking(
     const NEAR_EXPIRY_BID_THRESHOLD = 0.80; // Na reta final se cotação >= 0.80
     const TAKE_PROFIT_SEGS_LEFT = 45;       // Restando menos de 45s
 
-    // Tempo de vida da posição (segundos desde a abertura do trade)
+    // Preço de entrada original pago pela posição
     const openTradePos = await PredictionArbTrade.findOne({
       strategyId: strategy._id,
       type: 'open_pair',
       status: { $in: ['executed', 'simulated'] },
     }).sort({ createdAt: -1 }).lean();
 
-    const openedAtMs = openTradePos?.createdAt ? new Date(openTradePos.createdAt).getTime() : (strategy.updatedAt ? new Date(strategy.updatedAt).getTime() : Date.now());
-    const segsDesdeAbertura = (Date.now() - openedAtMs) / 1000;
-    const COOLDOWN_LUCRO_SEGS = 60; // 60s de permanência mínima para saídas de lucro
+    const entryPricePaid = Number(
+      (sideAberto === 'YES' ? (strategy.avgYesPrice || openTradePos?.yesPrice || strategy.yesPrice) : (strategy.avgNoPrice || openTradePos?.noPrice || strategy.noPrice)) || 0
+    );
+
+    // Ganho percentual líquido que o Bid atual pagaria sobre o preço de entrada
+    const ganhoPctAtual = entryPricePaid > 0 ? ((bAtual.bid - entryPricePaid) / entryPricePaid) * 100 : 0;
+    const minLucroPctExigido = Number(
+      settingsGlobal?.minTakeProfitPct ?? PREDICTION_ARB_CONFIG.exit.minTakeProfitPct ?? 2.0
+    );
 
     const atingeLucroTopoQualquerTempo = bAtual.bid >= AT_ANY_TIME_BID_THRESHOLD;
     const atingeLucroRetaFinal = bAtual.bid >= NEAR_EXPIRY_BID_THRESHOLD && segsRestantesPos <= TAKE_PROFIT_SEGS_LEFT;
 
-    // Trava de Cooldown: só aceita fechar no lucro se já passou de 60s da abertura (evita sair 20s depois na largada)
-    const respeitouCooldownLucro = segsDesdeAbertura >= COOLDOWN_LUCRO_SEGS;
+    // Trava de Ganho Líquido Mínimo: só encerra antecipadamente se o ganho percentual for >= minLucroPctExigido (ex: +2.0%)
+    const atingeGanhoMinimo = ganhoPctAtual >= minLucroPctExigido;
 
-    if ((atingeLucroTopoQualquerTempo || atingeLucroRetaFinal) && respeitouCooldownLucro && segsRestantesPos > 8) {
-      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro em ${sideAberto} (Bid=${bAtual.bid.toFixed(3)}) [${atingeLucroTopoQualquerTempo ? 'Topo >= 0.98' : 'Reta Final < 45s'}] decorridos ${segsDesdeAbertura.toFixed(0)}s da abertura. Garantindo lucro.`);
+    if ((atingeLucroTopoQualquerTempo || atingeLucroRetaFinal) && atingeGanhoMinimo && segsRestantesPos > 8) {
+      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro de +${ganhoPctAtual.toFixed(2)}% em ${sideAberto} (Entrada: $${entryPricePaid.toFixed(3)} -> Bid: $${bAtual.bid.toFixed(3)}) [Mín: +${minLucroPctExigido}%]. Garantindo lucro.`);
 
       const lockPrice = Math.max(0.01, bAtual.bid);
       try {
