@@ -10,12 +10,15 @@ const log = {
 };
 
 export async function runDerivCycle(): Promise<void> {
-  const settings = await DerivSettings.findOne().lean();
-  if (!settings || !settings.isScanningEnabled || !settings.apiToken) {
+  const allSettings = await DerivSettings.find({ isScanningEnabled: true }).lean();
+  if (!allSettings || allSettings.length === 0) {
     return;
   }
 
-  const client = new DerivWsClient(settings.appId || '1089', settings.apiToken);
+  for (const settings of allSettings) {
+    if (!settings.apiToken) continue;
+
+    const client = new DerivWsClient(settings.appId || '1089', settings.apiToken);
 
   try {
     await client.connect();
@@ -130,5 +133,6 @@ export async function runDerivCycle(): Promise<void> {
     log.error(`❌ Erro no ciclo do robô Deriv: ${e.message}`);
   } finally {
     client.close();
+  }
   }
 }
