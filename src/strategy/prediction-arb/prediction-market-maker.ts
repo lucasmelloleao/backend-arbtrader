@@ -338,16 +338,20 @@ export async function runMarketMaking(
       return { quoted: false, orderIds: [] };
     }
 
-    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO (>= 80% E < 45s) ──
-    // Se a posição acumulou alto lucro (cotação de saída >= 0.80) e faltam menos de 45 segundos para o fim,
-    // realiza a venda antecipada a mercado para garantir o lucro contra viradas de última hora.
+    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO ──
+    // 1) A QUALQUER TEMPO se a cotação de venda no livro atingir topo (Bid >= 0.98).
+    // 2) NA RETA FINAL (< 45s) se a cotação de venda estiver valorizada (Bid >= 0.80).
     const endMsPos = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const segsRestantesPos = endMsPos > 0 ? (endMsPos - Date.now()) / 1000 : Infinity;
-    const TAKE_PROFIT_BID_THRESHOLD = 0.80; // Cotação >= 0.80
+    const AT_ANY_TIME_BID_THRESHOLD = 0.98; // A qualquer tempo se cotação >= 0.98
+    const NEAR_EXPIRY_BID_THRESHOLD = 0.80; // Na reta final se cotação >= 0.80
     const TAKE_PROFIT_SEGS_LEFT = 45;       // Restando menos de 45s
 
-    if (bAtual.bid >= TAKE_PROFIT_BID_THRESHOLD && segsRestantesPos <= TAKE_PROFIT_SEGS_LEFT && segsRestantesPos > 8) {
-      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro elevado em ${sideAberto} (Bid=${bAtual.bid.toFixed(3)}) restando ${segsRestantesPos.toFixed(1)}s (< ${TAKE_PROFIT_SEGS_LEFT}s). Garantindo lucro a mercado.`);
+    const atingeLucroTopoQualquerTempo = bAtual.bid >= AT_ANY_TIME_BID_THRESHOLD;
+    const atingeLucroRetaFinal = bAtual.bid >= NEAR_EXPIRY_BID_THRESHOLD && segsRestantesPos <= TAKE_PROFIT_SEGS_LEFT;
+
+    if ((atingeLucroTopoQualquerTempo || atingeLucroRetaFinal) && segsRestantesPos > 8) {
+      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro elevado em ${sideAberto} (Bid=${bAtual.bid.toFixed(3)}) [${atingeLucroTopoQualquerTempo ? 'Topo a Qualquer Tempo (>= 0.98)' : 'Reta Final (< 45s)'}]. Garantindo lucro a mercado.`);
 
       const lockPrice = Math.max(0.01, bAtual.bid);
       try {
