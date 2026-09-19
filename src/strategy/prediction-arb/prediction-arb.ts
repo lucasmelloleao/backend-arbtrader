@@ -423,7 +423,14 @@ async function runCycle() {
       log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir posição (livre $${orcamento.livre.toFixed(2)} < mínimo $${minOrderUsd.toFixed(2)} por ordem; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
     } else {
       if (orcamento.livre < tradeSizeConfig) {
-        log.info(`💡 [PREDICTION-ARB] Saldo livre ($${orcamento.livre.toFixed(2)}) é inferior ao tradeSize parametrizado ($${tradeSizeConfig.toFixed(2)}). Ajustando aporte dinamicamente para o saldo disponível.`);
+        const novoTradeSize = Math.floor(orcamento.livre);
+        if (novoTradeSize >= 1 && novoTradeSize !== tradeSizeConfig) {
+          log.info(`💡 [PREDICTION-ARB] Saldo livre ($${orcamento.livre.toFixed(2)}) é inferior ao tradeSize parametrizado ($${tradeSizeConfig.toFixed(2)}). Atualizando configuração do robô para $${novoTradeSize}.00.`);
+          await (PredictionArbSettings as any).updateOne(
+            { userId: settings.userId },
+            { $set: { tradeSize: novoTradeSize } }
+          ).catch(() => {});
+        }
       }
       mmTargets = await (PredictionArbStrategy as any).find({
         userId: settings.userId,
