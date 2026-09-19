@@ -3,7 +3,10 @@ import mongoose from 'mongoose';
 const DerivSettingsSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
   appId: { type: String, default: '1089' }, // App ID oficial ou personalizado da Deriv
-  apiToken: { type: String, default: '' },   // Token de API gerado na conta Deriv
+  accountType: { type: String, enum: ['demo', 'real'], default: 'demo' }, // 'demo' ou 'real'
+  demoApiToken: { type: String, default: '' }, // Token de API da Conta Demo (DOT... / VRTC...)
+  realApiToken: { type: String, default: '' }, // Token de API da Conta Real (ROT... / CR...)
+  apiToken: { type: String, default: '' },   // Token padrão / legado
   isScanningEnabled: { type: Boolean, default: false },
   allowLiveTrading: { type: Boolean, default: false },
   tradeSize: { type: Number, default: 5 },  // Aporte por contrato (USD)

@@ -16,9 +16,16 @@ export async function runDerivCycle(): Promise<void> {
   }
 
   for (const settings of allSettings) {
-    if (!settings.apiToken) continue;
+    const activeToken = settings.accountType === 'real'
+      ? (settings.realApiToken || settings.apiToken)
+      : (settings.demoApiToken || settings.apiToken);
 
-    const client = new DerivWsClient(settings.appId || '1089', settings.apiToken);
+    if (!activeToken) {
+      log.warn(`⚠️ Token de API não configurado para o ambiente ${settings.accountType === 'real' ? 'REAL' : 'DEMO'}.`);
+      continue;
+    }
+
+    const client = new DerivWsClient(settings.appId || '1089', activeToken);
 
   try {
     await client.connect();
