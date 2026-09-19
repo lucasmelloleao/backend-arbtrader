@@ -27,7 +27,11 @@ export async function runDerivCycle(): Promise<void> {
       return;
     }
 
-    log.info('🔍 Ciclo de varredura Deriv WebSocket executado com sucesso.');
+    const isVirtual = Boolean(accountInfo.is_virtual);
+    const loginId = accountInfo.loginid || 'Desconhecido';
+    const envLabel = isVirtual ? 'DEMO (Virtual)' : 'PRODUÇÃO (Conta Real)';
+
+    log.info(`💡 Conectado na Deriv [Ambiente: ${envLabel} | ID: ${loginId}]. Ciclo de varredura executado.`);
 
     // 1. Monitorar posições abertas
     const openTrades = await DerivTrade.find({ userId: settings.userId, status: 'open' }).lean();
