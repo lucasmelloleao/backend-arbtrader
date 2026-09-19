@@ -10,18 +10,24 @@ const log = {
 };
 
 export async function runDerivCycle(): Promise<void> {
-  const allSettings = await DerivSettings.find({ isScanningEnabled: true }).lean();
+  const allSettings = await DerivSettings.find().lean();
   if (!allSettings || allSettings.length === 0) {
+    log.info('⏳ Aguardando salvar primeira configuração no painel Deriv...');
     return;
   }
 
   for (const settings of allSettings) {
+    if (!settings.isScanningEnabled) {
+      log.info('⏸️ Scanner WebSocket desativado. Marque "Scanner WebSocket Ativo" no painel.');
+      continue;
+    }
+
     const activeToken = settings.accountType === 'real'
       ? (settings.realApiToken || settings.apiToken)
       : (settings.demoApiToken || settings.apiToken);
 
     if (!activeToken) {
-      log.warn(`⚠️ Token de API não configurado para o ambiente ${settings.accountType === 'real' ? 'REAL' : 'DEMO'}.`);
+      log.warn(`⚠️ Token de API não informado para o ambiente ${settings.accountType === 'real' ? 'REAL' : 'DEMO'}.`);
       continue;
     }
 
