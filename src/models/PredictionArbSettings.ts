@@ -42,6 +42,7 @@ const PredictionArbSettingsSchema = new mongoose.Schema({
   maxEntrySecondsBeforeExpiry5mMaj: { type: Number, default: 120 },
   maxEntrySecondsBeforeExpiry15mAlt: { type: Number, default: 120 },
   maxEntrySecondsBeforeExpiry15mMaj: { type: Number, default: 300 },
+  emergencyStopThreshold: { type: Number, default: 0.82 },
   scanIntervalMs: { type: Number, default: 60000 },
 }, { timestamps: true });
 

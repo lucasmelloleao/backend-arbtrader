@@ -293,10 +293,11 @@ export async function runMarketMaking(
     const tokenAberto = sideAberto === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
     const bAtual = sideAberto === 'YES' ? bYes : bNo;
 
-    // ── REFINAMENTO 1: ENCERRAMENTO DE EMERGÊNCIA IMEDIATO (< 0.70) ─────────
-    // Se a cotação no livro despencar abaixo de 0.70, encerra IMEDIATAMENTE ao preço disponível no livro.
-    // Sobrepõe qualquer outra trava ou blackout.
-    const STOP_OUT_THRESHOLD = 0.70;
+    // ── REFINAMENTO 1: ENCERRAMENTO DE EMERGÊNCIA IMEDIATO (< STOP_OUT_THRESHOLD) ─────────
+    // Se a cotação no livro despencar abaixo do limiar configurado (padrão 0.82), encerra IMEDIATAMENTE.
+    const STOP_OUT_THRESHOLD = Number(
+      strategy.emergencyStopThreshold ?? settingsGlobal?.emergencyStopThreshold ?? PREDICTION_ARB_CONFIG.risk.emergencyStopThreshold ?? 0.82
+    );
 
     if (bAtual.bid < STOP_OUT_THRESHOLD) {
       log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}). Fechando ao preço de mercado (${bAtual.bid.toFixed(4)}).`);
