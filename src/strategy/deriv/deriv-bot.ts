@@ -148,7 +148,7 @@ export async function runDerivCycle(): Promise<void> {
 
     const symbols = settings.allowedSymbols && settings.allowedSymbols.length > 0
       ? settings.allowedSymbols
-      : ['R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'];
+      : ['1HZ10V', 'R_10', 'R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'];
 
     const minCertainty = Number(settings.minHighCertaintyProb || 0.75);
 
@@ -210,7 +210,7 @@ export async function runDerivCycle(): Promise<void> {
         let decidedType: 'CALL' | 'PUT' | null = null;
         let calculatedProb = 0;
 
-        // Condições para MERCADO EM ALTA (Comprar HIGHER com barreira -0.57):
+        // Condições para MERCADO EM ALTA (Comprar HIGHER com barreira -1):
         // - Preço > EMA5 > EMA13
         // - RSI apontando pra cima (> 50 e < 75)
         // - Estocástico > 40 e apontando pra cima
@@ -221,7 +221,7 @@ export async function runDerivCycle(): Promise<void> {
           const stochScore = (stochK - 40) / 200;
           calculatedProb = Number(Math.min(0.72 + (tickMomentumUp * 0.15) + rsiScore + stochScore, 0.98).toFixed(3));
         }
-        // Condições para MERCADO EM BAIXA (Comprar LOWER com barreira +0.57):
+        // Condições para MERCADO EM BAIXA (Comprar LOWER com barreira +1):
         // - Preço < EMA5 < EMA13
         // - RSI apontando pra baixo (< 50 e > 25)
         // - Estocástico < 60 e apontando pra baixo
@@ -240,44 +240,40 @@ export async function runDerivCycle(): Promise<void> {
           continue;
         }
 
-        // Barreira Exata: -0.57 para HIGHER (Mercado em alta) / +0.57 para LOWER (Mercado em baixa)
+        // Barreira: -1 para HIGHER (Mercado em alta) / +1 para LOWER (Mercado em baixa)
         let contractType = 'HIGHER';
-        let barrierValue = '-0.57';
+        let barrierValue = '-1';
 
         if (decidedType === 'PUT') {
           contractType = 'LOWER';
-          barrierValue = '+0.57';
+          barrierValue = '+1';
         }
 
         const tradeDuration = Number(settings.contractDurationSec || 15);
-        const tradeStake = Number(settings.tradeSize || 10);
+        const tradeStake = Number(settings.tradeSize || 2);
 
-        // 3. Requisita proposta Higher / Lower na Deriv (15s, Barreira ±0.57, $10)
-        let proposal = await client.getProposal({
+        // 3. Requisita proposta EXCLUSIVAMENTE Higher / Lower na Deriv (15s, Barreira ±1)
+        const proposal = await client.getProposal({
           symbol: sym,
           contract_type: contractType,
           amount: tradeStake,
           duration: tradeDuration,
           duration_unit: 's',
           barrier: barrierValue,
-        }).catch(() => null);
+        }).catch((err: any) => {
+          log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType} com barreira ${barrierValue}: ${err.message}`);
+          return null;
+        });
 
-        // Fallback para RISE / FALL caso o ativo/corretora exija sem barreira específica
         if (!proposal || !proposal.id) {
-          contractType = decidedType === 'CALL' ? 'CALL' : 'PUT';
-          proposal = await client.getProposal({
-            symbol: sym,
-            contract_type: contractType,
-            amount: tradeStake,
-            duration: tradeDuration,
-            duration_unit: 's',
-          }).catch(() => null);
+          log.info(`⏳ [${sym}] Contrato ${contractType} com barreira ${barrierValue} indisponível no momento. Entrada ignorada.`);
+          continue;
         }
 
         if (proposal && proposal.id) {
           const bought = await client.buyContract(proposal.id, proposal.ask_price).catch(() => null);
           if (bought && bought.contract_id) {
-            const displayType = contractType === 'HIGHER' ? 'HIGHER' : contractType === 'LOWER' ? 'LOWER' : decidedType === 'CALL' ? 'RISE' : 'FALL';
+            const displayType = contractType;
             const displayBarrier = proposal.barrier ? ` [Barreira: ${proposal.barrier}]` : ` [Barreira: ${barrierValue}]`;
 
             await DerivTrade.create({
