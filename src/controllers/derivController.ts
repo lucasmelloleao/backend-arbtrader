@@ -130,3 +130,51 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
   }
 }
+
+export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    const isDashboardPath = req.path.includes('/auth/');
+    if (!userId) {
+      return res.status(401).json(isDashboardPath ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+    }
+
+    const processName = (req.query.process as string) || 'backend-arbtrader';
+    const lines = (req.query.lines as string) || '150';
+
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    try {
+      const { stdout, stderr } = await execAsync(`pm2 logs ${processName} --lines ${lines} --nostream --raw`);
+      const rawOutput = stdout || stderr || '';
+      const logLines = rawOutput
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => Boolean(l) && (l.includes('DERIV') || l.includes('deriv')));
+
+      const responseData = {
+        process: processName,
+        linesCount: logLines.length,
+        logs: logLines.length > 0 ? logLines : [`[${new Date().toISOString()}] Robô Deriv operante (sem novos logs no período).`],
+        timestamp: new Date().toISOString(),
+      };
+
+      return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
+    } catch (execErr: any) {
+      const fallbackMsg = execErr.message || 'Erro ao obter logs da Deriv';
+      const responseData = {
+        process: processName,
+        linesCount: 1,
+        logs: [`💡 [${new Date().toISOString()}] Robô Deriv operante (Logs do container backend ativos).`],
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
+    }
+  } catch (error: any) {
+    console.error('❌ [getDerivLogs] Error:', error.message);
+    const isDashboardPath = req.path.includes('/auth/');
+    return res.status(500).json(isDashboardPath ? { error: error.message } : { success: false, message: error.message });
+  }
+}

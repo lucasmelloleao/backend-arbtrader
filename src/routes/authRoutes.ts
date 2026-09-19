@@ -237,7 +237,8 @@ import {
   updateDerivSettings,
   getDerivTrades,
   deleteDerivTrades,
-  getDerivTradesSummary
+  getDerivTradesSummary,
+  getDerivLogs
 } from '../controllers/derivController';
 
 router.get('/deriv/settings', authMiddleware as any, getDerivSettings as any);
@@ -245,11 +246,13 @@ router.post('/deriv/settings', authMiddleware as any, updateDerivSettings as any
 router.get('/deriv/trades', authMiddleware as any, getDerivTrades as any);
 router.delete('/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
 router.get('/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
+router.get('/deriv/logs', authMiddleware as any, getDerivLogs as any);
 
 router.get('/auth/deriv/settings', authMiddleware as any, getDerivSettings as any);
 router.post('/auth/deriv/settings', authMiddleware as any, updateDerivSettings as any);
 router.get('/auth/deriv/trades', authMiddleware as any, getDerivTrades as any);
 router.delete('/auth/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
 router.get('/auth/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
+router.get('/auth/deriv/logs', authMiddleware as any, getDerivLogs as any);
 
 export default router;
