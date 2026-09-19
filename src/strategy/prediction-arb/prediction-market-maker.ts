@@ -104,6 +104,19 @@ export async function runMarketMaking(
   const tradeSize = Number(strategy.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
   let sharesPerQuote = Math.max(1, Math.min(Math.floor(tradeSize), cap)); // ações por lado
 
+  // Ajuste dinâmico de aporte: se o saldo livre em conta for menor que o tradeSize configurado,
+  // ajusta a quantidade de ações (sharesPerQuote) para o saldo disponível, garantindo a entrada sem travar o robô.
+  try {
+    const onchainBal = await getOnchainBalance(String(keyDoc?.depositWallet || keyDoc?.apiKey || ''));
+    if (onchainBal > 0 && onchainBal < sharesPerQuote) {
+      const sharesAjustadas = Math.floor(onchainBal);
+      if (sharesAjustadas >= 1 && sharesAjustadas < sharesPerQuote) {
+        log.info(`💡 [${strategy.slug}] Saldo disponível em conta ($${onchainBal.toFixed(2)}) é inferior às ${sharesPerQuote} ações parametrizadas. Ajustando cotação para ${sharesAjustadas} ações.`);
+        sharesPerQuote = sharesAjustadas;
+      }
+    }
+  } catch {}
+
   // 1. Inventário real (fonte da verdade) — via Data API da deposit wallet
   //    (a SDK listPositions retorna {} para a deposit wallet EIP-1271, então
   //    não enxerga as posições reais; sem isso o MM nunca detecta o par

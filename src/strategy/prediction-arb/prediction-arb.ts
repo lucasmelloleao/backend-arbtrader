@@ -415,11 +415,16 @@ async function runCycle() {
   let mmTargets: any[] = [];
   if (podeAbrirNovo) {
     const orcamento = await saldoLivreEstimado(settings.userId, key);
-    // Custo estimado da entrada direcional: apenas 1 lado (tradeSize)
-    const custoPosicaoNova = Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
-    if (orcamento.livre < custoPosicaoNova) {
-      log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir posição direcional (livre $${orcamento.livre.toFixed(2)} < custo $${custoPosicaoNova.toFixed(2)} de 1 lado; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
+    // Custo estimado da entrada direcional: apenas 1 lado (tradeSize configurado ou saldo livre disponível se menor)
+    const tradeSizeConfig = Number(settings.tradeSize ?? PREDICTION_ARB_CONFIG.scan.tradeSize);
+    const minOrderUsd = PREDICTION_ARB_CONFIG.risk.minOrderUsd || 1.0;
+
+    if (orcamento.livre < minOrderUsd) {
+      log.warn(`🔒 [PREDICTION-ARB] Saldo livre insuficiente para abrir posição (livre $${orcamento.livre.toFixed(2)} < mínimo $${minOrderUsd.toFixed(2)} por ordem; saldo total $${orcamento.saldo.toFixed(2)}, comprometido $${orcamento.comprometido.toFixed(2)}).`);
     } else {
+      if (orcamento.livre < tradeSizeConfig) {
+        log.info(`💡 [PREDICTION-ARB] Saldo livre ($${orcamento.livre.toFixed(2)}) é inferior ao tradeSize parametrizado ($${tradeSizeConfig.toFixed(2)}). Ajustando aporte dinamicamente para o saldo disponível.`);
+      }
       mmTargets = await (PredictionArbStrategy as any).find({
         userId: settings.userId,
         active: true,
