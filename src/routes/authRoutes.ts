@@ -231,4 +231,25 @@ router.get('/auth/latency-arb/logs', authMiddleware as any, getLatencyLogs as an
 router.post('/processo-tjpr', authMiddleware as any, consultarProcessoTJPR as any);
 router.post('/auth/processo-tjpr', authMiddleware as any, consultarProcessoTJPR as any);
 
+// --- DERIV BOT ENDPOINTS ---
+import {
+  getDerivSettings,
+  updateDerivSettings,
+  getDerivTrades,
+  deleteDerivTrades,
+  getDerivTradesSummary
+} from '../controllers/derivController';
+
+router.get('/deriv/settings', authMiddleware as any, getDerivSettings as any);
+router.post('/deriv/settings', authMiddleware as any, updateDerivSettings as any);
+router.get('/deriv/trades', authMiddleware as any, getDerivTrades as any);
+router.delete('/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
+router.get('/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
+
+router.get('/auth/deriv/settings', authMiddleware as any, getDerivSettings as any);
+router.post('/auth/deriv/settings', authMiddleware as any, updateDerivSettings as any);
+router.get('/auth/deriv/trades', authMiddleware as any, getDerivTrades as any);
+router.delete('/auth/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
+router.get('/auth/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
+
 export default router;
