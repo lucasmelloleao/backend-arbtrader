@@ -27,6 +27,8 @@ export async function runDerivCycle(): Promise<void> {
       return;
     }
 
+    log.info('🔍 Ciclo de varredura Deriv WebSocket executado com sucesso.');
+
     // 1. Monitorar posições abertas
     const openTrades = await DerivTrade.find({ userId: settings.userId, status: 'open' }).lean();
 
