@@ -3,10 +3,35 @@ import DerivTrade from '../../models/DerivTrade';
 import DerivStrategy from '../../models/DerivStrategy';
 import { DerivWsClient } from './helpers/deriv-ws';
 
+const inMemoryDerivLogs: string[] = [];
+const MAX_BUFFER = 500;
+
+export function addDerivLog(msg: string) {
+  const timestamp = new Date().toISOString();
+  const entry = `[${timestamp}] [DERIV-BOT] ${msg}`;
+  inMemoryDerivLogs.unshift(entry);
+  if (inMemoryDerivLogs.length > MAX_BUFFER) {
+    inMemoryDerivLogs.pop();
+  }
+}
+
+export function getDerivLogBuffer(): string[] {
+  return [...inMemoryDerivLogs];
+}
+
 const log = {
-  info: (msg: string, ...args: any[]) => console.log(`[DERIV-BOT] ${msg}`, ...args),
-  warn: (msg: string, ...args: any[]) => console.warn(`[DERIV-BOT] ${msg}`, ...args),
-  error: (msg: string, ...args: any[]) => console.error(`[DERIV-BOT] ${msg}`, ...args),
+  info: (msg: string, ...args: any[]) => {
+    addDerivLog(`💡 ${msg}`);
+    console.log(`[DERIV-BOT] ${msg}`, ...args);
+  },
+  warn: (msg: string, ...args: any[]) => {
+    addDerivLog(`⚠️ ${msg}`);
+    console.warn(`[DERIV-BOT] ${msg}`, ...args);
+  },
+  error: (msg: string, ...args: any[]) => {
+    addDerivLog(`❌ ${msg}`);
+    console.error(`[DERIV-BOT] ${msg}`, ...args);
+  },
 };
 
 export async function runDerivCycle(): Promise<void> {

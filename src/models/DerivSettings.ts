@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const DerivSettingsSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  appId: { type: String, default: '1089' }, // App ID oficial ou personalizado da Deriv
+  appId: { type: String, default: '34kQP2mEzJFjAJ2q1atub' }, // App ID oficial ou personalizado da Deriv
   accountType: { type: String, enum: ['demo', 'real'], default: 'demo' }, // 'demo' ou 'real'
   demoApiToken: { type: String, default: '' }, // Token de API da Conta Demo (DOT... / VRTC...)
   realApiToken: { type: String, default: '' }, // Token de API da Conta Real (ROT... / CR...)

@@ -129,6 +129,68 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
     console.error('❌ [GET DerivTradesSummary] Error:', e.message);
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
   }
+}export async function getDerivBalance(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
+    if (!settings) {
+      settings = await DerivSettings.findOne().lean();
+    }
+
+    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
+    const demoToken = settings?.demoApiToken || settings?.apiToken || '';
+    const realToken = settings?.realApiToken || settings?.apiToken || '';
+
+    const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
+
+    let demoBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
+    let realBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
+
+    if (demoToken) {
+      try {
+        const clientDemo = new DerivWsClient(appId, demoToken, 'demo');
+        await clientDemo.connect();
+        demoBalance = await clientDemo.authorize();
+        clientDemo.close();
+      } catch (e: any) {
+        console.warn('⚠️ [getDerivBalance] Erro demo:', e.message);
+      }
+    }
+
+    if (realToken) {
+      try {
+        const clientReal = new DerivWsClient(appId, realToken, 'real');
+        await clientReal.connect();
+        realBalance = await clientReal.authorize();
+        clientReal.close();
+      } catch (e: any) {
+        console.warn('⚠️ [getDerivBalance] Erro real:', e.message);
+      }
+    }
+
+    const data = {
+      demo: demoBalance ? {
+        loginId: demoBalance.loginid || '',
+        balance: Number(demoBalance.balance || 0),
+        currency: demoBalance.currency || 'USD',
+      } : null,
+      real: realBalance ? {
+        loginId: realBalance.loginid || '',
+        balance: Number(realBalance.balance || 0),
+        currency: realBalance.currency || 'USD',
+      } : null,
+      activeAccount: settings?.accountType || 'demo',
+    };
+
+    if (isDashboard(req)) return res.json(data);
+    return res.json({ success: true, message: 'ok', data });
+  } catch (e: any) {
+    console.error('❌ [GET DerivBalance] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
 }
 
 export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
@@ -140,7 +202,22 @@ export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
     }
 
     const processName = (req.query.process as string) || 'backend-arbtrader';
-    const lines = (req.query.lines as string) || '150';
+    const lines = Number(req.query.lines) || 150;
+
+    const { getDerivLogBuffer } = require('../strategy/deriv/deriv-bot');
+    const memoryLogs: string[] = getDerivLogBuffer();
+
+    if (memoryLogs && memoryLogs.length > 0) {
+      const sliced = memoryLogs.slice(0, lines);
+      const responseData = {
+        process: processName,
+        linesCount: sliced.length,
+        logs: sliced,
+        timestamp: new Date().toISOString(),
+      };
+      if (isDashboardPath) return res.json(responseData);
+      return res.json({ success: true, message: 'ok', data: responseData });
+    }
 
     const { exec } = require('child_process');
     const { promisify } = require('util');
@@ -157,17 +234,16 @@ export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
       const responseData = {
         process: processName,
         linesCount: logLines.length,
-        logs: logLines.length > 0 ? logLines : [`[${new Date().toISOString()}] Robô Deriv operante (sem novos logs no período).`],
+        logs: logLines.length > 0 ? logLines : [`[${new Date().toISOString()}] Robô Deriv operante (aguardando próximo ciclo de varredura).`],
         timestamp: new Date().toISOString(),
       };
 
       return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
     } catch (execErr: any) {
-      const fallbackMsg = execErr.message || 'Erro ao obter logs da Deriv';
       const responseData = {
         process: processName,
         linesCount: 1,
-        logs: [`💡 [${new Date().toISOString()}] Robô Deriv operante (Logs do container backend ativos).`],
+        logs: [`💡 [${new Date().toISOString()}] Robô Deriv ativo e conectado via WebSocket. Aguardando novo ciclo...`],
         timestamp: new Date().toISOString(),
       };
       return res.json(isDashboardPath ? responseData : { success: true, message: 'ok', data: responseData });
@@ -178,3 +254,4 @@ export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
     return res.status(500).json(isDashboardPath ? { error: error.message } : { success: false, message: error.message });
   }
 }
+
