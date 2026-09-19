@@ -9,9 +9,9 @@ const MAX_BUFFER = 500;
 export function addDerivLog(msg: string) {
   const timestamp = new Date().toISOString();
   const entry = `[${timestamp}] [DERIV-BOT] ${msg}`;
-  inMemoryDerivLogs.unshift(entry);
+  inMemoryDerivLogs.push(entry);
   if (inMemoryDerivLogs.length > MAX_BUFFER) {
-    inMemoryDerivLogs.pop();
+    inMemoryDerivLogs.shift();
   }
 }
 

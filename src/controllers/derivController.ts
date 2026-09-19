@@ -208,7 +208,7 @@ export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
     const memoryLogs: string[] = getDerivLogBuffer();
 
     if (memoryLogs && memoryLogs.length > 0) {
-      const sliced = memoryLogs.slice(0, lines);
+      const sliced = memoryLogs.slice(-lines);
       const responseData = {
         process: processName,
         linesCount: sliced.length,
