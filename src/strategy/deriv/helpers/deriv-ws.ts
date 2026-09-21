@@ -203,16 +203,11 @@ export class DerivWsClient {
       currency: 'USD',
       duration: params.duration,
       duration_unit: params.duration_unit,
+      symbol: params.symbol,
     };
 
     if (params.barrier !== undefined && params.barrier !== null) {
       payload.barrier = String(params.barrier);
-    }
-
-    if (this.isPatToken) {
-      payload.underlying_symbol = params.symbol;
-    } else {
-      payload.symbol = params.symbol;
     }
 
     const res = await this.send(payload);

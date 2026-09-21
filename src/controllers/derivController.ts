@@ -56,9 +56,43 @@ export async function getDerivTrades(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const trades = await DerivTrade.find({ userId })
+    const { period = 'today', startDate, endDate, limit } = req.query;
+    const query: any = { userId };
+
+    const now = new Date();
+    if (period === 'today') {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      query.$or = [
+        { createdAt: { $gte: startOfDay } },
+        { status: { $in: ['open', 'pending'] } }
+      ];
+    } else if (period === '7d') {
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      query.$or = [
+        { createdAt: { $gte: sevenDaysAgo } },
+        { status: { $in: ['open', 'pending'] } }
+      ];
+    } else if (period === '30d') {
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      query.$or = [
+        { createdAt: { $gte: thirtyDaysAgo } },
+        { status: { $in: ['open', 'pending'] } }
+      ];
+    } else if (startDate || endDate) {
+      const dateFilter: any = {};
+      if (startDate) dateFilter.$gte = new Date(String(startDate));
+      if (endDate) dateFilter.$lte = new Date(String(endDate));
+      query.$or = [
+        { createdAt: dateFilter },
+        { status: { $in: ['open', 'pending'] } }
+      ];
+    }
+
+    const maxLimit = limit ? Number(limit) : (period === 'all' ? 500 : 200);
+
+    const trades = await DerivTrade.find(query)
       .sort({ createdAt: -1 })
-      .limit(300)
+      .limit(maxLimit)
       .lean();
 
     const formatted = trades.map((t: any) => ({
@@ -438,50 +472,51 @@ export async function getDerivBarrierRange(req: AuthenticatedRequest, res: Respo
     const duration_unit = duration >= 60 && duration % 60 === 0 ? 'm' : 's';
     const finalDuration = duration_unit === 'm' ? duration / 60 : duration;
 
-    // Busca contrato padrão para obter base
+    // Busca contratos disponiveis para obter a barreira padrão e limites
     const available = await client.getContractsFor(String(symbol));
     const match = available.find((c: any) => c.contract_type === 'HIGHER' || c.contract_category === 'high_low');
-    const defBarrierStr = match?.default_barrier || '1';
-    const defBarrierNum = Math.abs(parseFloat(defBarrierStr)) || 1;
+    const defBarrierStr = match?.default_barrier || '0.5';
+    const defBarrierNum = Math.abs(parseFloat(defBarrierStr)) || 0.5;
 
-    // Testa múltiplos offsets para encontrar o teto máximo e mínimo aceito
-    const testOffsets = [
-      0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0
-    ].map(m => Number((m * (defBarrierNum <= 1 ? 1 : defBarrierNum)).toFixed(2)));
+    const baseOffsets = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0];
+    const testOffsets = Array.from(new Set([
+      ...baseOffsets,
+      Number(defBarrierNum.toFixed(2)),
+      Number((defBarrierNum * 0.5).toFixed(2)),
+      Number((defBarrierNum * 1.5).toFixed(2)),
+      Number((defBarrierNum * 2).toFixed(2)),
+    ])).filter(v => v > 0).sort((a, b) => a - b);
 
     const validHigher: number[] = [];
     const validLower: number[] = [];
 
-    // Testa em lotes rápidos
-    for (const off of testOffsets) {
-      // Test Higher (-off)
-      const propH = await client.getProposal({
-        symbol: String(symbol),
-        contract_type: 'HIGHER',
-        amount: 2,
-        duration: finalDuration,
-        duration_unit,
-        barrier: `-${off}`,
-      }).catch(() => null);
+    await Promise.all(testOffsets.map(async (off) => {
+      const [propH, propL] = await Promise.all([
+        client.getProposal({
+          symbol: String(symbol),
+          contract_type: 'HIGHER',
+          amount: 2,
+          duration: finalDuration,
+          duration_unit,
+          barrier: `-${off}`,
+        }).catch(() => null),
+        client.getProposal({
+          symbol: String(symbol),
+          contract_type: 'LOWER',
+          amount: 2,
+          duration: finalDuration,
+          duration_unit,
+          barrier: `+${off}`,
+        }).catch(() => null)
+      ]);
 
-      if (propH && propH.id && propH.payout > 0) {
+      if (propH && propH.id && Number(propH.payout) > 0) {
         validHigher.push(off);
       }
-
-      // Test Lower (+off)
-      const propL = await client.getProposal({
-        symbol: String(symbol),
-        contract_type: 'LOWER',
-        amount: 2,
-        duration: finalDuration,
-        duration_unit,
-        barrier: `+${off}`,
-      }).catch(() => null);
-
-      if (propL && propL.id && propL.payout > 0) {
+      if (propL && propL.id && Number(propL.payout) > 0) {
         validLower.push(off);
       }
-    }
+    }));
 
     client.close();
 
