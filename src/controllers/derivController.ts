@@ -388,10 +388,13 @@ export async function getDerivContractsFor(req: AuthenticatedRequest, res: Respo
       settings = await DerivSettings.findOne().lean();
     }
 
-    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
-    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const appId = settings?.appId || '1089';
+    const activeToken = settings?.accountType === 'real'
+      ? (settings?.realApiToken || settings?.apiToken || '')
+      : (settings?.demoApiToken || settings?.apiToken || '');
+
     const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
-    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    const client = new DerivWsClient(appId, activeToken, settings?.accountType || 'demo');
     await client.connect();
     const availableContracts = await client.getContractsFor(String(symbol));
     client.close();
@@ -422,10 +425,13 @@ export async function getDerivBarrierRange(req: AuthenticatedRequest, res: Respo
     let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
     if (!settings) settings = await DerivSettings.findOne().lean();
 
-    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
-    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const appId = settings?.appId || '1089';
+    const activeToken = settings?.accountType === 'real'
+      ? (settings?.realApiToken || settings?.apiToken || '')
+      : (settings?.demoApiToken || settings?.apiToken || '');
+
     const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
-    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    const client = new DerivWsClient(appId, activeToken, settings?.accountType || 'demo');
     await client.connect();
 
     const duration = Number(durationSec) || 15;
@@ -516,10 +522,13 @@ export async function testDerivProposal(req: AuthenticatedRequest, res: Response
     let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
     if (!settings) settings = await DerivSettings.findOne().lean();
 
-    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
-    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const appId = settings?.appId || '1089';
+    const activeToken = settings?.accountType === 'real'
+      ? (settings?.realApiToken || settings?.apiToken || '')
+      : (settings?.demoApiToken || settings?.apiToken || '');
+
     const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
-    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    const client = new DerivWsClient(appId, activeToken, settings?.accountType || 'demo');
     await client.connect();
 
     const duration = Number(durationSec) || 15;
