@@ -34,6 +34,50 @@ const log = {
   },
 };
 
+// Pool de conexões WebSocket persistentes indexadas por (userId_accountType)
+const activeDerivClients = new Map<string, { client: DerivWsClient; token: string; accountInfo: any }>();
+
+async function getOrCreateDerivClient(settings: any, activeToken: string): Promise<{ client: DerivWsClient; accountInfo: any } | null> {
+  const clientKey = `${settings.userId || 'default'}_${settings.accountType || 'demo'}`;
+  const existing = activeDerivClients.get(clientKey);
+
+  if (existing && existing.token === activeToken && existing.client.isConnected()) {
+    return { client: existing.client, accountInfo: existing.accountInfo };
+  }
+
+  // Se já existia um client antigo/desconectado ou token trocado, fecha
+  if (existing) {
+    try {
+      existing.client.close();
+    } catch {}
+    activeDerivClients.delete(clientKey);
+  }
+
+  const client = new DerivWsClient(
+    settings.appId || '1089',
+    activeToken,
+    settings.accountType === 'real' ? 'real' : 'demo'
+  );
+
+  try {
+    await client.connect();
+    const accountInfo = await client.authorize().catch(() => null);
+    if (!accountInfo) {
+      client.close();
+      return null;
+    }
+    activeDerivClients.set(clientKey, { client, token: activeToken, accountInfo });
+    const isVirtual = Boolean(accountInfo.is_virtual);
+    const loginId = accountInfo.loginid || 'Desconhecido';
+    const envLabel = isVirtual ? 'DEMO (Virtual)' : 'PRODUÇÃO (Conta Real)';
+    log.info(`🔗 Conexão persistente estabelecida com sucesso [${envLabel} | ID: ${loginId}].`);
+    return { client, accountInfo };
+  } catch (err: any) {
+    client.close();
+    throw err;
+  }
+}
+
 export async function runDerivCycle(): Promise<void> {
   const allSettings = await DerivSettings.find().lean();
   if (!allSettings || allSettings.length === 0) {
@@ -56,29 +100,24 @@ export async function runDerivCycle(): Promise<void> {
       continue;
     }
 
-    const client = new DerivWsClient(
-      settings.appId || '1089',
-      activeToken,
-      settings.accountType === 'real' ? 'real' : 'demo'
-    );
-
-  try {
-    await client.connect();
-    const accountInfo = await client.authorize().catch(() => null);
-
-    if (!accountInfo) {
-      log.warn('⚠️ Falha ao autorizar conta Deriv. Verifique o API Token.');
-      client.close();
-      return;
+    let derivSession: { client: DerivWsClient; accountInfo: any } | null = null;
+    try {
+      derivSession = await getOrCreateDerivClient(settings, activeToken);
+    } catch (err: any) {
+      log.warn(`⚠️ Falha ao conectar persistentemente na Deriv: ${err?.message || err}`);
+      continue;
     }
 
-    const isVirtual = Boolean(accountInfo.is_virtual);
-    const loginId = accountInfo.loginid || 'Desconhecido';
-    const envLabel = isVirtual ? 'DEMO (Virtual)' : 'PRODUÇÃO (Conta Real)';
+    if (!derivSession || !derivSession.client) {
+      log.warn('⚠️ Falha ao autenticar na Deriv. Verifique o API Token.');
+      continue;
+    }
 
-    log.info(`💡 Conectado na Deriv [Ambiente: ${envLabel} | ID: ${loginId}]. Ciclo de varredura executado.`);
+    const { client } = derivSession;
 
-    // 1. Monitorar posições abertas
+    try {
+      // 1. Monitorar posições abertas
+
     const openTrades = await DerivTrade.find({ userId: settings.userId, status: 'open' }).lean();
 
     for (const trade of openTrades) {
@@ -410,9 +449,8 @@ export async function runDerivCycle(): Promise<void> {
     }
   } catch (e: any) {
     log.error(`❌ Erro no ciclo do robô Deriv: ${e.message}`);
-  } finally {
-    client.close();
   }
   }
 }
+
 

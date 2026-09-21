@@ -277,11 +277,31 @@ export class DerivWsClient {
     }));
   }
 
+  public isConnected(): boolean {
+    return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+  }
+
+  public getAccountInfo(): any {
+    return this.selectedAccount;
+  }
+
+  public async ping(): Promise<boolean> {
+    try {
+      const res = await this.send({ ping: 1 });
+      return res?.ping === 'pong';
+    } catch {
+      return false;
+    }
+  }
+
   public close(): void {
     if (this.ws) {
-      this.ws.close();
+      try {
+        this.ws.close();
+      } catch {}
       this.ws = null;
     }
   }
 }
+
 
