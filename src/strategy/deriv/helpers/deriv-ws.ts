@@ -88,14 +88,35 @@ export class DerivWsClient {
   }
 
   public async connect(): Promise<void> {
-    const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+    let wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+
+    if (this.isPatToken) {
+      try {
+        const accounts = await this.fetchAccounts();
+        const acc = accounts.find((a) => a.account_type === this.accountType) || accounts[0];
+        if (acc) {
+          this.selectedAccount = acc;
+          const otpWsUrl = await this.fetchOtp(acc.account_id);
+          if (otpWsUrl) {
+            wsUrl = otpWsUrl;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[DerivWsClient] Falha ao obter OTP para PAT: ${err?.message || err}`);
+      }
+    }
 
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(wsUrl);
+        this.ws = new WebSocket(wsUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Origin': 'https://app.deriv.com',
+          },
+        });
 
         this.ws.on('open', async () => {
-          if (this.apiToken) {
+          if (this.apiToken && !this.isPatToken) {
             try {
               await this.authorize();
             } catch (e) {
