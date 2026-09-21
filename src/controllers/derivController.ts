@@ -195,48 +195,16 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
       settings = await DerivSettings.findOne().lean();
     }
 
-    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
-    const demoToken = settings?.demoApiToken || settings?.apiToken || '';
-    const realToken = settings?.realApiToken || settings?.apiToken || '';
-
-    const { getOrCreateDerivClient } = require('../strategy/deriv/deriv-bot');
-
-    let demoBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
-    let realBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
-
-    if (demoToken) {
-      try {
-        const session = await getOrCreateDerivClient({ userId, accountType: 'demo', appId }, demoToken);
-        if (session && session.accountInfo) {
-          demoBalance = session.accountInfo;
-        }
-      } catch (e: any) {
-        console.warn('⚠️ [getDerivBalance] Erro demo:', e.message);
-      }
-    }
-
-    if (realToken) {
-      try {
-        const session = await getOrCreateDerivClient({ userId, accountType: 'real', appId }, realToken);
-        if (session && session.accountInfo) {
-          realBalance = session.accountInfo;
-        }
-      } catch (e: any) {
-        console.warn('⚠️ [getDerivBalance] Erro real:', e.message);
-      }
-    }
-
-
     const data = {
-      demo: demoBalance ? {
-        loginId: demoBalance.loginid || '',
-        balance: Number(demoBalance.balance || 0),
-        currency: demoBalance.currency || 'USD',
+      demo: settings?.demoBalance ? {
+        loginId: settings.demoBalance.loginId || '',
+        balance: Number(settings.demoBalance.balance || 0),
+        currency: settings.demoBalance.currency || 'USD',
       } : null,
-      real: realBalance ? {
-        loginId: realBalance.loginid || '',
-        balance: Number(realBalance.balance || 0),
-        currency: realBalance.currency || 'USD',
+      real: settings?.realBalance ? {
+        loginId: settings.realBalance.loginId || '',
+        balance: Number(settings.realBalance.balance || 0),
+        currency: settings.realBalance.currency || 'USD',
       } : null,
       activeAccount: settings?.accountType || 'demo',
     };
@@ -248,6 +216,7 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
   }
 }
+
 
 export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
   try {

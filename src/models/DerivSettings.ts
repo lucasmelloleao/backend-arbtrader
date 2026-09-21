@@ -17,6 +17,9 @@ const DerivSettingsSchema = new mongoose.Schema({
   minTakeProfitPct: { type: Number, default: 10.0 }, // Sair antecipadamente se lucro >= 10%
   allowedSymbols: { type: [String], default: ['R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'] },
   contractDurationSec: { type: Number, default: 15 }, // Duração do contrato em segundos (15s)
+  demoBalance: { type: mongoose.Schema.Types.Mixed, default: null },
+  realBalance: { type: mongoose.Schema.Types.Mixed, default: null },
 }, { timestamps: true });
+
 
 export default mongoose.models.DerivSettings || mongoose.model('DerivSettings', DerivSettingsSchema);

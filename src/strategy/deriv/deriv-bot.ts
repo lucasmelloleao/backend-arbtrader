@@ -72,12 +72,24 @@ export async function getOrCreateDerivClient(settings: any, activeToken: string)
     const loginId = accountInfo.loginid || 'Desconhecido';
     const envLabel = isVirtual ? 'DEMO (Virtual)' : 'PRODUÇÃO (Conta Real)';
     log.info(`🔗 Conexão persistente estabelecida com sucesso [${envLabel} | ID: ${loginId}].`);
+
+    // Salva saldo no banco de dados para o frontend consultar via REST puramente do MongoDB
+    const balancePayload = {
+      loginId: accountInfo.loginid || '',
+      balance: Number(accountInfo.balance || 0),
+      currency: accountInfo.currency || 'USD',
+      updatedAt: new Date(),
+    };
+    const updateField = settings.accountType === 'real' ? { realBalance: balancePayload } : { demoBalance: balancePayload };
+    DerivSettings.updateOne({ _id: settings._id }, { $set: updateField }).catch(() => {});
+
     return { client, accountInfo };
   } catch (err: any) {
     client.close();
     throw err;
   }
 }
+
 
 export async function runDerivCycle(): Promise<void> {
   const allSettings = await DerivSettings.find().lean();
