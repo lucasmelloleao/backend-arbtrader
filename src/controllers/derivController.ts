@@ -295,7 +295,8 @@ export async function getDerivStrategies(req: AuthenticatedRequest, res: Respons
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const strats = await DerivStrategy.find({ userId }).sort({ createdAt: -1 }).lean();
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    const strats = await DerivStrategy.find({ $or: [{ userId }, { userId: userObjId }] }).sort({ createdAt: -1 }).lean();
     const formatted = strats.map((s: any) => ({
       id: s._id.toString(),
       name: s.name || s.symbol,
@@ -328,11 +329,12 @@ export async function createDerivStrategy(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     const { symbol, name, contractType, barrier, barrierLower, tradeSize, durationSec, minCertaintyProb, active } = req.body;
     if (!symbol) return res.status(400).json(isDashboard(req) ? { error: 'Símbolo é obrigatório' } : { success: false, message: 'Símbolo é obrigatório.' });
 
     const strat = await DerivStrategy.create({
-      userId,
+      userId: userObjId,
       symbol: symbol.trim(),
       name: name?.trim() || symbol.trim(),
       contractType: contractType || 'BOTH_HL',
@@ -374,12 +376,15 @@ export async function updateDerivStrategy(req: AuthenticatedRequest, res: Respon
     const id = req.params.id || req.body.id || req.body.strategyId;
     if (!id) return res.status(400).json(isDashboard(req) ? { error: 'ID é obrigatório' } : { success: false, message: 'ID é obrigatório.' });
 
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    const stratObjId = mongoose.Types.ObjectId.isValid(String(id)) ? new mongoose.Types.ObjectId(String(id)) : id;
+
     const body = { ...req.body };
     delete body._id;
     delete body.userId;
 
     const strat = await DerivStrategy.findOneAndUpdate(
-      { _id: id, userId },
+      { _id: stratObjId, $or: [{ userId }, { userId: userObjId }] },
       { $set: body },
       { new: true }
     ).lean();
@@ -402,7 +407,10 @@ export async function deleteDerivStrategy(req: AuthenticatedRequest, res: Respon
     const id = req.params.id || req.body.id || req.body.strategyId;
     if (!id) return res.status(400).json(isDashboard(req) ? { error: 'ID é obrigatório' } : { success: false, message: 'ID é obrigatório.' });
 
-    await DerivStrategy.deleteOne({ _id: id, userId });
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    const stratObjId = mongoose.Types.ObjectId.isValid(String(id)) ? new mongoose.Types.ObjectId(String(id)) : id;
+
+    await DerivStrategy.deleteOne({ _id: stratObjId, $or: [{ userId }, { userId: userObjId }] });
 
     if (isDashboard(req)) return res.json({ success: true, message: 'Estratégia removida.' });
     return res.json({ success: true, message: 'Estratégia removida com sucesso.' });
