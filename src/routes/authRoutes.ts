@@ -244,7 +244,8 @@ import {
   createDerivStrategy,
   updateDerivStrategy,
   deleteDerivStrategy,
-  getDerivContractsFor
+  getDerivContractsFor,
+  testDerivProposal
 } from '../controllers/derivController';
 
 router.get('/deriv/settings', authMiddleware as any, getDerivSettings as any);
@@ -254,6 +255,7 @@ router.post('/deriv/strategies', authMiddleware as any, createDerivStrategy as a
 router.put('/deriv/strategies/:id', authMiddleware as any, updateDerivStrategy as any);
 router.delete('/deriv/strategies/:id', authMiddleware as any, deleteDerivStrategy as any);
 router.get('/deriv/contracts-for', authMiddleware as any, getDerivContractsFor as any);
+router.post('/deriv/proposal', authMiddleware as any, testDerivProposal as any);
 router.get('/deriv/trades', authMiddleware as any, getDerivTrades as any);
 router.delete('/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
 router.get('/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
@@ -267,6 +269,7 @@ router.post('/auth/deriv/strategies', authMiddleware as any, createDerivStrategy
 router.put('/auth/deriv/strategies/:id', authMiddleware as any, updateDerivStrategy as any);
 router.delete('/auth/deriv/strategies/:id', authMiddleware as any, deleteDerivStrategy as any);
 router.get('/auth/deriv/contracts-for', authMiddleware as any, getDerivContractsFor as any);
+router.post('/auth/deriv/proposal', authMiddleware as any, testDerivProposal as any);
 router.get('/auth/deriv/trades', authMiddleware as any, getDerivTrades as any);
 router.delete('/auth/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
 router.get('/auth/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);

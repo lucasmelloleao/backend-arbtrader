@@ -414,4 +414,59 @@ export async function getDerivContractsFor(req: AuthenticatedRequest, res: Respo
   }
 }
 
+export async function testDerivProposal(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { symbol, contractType, durationSec, barrier, amount } = req.body;
+    const userId = req.userId;
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
+    if (!settings) {
+      settings = await DerivSettings.findOne().lean();
+    }
+
+    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
+    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
+    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    await client.connect();
+
+    const duration = Number(durationSec) || 15;
+    const duration_unit = duration >= 60 && duration % 60 === 0 ? 'm' : 's';
+    const finalDuration = duration_unit === 'm' ? duration / 60 : duration;
+
+    const payload: any = {
+      symbol: symbol || '1HZ10V',
+      contract_type: contractType === 'BOTH_HL' ? 'HIGHER' : contractType === 'BOTH_RF' ? 'CALL' : contractType,
+      amount: Number(amount) || 2,
+      duration: finalDuration,
+      duration_unit,
+    };
+    if (barrier) {
+      payload.barrier = String(barrier);
+    }
+
+    const proposal = await client.getProposal(payload).catch((err: any) => ({ error: err.message }));
+    client.close();
+
+    if (proposal?.error) {
+      return res.json({ success: false, error: proposal.error });
+    }
+
+    return res.json({
+      success: true,
+      message: 'ok',
+      data: {
+        payout: proposal.payout,
+        askPrice: proposal.ask_price,
+        barrier: proposal.barrier,
+        spot: proposal.spot,
+        dateExpiry: proposal.date_expiry,
+      },
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
+
 
