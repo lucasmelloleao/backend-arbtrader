@@ -233,6 +233,13 @@ export class DerivWsClient {
     return res.proposal_open_contract;
   }
 
+  public async getContractsFor(symbol: string): Promise<any> {
+    const res = await this.send({
+      contracts_for: symbol,
+    });
+    return res.contracts_for?.available || [];
+  }
+
   public async getTicksHistory(symbol: string, count = 20): Promise<number[]> {
     const res = await this.send({
       ticks_history: symbol,

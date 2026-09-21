@@ -65,6 +65,7 @@ export async function getDerivTrades(req: AuthenticatedRequest, res: Response) {
       id: t._id.toString(),
       contractId: t.contractId,
       symbol: t.symbol,
+      strategyName: t.strategyName || (t.reason?.match(/Estratégia "([^"]+)"/)?.[1] ?? t.symbol),
       question: t.question || t.symbol,
       contractType: t.contractType,
       status: t.status,
@@ -376,4 +377,41 @@ export async function deleteDerivStrategy(req: AuthenticatedRequest, res: Respon
     return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
   }
 }
+
+export async function getDerivContractsFor(req: AuthenticatedRequest, res: Response) {
+  try {
+    const symbol = req.params.symbol || req.query.symbol || '1HZ10V';
+    const userId = req.userId;
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
+    if (!settings) {
+      settings = await DerivSettings.findOne().lean();
+    }
+
+    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
+    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
+    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    await client.connect();
+    const availableContracts = await client.getContractsFor(String(symbol));
+    client.close();
+
+    // Filtra e organiza os tipos suportados relevantes (CALL/PUT/HIGHER/LOWER)
+    const summary = availableContracts.map((c: any) => ({
+      contractCategory: c.contract_category,
+      contractType: c.contract_type,
+      contractDisplay: c.contract_display,
+      minDuration: c.min_contract_duration,
+      maxDuration: c.max_contract_duration,
+      barriers: c.barriers,
+      defaultBarrier: c.default_barrier,
+    }));
+
+    return res.json({ success: true, message: 'ok', data: summary });
+  } catch (e: any) {
+    console.error('❌ [GET DerivContractsFor] Error:', e.message);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
 

@@ -4,6 +4,7 @@ const DerivTradeSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   contractId: { type: String, required: true },
   symbol: { type: String, required: true },
+  strategyName: { type: String, default: '' },
   question: { type: String },
   contractType: { type: String, required: true }, // RISE, FALL, HIGHER, LOWER
   status: { type: String, enum: ['open', 'executed', 'cancelled', 'simulated'], default: 'open' },

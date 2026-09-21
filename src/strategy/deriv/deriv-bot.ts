@@ -310,28 +310,57 @@ export async function runDerivCycle(): Promise<void> {
           }
         }
 
-        const tradeDuration = target.durationSec;
         const tradeStake = target.tradeSize;
+        let tradeDuration = target.durationSec;
+        let durationUnit = 's';
+
+        // Validação dinâmica de limites de duração por contrato na Deriv
+        // Para contratos HIGHER/LOWER (High/Low com barreira), a Deriv geralmente exige duração mínima em segundos ou minutos
+        if ((contractType === 'HIGHER' || contractType === 'LOWER') && tradeDuration < 15) {
+          tradeDuration = 15; // Mínimo seguro para Higher/Lower na Deriv
+        }
 
         // Requisita proposta para a Deriv
-        const proposalParams: any = {
+        let proposalParams: any = {
           symbol: sym,
           contract_type: contractType,
           amount: tradeStake,
           duration: tradeDuration,
-          duration_unit: 's',
+          duration_unit: durationUnit,
         };
         if (barrierValue) {
           proposalParams.barrier = barrierValue;
         }
 
-        const proposal = await client.getProposal(proposalParams).catch((err: any) => {
-          log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''}: ${err.message}`);
-          return null;
+        let proposal = await client.getProposal(proposalParams).catch((err: any) => {
+          return { error: err.message };
         });
 
+        // Se a Deriv rejeitar a unidade em segundos ou a duração exata, tenta ajustar dinamicamente
+        if (proposal?.error && proposal.error.includes('duration')) {
+          if (tradeDuration < 60) {
+            // Tenta 1 minuto (60s / 1m)
+            proposalParams.duration = 60;
+            proposalParams.duration_unit = 's';
+            proposal = await client.getProposal(proposalParams).catch((err: any) => {
+              log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} (ajustado para 60s): ${err.message}`);
+              return null;
+            });
+          } else if (tradeDuration >= 60 && durationUnit === 's') {
+            proposalParams.duration = Math.round(tradeDuration / 60);
+            proposalParams.duration_unit = 'm';
+            proposal = await client.getProposal(proposalParams).catch((err: any) => {
+              log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} (em minutos): ${err.message}`);
+              return null;
+            });
+          }
+        } else if (proposal?.error) {
+          log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''}: ${proposal.error}`);
+          proposal = null;
+        }
+
         if (!proposal || !proposal.id) {
-          log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível no momento. Entrada ignorada.`);
+          log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível para esta duração (${tradeDuration}${durationUnit}). Entrada ignorada.`);
           continue;
         }
 
@@ -345,6 +374,7 @@ export async function runDerivCycle(): Promise<void> {
               userId: settings.userId,
               contractId: String(bought.contract_id),
               symbol: sym,
+              strategyName: target.name || sym,
               question: `Opção ${sym} (${displayType}${displayBarrier} ${(calculatedProb * 100).toFixed(0)}% Certeza)`,
               contractType: displayType,
               status: 'open',
