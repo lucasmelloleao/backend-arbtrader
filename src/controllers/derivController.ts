@@ -414,15 +414,107 @@ export async function getDerivContractsFor(req: AuthenticatedRequest, res: Respo
   }
 }
 
+export async function getDerivBarrierRange(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { symbol = '1HZ10V', durationSec = 15 } = req.query;
+    const userId = req.userId;
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
+    if (!settings) settings = await DerivSettings.findOne().lean();
+
+    const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
+    const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
+    const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
+    const client = new DerivWsClient(appId, token, settings?.accountType || 'demo');
+    await client.connect();
+
+    const duration = Number(durationSec) || 15;
+    const duration_unit = duration >= 60 && duration % 60 === 0 ? 'm' : 's';
+    const finalDuration = duration_unit === 'm' ? duration / 60 : duration;
+
+    // Busca contrato padrão para obter base
+    const available = await client.getContractsFor(String(symbol));
+    const match = available.find((c: any) => c.contract_type === 'HIGHER' || c.contract_category === 'high_low');
+    const defBarrierStr = match?.default_barrier || '1';
+    const defBarrierNum = Math.abs(parseFloat(defBarrierStr)) || 1;
+
+    // Testa múltiplos offsets para encontrar o teto máximo e mínimo aceito
+    const testOffsets = [
+      0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0, 5.0
+    ].map(m => Number((m * (defBarrierNum <= 1 ? 1 : defBarrierNum)).toFixed(2)));
+
+    const validHigher: number[] = [];
+    const validLower: number[] = [];
+
+    // Testa em lotes rápidos
+    for (const off of testOffsets) {
+      // Test Higher (-off)
+      const propH = await client.getProposal({
+        symbol: String(symbol),
+        contract_type: 'HIGHER',
+        amount: 2,
+        duration: finalDuration,
+        duration_unit,
+        barrier: `-${off}`,
+      }).catch(() => null);
+
+      if (propH && propH.id && propH.payout > 0) {
+        validHigher.push(off);
+      }
+
+      // Test Lower (+off)
+      const propL = await client.getProposal({
+        symbol: String(symbol),
+        contract_type: 'LOWER',
+        amount: 2,
+        duration: finalDuration,
+        duration_unit,
+        barrier: `+${off}`,
+      }).catch(() => null);
+
+      if (propL && propL.id && propL.payout > 0) {
+        validLower.push(off);
+      }
+    }
+
+    client.close();
+
+    const maxHigher = validHigher.length > 0 ? Math.max(...validHigher) : defBarrierNum;
+    const minHigher = validHigher.length > 0 ? Math.min(...validHigher) : 0.1;
+    const maxLower = validLower.length > 0 ? Math.max(...validLower) : defBarrierNum;
+    const minLower = validLower.length > 0 ? Math.min(...validLower) : 0.1;
+
+    return res.json({
+      success: true,
+      data: {
+        symbol,
+        durationSec: duration,
+        higher: {
+          min: `-${minHigher.toFixed(2)}`,
+          max: `-${maxHigher.toFixed(2)}`,
+          default: `-${defBarrierNum.toFixed(2)}`,
+          validList: validHigher.map(v => `-${v.toFixed(2)}`),
+        },
+        lower: {
+          min: `+${minLower.toFixed(2)}`,
+          max: `+${maxLower.toFixed(2)}`,
+          default: `+${defBarrierNum.toFixed(2)}`,
+          validList: validLower.map(v => `+${v.toFixed(2)}`),
+        },
+      },
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
 export async function testDerivProposal(req: AuthenticatedRequest, res: Response) {
   try {
     const { symbol, contractType, durationSec, barrier, amount } = req.body;
     const userId = req.userId;
     const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     let settings = await DerivSettings.findOne({ userId: userObjId }).lean();
-    if (!settings) {
-      settings = await DerivSettings.findOne().lean();
-    }
+    if (!settings) settings = await DerivSettings.findOne().lean();
 
     const appId = settings?.appId || '34kQP2mEzJFjAJ2q1atub';
     const token = settings?.demoApiToken || settings?.realApiToken || settings?.apiToken || '';
@@ -467,6 +559,8 @@ export async function testDerivProposal(req: AuthenticatedRequest, res: Response
     return res.status(500).json({ success: false, message: e.message });
   }
 }
+
+
 
 
 
