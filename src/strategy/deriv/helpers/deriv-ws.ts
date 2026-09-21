@@ -88,65 +88,49 @@ export class DerivWsClient {
   }
 
   public async connect(): Promise<void> {
-    let wsUrl: string;
-
-    if (this.isPatToken) {
-      try {
-        const accounts = await this.fetchAccounts();
-        this.selectedAccount =
-          accounts.find((acc) => acc.account_type === this.accountType) ||
-          accounts[0];
-
-        if (this.selectedAccount) {
-          wsUrl = await this.fetchOtp(this.selectedAccount.account_id);
-        } else {
-          wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-        }
-      } catch (e) {
-        // Se a API REST v1 falhar, conecta diretamente no WebSocket padrão
-        wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-      }
-    } else {
-      wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
-    }
+    const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(wsUrl);
+      try {
+        this.ws = new WebSocket(wsUrl);
 
-      this.ws.on('open', async () => {
-        if (this.apiToken) {
-          try {
-            await this.authorize();
-          } catch (e) {
-            // Se falhar autorização silenciosa, continua
-          }
-        }
-        resolve();
-      });
-
-      this.ws.on('message', (data: WebSocket.Data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          const reqId = msg.req_id;
-          if (reqId && this.pendingRequests.has(reqId)) {
-            const { resolve, reject } = this.pendingRequests.get(reqId)!;
-            this.pendingRequests.delete(reqId);
-            if (msg.error) {
-              reject(new Error(msg.error.message || 'Erro Deriv API'));
-            } else {
-              resolve(msg);
+        this.ws.on('open', async () => {
+          if (this.apiToken) {
+            try {
+              await this.authorize();
+            } catch (e) {
+              // Permite continuar mesmo se a autorização inicial oscilar
             }
           }
-        } catch {}
-      });
+          resolve();
+        });
 
-      this.ws.on('error', (err) => {
+        this.ws.on('message', (data: WebSocket.Data) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            const reqId = msg.req_id;
+            if (reqId && this.pendingRequests.has(reqId)) {
+              const { resolve, reject } = this.pendingRequests.get(reqId)!;
+              this.pendingRequests.delete(reqId);
+              if (msg.error) {
+                reject(new Error(msg.error.message || 'Erro Deriv API'));
+              } else {
+                resolve(msg);
+              }
+            }
+          } catch {}
+        });
+
+        this.ws.on('error', (err) => {
+          reject(err);
+        });
+
+        this.ws.on('close', () => {
+          this.selectedAccount = null;
+        });
+      } catch (err) {
         reject(err);
-      });
-
-      this.ws.on('close', () => {
-        this.selectedAccount = null;
-      });
+      }
     });
   }
 
