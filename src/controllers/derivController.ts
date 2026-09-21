@@ -88,12 +88,13 @@ export async function getDerivTrades(req: AuthenticatedRequest, res: Response) {
       ];
     }
 
-    const maxLimit = limit ? Number(limit) : (period === 'all' ? 500 : 200);
+    const maxLimit = limit ? Number(limit) : (period === 'all' ? 2000 : 2000);
 
     const trades = await DerivTrade.find(query)
       .sort({ createdAt: -1 })
       .limit(maxLimit)
       .lean();
+
 
     const formatted = trades.map((t: any) => ({
       id: t._id.toString(),
