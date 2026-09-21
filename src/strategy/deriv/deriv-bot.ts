@@ -35,9 +35,10 @@ const log = {
 };
 
 // Pool de conexões WebSocket persistentes indexadas por (userId_accountType)
-const activeDerivClients = new Map<string, { client: DerivWsClient; token: string; accountInfo: any }>();
+export const activeDerivClients = new Map<string, { client: DerivWsClient; token: string; accountInfo: any }>();
 
-async function getOrCreateDerivClient(settings: any, activeToken: string): Promise<{ client: DerivWsClient; accountInfo: any } | null> {
+export async function getOrCreateDerivClient(settings: any, activeToken: string): Promise<{ client: DerivWsClient; accountInfo: any } | null> {
+
   const clientKey = `${settings.userId || 'default'}_${settings.accountType || 'demo'}`;
   const existing = activeDerivClients.get(clientKey);
 

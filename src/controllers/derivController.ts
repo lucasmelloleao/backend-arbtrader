@@ -199,17 +199,17 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
     const demoToken = settings?.demoApiToken || settings?.apiToken || '';
     const realToken = settings?.realApiToken || settings?.apiToken || '';
 
-    const { DerivWsClient } = require('../strategy/deriv/helpers/deriv-ws');
+    const { getOrCreateDerivClient } = require('../strategy/deriv/deriv-bot');
 
     let demoBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
     let realBalance: { loginid?: string; balance?: string | number; currency?: string } | null = null;
 
     if (demoToken) {
       try {
-        const clientDemo = new DerivWsClient(appId, demoToken, 'demo');
-        await clientDemo.connect();
-        demoBalance = await clientDemo.authorize();
-        clientDemo.close();
+        const session = await getOrCreateDerivClient({ userId, accountType: 'demo', appId }, demoToken);
+        if (session && session.accountInfo) {
+          demoBalance = session.accountInfo;
+        }
       } catch (e: any) {
         console.warn('⚠️ [getDerivBalance] Erro demo:', e.message);
       }
@@ -217,14 +217,15 @@ export async function getDerivTradesSummary(req: AuthenticatedRequest, res: Resp
 
     if (realToken) {
       try {
-        const clientReal = new DerivWsClient(appId, realToken, 'real');
-        await clientReal.connect();
-        realBalance = await clientReal.authorize();
-        clientReal.close();
+        const session = await getOrCreateDerivClient({ userId, accountType: 'real', appId }, realToken);
+        if (session && session.accountInfo) {
+          realBalance = session.accountInfo;
+        }
       } catch (e: any) {
         console.warn('⚠️ [getDerivBalance] Erro real:', e.message);
       }
     }
+
 
     const data = {
       demo: demoBalance ? {

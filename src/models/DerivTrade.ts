@@ -19,5 +19,8 @@ const DerivTradeSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 DerivTradeSchema.index({ userId: 1, createdAt: -1 });
+DerivTradeSchema.index({ userId: 1, status: 1 });
+DerivTradeSchema.index({ userId: 1, symbol: 1, createdAt: -1 });
 
 export default mongoose.models.DerivTrade || mongoose.model('DerivTrade', DerivTradeSchema);
+
