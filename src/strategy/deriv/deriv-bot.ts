@@ -199,8 +199,15 @@ export async function runDerivCycle(): Promise<void> {
       const sym = target.symbol;
       try {
         // Busca 50 ticks para análise rápida de momentum + indicadores em tempo real
-        const ticks = await client.getTicksHistory(sym, 50).catch(() => []);
-        if (!ticks || ticks.length < 30) continue;
+        const ticks = await client.getTicksHistory(sym, 50).catch((err: any) => {
+          log.warn(`⚠️ [${sym}] Falha ao buscar histórico de cotações: ${err?.message || err}`);
+          return [];
+        });
+
+        if (!ticks || ticks.length < 30) {
+          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/30) na Deriv. Aguardando novo fluxo de cotação...`);
+          continue;
+        }
 
         const latestPrice = ticks[ticks.length - 1];
 
