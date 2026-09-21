@@ -128,14 +128,13 @@ async function formatStrategy(s: any) {
   };
 }
 
-const CUTOFF_DATE = new Date('2026-09-15T00:00:00.000Z');
-
 export async function getPredictionStrategies(req: AuthenticatedRequest, res: Response) {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const list = await (PredictionArbStrategy as any).find({ userId, createdAt: { $gte: CUTOFF_DATE } }).lean();
+    // Estratégias ativas/abertas e recentes
+    const list = await (PredictionArbStrategy as any).find({ userId }).sort({ updatedAt: -1 }).limit(100).lean();
     if (isDashboard(req)) return res.json(list);
     const formatted = await Promise.all(list.map(formatStrategy));
     return res.json({ success: true, message: 'ok', data: formatted });
@@ -245,9 +244,25 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const trades = await (PredictionArbTrade as any).find({ userId, createdAt: { $gte: CUTOFF_DATE } })
+    const { startDate, endDate, all } = req.query;
+    const filter: any = { userId };
+
+    if (all === 'true') {
+      // Traz histórico sem restrição de data
+    } else if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(String(startDate));
+      if (endDate) filter.createdAt.$lte = new Date(String(endDate));
+    } else {
+      // Default: traz apenas do dia atual (início do dia local/UTC)
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      filter.createdAt = { $gte: startOfToday };
+    }
+
+    const trades = await (PredictionArbTrade as any).find(filter)
       .sort({ createdAt: -1 })
-      .limit(300)
+      .limit(100)
       .populate({ path: 'strategyId', model: 'PredictionArbStrategy', select: 'slug question' })
       .lean();
 
@@ -308,8 +323,23 @@ export async function getPredictionTradesSummary(req: AuthenticatedRequest, res:
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const closes = await (PredictionArbTrade as any).find({ userId, type: 'close_pair', status: 'executed', createdAt: { $gte: CUTOFF_DATE } }).lean();
-    const opens = await (PredictionArbTrade as any).find({ userId, type: 'open_pair', status: { $in: ['executed', 'simulated'] }, createdAt: { $gte: CUTOFF_DATE } }).lean();
+    const { startDate, endDate, all } = req.query;
+    const filter: any = { userId };
+
+    if (all === 'true') {
+      // Sem restrição
+    } else if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(String(startDate));
+      if (endDate) filter.createdAt.$lte = new Date(String(endDate));
+    } else {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      filter.createdAt = { $gte: startOfToday };
+    }
+
+    const closes = await (PredictionArbTrade as any).find({ ...filter, type: 'close_pair', status: 'executed' }).lean();
+    const opens = await (PredictionArbTrade as any).find({ ...filter, type: 'open_pair', status: { $in: ['executed', 'simulated'] } }).lean();
 
     const totalClosed = closes.length;
     const totalPnl = closes.reduce((acc: number, t: any) => acc + Number(t.pnl || 0), 0);
