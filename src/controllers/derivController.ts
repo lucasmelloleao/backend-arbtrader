@@ -60,18 +60,32 @@ export async function getDerivTrades(req: AuthenticatedRequest, res: Response) {
     const query: any = { userId };
 
     const now = new Date();
-    if (period === '1h') {
+    if (period === '5m') {
+      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000);
+      query.$or = [{ createdAt: { $gte: fiveMinAgo } }, { status: { $in: ['open', 'pending'] } }];
+    } else if (period === '10m') {
+      const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
+      query.$or = [{ createdAt: { $gte: tenMinAgo } }, { status: { $in: ['open', 'pending'] } }];
+    } else if (period === '30m') {
+      const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
+      query.$or = [{ createdAt: { $gte: thirtyMinAgo } }, { status: { $in: ['open', 'pending'] } }];
+    } else if (period === '1h') {
       const oneHourAgo = new Date(now.getTime() - 1 * 60 * 60 * 1000);
       query.$or = [{ createdAt: { $gte: oneHourAgo } }, { status: { $in: ['open', 'pending'] } }];
+
     } else if (period === '2h') {
       const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
       query.$or = [{ createdAt: { $gte: twoHoursAgo } }, { status: { $in: ['open', 'pending'] } }];
+    } else if (period === '3h') {
+      const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+      query.$or = [{ createdAt: { $gte: threeHoursAgo } }, { status: { $in: ['open', 'pending'] } }];
     } else if (period === '4h') {
       const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000);
       query.$or = [{ createdAt: { $gte: fourHoursAgo } }, { status: { $in: ['open', 'pending'] } }];
     } else if (period === '5h') {
       const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1000);
       query.$or = [{ createdAt: { $gte: fiveHoursAgo } }, { status: { $in: ['open', 'pending'] } }];
+
     } else if (period === '12h') {
       const twelveHoursAgo = new Date(now.getTime() - 12 * 60 * 60 * 1000);
       query.$or = [{ createdAt: { $gte: twelveHoursAgo } }, { status: { $in: ['open', 'pending'] } }];
