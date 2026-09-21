@@ -146,13 +146,57 @@ export async function runDerivCycle(): Promise<void> {
       return;
     }
 
-    const symbols = settings.allowedSymbols && settings.allowedSymbols.length > 0
-      ? settings.allowedSymbols
-      : ['1HZ10V', 'R_10', 'R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'];
+    // 2. Buscar estratégias ativas do usuário para operar por ativo
+    const userStrategies = await DerivStrategy.find({ userId: settings.userId, active: true }).lean();
 
-    const minCertainty = Number(settings.minHighCertaintyProb || 0.75);
+    // Se o usuário não tiver estratégias cadastradas, cria/usa lista padrão dos settings
+    const activeTargets: Array<{
+      symbol: string;
+      name: string;
+      contractType: string;
+      barrier: string;
+      barrierLower: string;
+      tradeSize: number;
+      durationSec: number;
+      minCertaintyProb: number;
+      strategyId?: any;
+    }> = [];
 
-    for (const sym of symbols) {
+    if (userStrategies && userStrategies.length > 0) {
+      for (const st of userStrategies) {
+        activeTargets.push({
+          symbol: st.symbol,
+          name: st.name || st.symbol,
+          contractType: st.contractType || 'BOTH_HL',
+          barrier: st.barrier || '-1',
+          barrierLower: st.barrierLower || '+1',
+          tradeSize: Number(st.tradeSize) || 2,
+          durationSec: Number(st.durationSec) || 15,
+          minCertaintyProb: Number(st.minCertaintyProb) || 0.75,
+          strategyId: st._id,
+        });
+      }
+    } else {
+      const symbols = settings.allowedSymbols && settings.allowedSymbols.length > 0
+        ? settings.allowedSymbols
+        : ['1HZ10V', 'R_10', 'R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'];
+
+      for (const sym of symbols) {
+        activeTargets.push({
+          symbol: sym,
+          name: sym,
+          contractType: 'BOTH_HL',
+          barrier: '-1',
+          barrierLower: '+1',
+          tradeSize: Number(settings.tradeSize || 2),
+          durationSec: Number(settings.contractDurationSec || 15),
+          minCertaintyProb: Number(settings.minHighCertaintyProb || 0.75),
+        });
+      }
+    }
+
+    for (const target of activeTargets) {
+      const sym = target.symbol;
       try {
         // Busca 50 ticks para análise rápida de momentum + indicadores em tempo real
         const ticks = await client.getTicksHistory(sym, 50).catch(() => []);
@@ -207,66 +251,87 @@ export async function runDerivCycle(): Promise<void> {
         const tickMomentumUp = upTicks / (last8.length - 1);
         const tickMomentumDown = downTicks / (last8.length - 1);
 
-        let decidedType: 'CALL' | 'PUT' | null = null;
+        let decidedDirection: 'CALL' | 'PUT' | null = null;
         let calculatedProb = 0;
 
-        // Condições para MERCADO EM ALTA (Comprar HIGHER com barreira -1):
-        // - Preço > EMA5 > EMA13
-        // - RSI apontando pra cima (> 50 e < 75)
-        // - Estocástico > 40 e apontando pra cima
-        // - Micro-ticks com dominância compradora >= 60%
+        // Condições para MERCADO EM ALTA
         if (latestPrice >= emaFast && emaFast > emaSlow && rsi >= 50 && rsi <= 75 && stochK >= 40 && tickMomentumUp >= 0.60) {
-          decidedType = 'CALL';
+          decidedDirection = 'CALL';
           const rsiScore = (rsi - 50) / 100;
           const stochScore = (stochK - 40) / 200;
           calculatedProb = Number(Math.min(0.72 + (tickMomentumUp * 0.15) + rsiScore + stochScore, 0.98).toFixed(3));
         }
-        // Condições para MERCADO EM BAIXA (Comprar LOWER com barreira +1):
-        // - Preço < EMA5 < EMA13
-        // - RSI apontando pra baixo (< 50 e > 25)
-        // - Estocástico < 60 e apontando pra baixo
-        // - Micro-ticks com dominância vendedora >= 60%
+        // Condições para MERCADO EM BAIXA
         else if (latestPrice <= emaFast && emaFast < emaSlow && rsi <= 50 && rsi >= 25 && stochK <= 60 && tickMomentumDown >= 0.60) {
-          decidedType = 'PUT';
+          decidedDirection = 'PUT';
           const rsiScore = (50 - rsi) / 100;
           const stochScore = (60 - stochK) / 200;
           calculatedProb = Number(Math.min(0.72 + (tickMomentumDown * 0.15) + rsiScore + stochScore, 0.98).toFixed(3));
         }
 
-        // Filtro de Probabilidade Mínima
-        if (!decidedType || calculatedProb < minCertainty) {
+        // Filtro de Probabilidade Mínima da Estratégia
+        if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
           const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência)';
-          log.info(`🔍 [${sym}] Certeza: ${probMsg} (Min: ${(minCertainty * 100).toFixed(0)}%) | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | EMA F/S: ${emaFast.toFixed(2)}/${emaSlow.toFixed(2)} | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
+          log.info(`🔍 [${sym} (${target.name})] Certeza: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
           continue;
         }
 
-        // Barreira: -1 para HIGHER (Mercado em alta) / +1 para LOWER (Mercado em baixa)
+        // Determina o tipo de contrato e a barreira a partir das configurações específicas da estratégia
         let contractType = 'HIGHER';
-        let barrierValue = '-1';
+        let barrierValue: string | undefined = target.barrier;
 
-        if (decidedType === 'PUT') {
+        if (target.contractType === 'HIGHER') {
+          if (decidedDirection !== 'CALL') continue; // Só compra se mercado estiver em alta
+          contractType = 'HIGHER';
+          barrierValue = target.barrier;
+        } else if (target.contractType === 'LOWER') {
+          if (decidedDirection !== 'PUT') continue; // Só compra se mercado estiver em baixa
           contractType = 'LOWER';
-          barrierValue = '+1';
+          barrierValue = target.barrierLower || target.barrier;
+        } else if (target.contractType === 'RISE') {
+          if (decidedDirection !== 'CALL') continue;
+          contractType = 'CALL';
+          barrierValue = undefined;
+        } else if (target.contractType === 'FALL') {
+          if (decidedDirection !== 'PUT') continue;
+          contractType = 'PUT';
+          barrierValue = undefined;
+        } else if (target.contractType === 'BOTH_RF') {
+          contractType = decidedDirection === 'CALL' ? 'CALL' : 'PUT';
+          barrierValue = undefined;
+        } else {
+          // BOTH_HL (Higher/Lower automático)
+          if (decidedDirection === 'CALL') {
+            contractType = 'HIGHER';
+            barrierValue = target.barrier;
+          } else {
+            contractType = 'LOWER';
+            barrierValue = target.barrierLower || (target.barrier.startsWith('-') ? `+${target.barrier.slice(1)}` : target.barrier);
+          }
         }
 
-        const tradeDuration = Number(settings.contractDurationSec || 15);
-        const tradeStake = Number(settings.tradeSize || 2);
+        const tradeDuration = target.durationSec;
+        const tradeStake = target.tradeSize;
 
-        // 3. Requisita proposta EXCLUSIVAMENTE Higher / Lower na Deriv (15s, Barreira ±1)
-        const proposal = await client.getProposal({
+        // Requisita proposta para a Deriv
+        const proposalParams: any = {
           symbol: sym,
           contract_type: contractType,
           amount: tradeStake,
           duration: tradeDuration,
           duration_unit: 's',
-          barrier: barrierValue,
-        }).catch((err: any) => {
-          log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType} com barreira ${barrierValue}: ${err.message}`);
+        };
+        if (barrierValue) {
+          proposalParams.barrier = barrierValue;
+        }
+
+        const proposal = await client.getProposal(proposalParams).catch((err: any) => {
+          log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''}: ${err.message}`);
           return null;
         });
 
         if (!proposal || !proposal.id) {
-          log.info(`⏳ [${sym}] Contrato ${contractType} com barreira ${barrierValue} indisponível no momento. Entrada ignorada.`);
+          log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível no momento. Entrada ignorada.`);
           continue;
         }
 
@@ -274,7 +339,7 @@ export async function runDerivCycle(): Promise<void> {
           const bought = await client.buyContract(proposal.id, proposal.ask_price).catch(() => null);
           if (bought && bought.contract_id) {
             const displayType = contractType;
-            const displayBarrier = proposal.barrier ? ` [Barreira: ${proposal.barrier}]` : ` [Barreira: ${barrierValue}]`;
+            const displayBarrier = proposal.barrier ? ` [Barreira: ${proposal.barrier}]` : (barrierValue ? ` [Barreira: ${barrierValue}]` : '');
 
             await DerivTrade.create({
               userId: settings.userId,
@@ -285,11 +350,21 @@ export async function runDerivCycle(): Promise<void> {
               status: 'open',
               buyPrice: Number(bought.buy_price || tradeStake),
               investedUsd: Number(bought.buy_price || tradeStake),
-              reason: `Higher/Lower 15s (RSI: ${rsi.toFixed(0)} | Stoch: ${stochK.toFixed(0)}% | Certeza: ${(calculatedProb * 100).toFixed(0)}%)`,
+              reason: `Estratégia "${target.name}" (${(calculatedProb * 100).toFixed(0)}% Certeza | RSI: ${rsi.toFixed(0)} | Stoch: ${stochK.toFixed(0)}%)`,
               openedAt: new Date(),
             });
-            log.info(`🚀 [${sym}] Operação ${displayType}${displayBarrier} executada com $${tradeStake} por ${tradeDuration}s! ID: ${bought.contract_id}`);
-            break; // Apenas 1 operação por ciclo
+
+            if (target.strategyId) {
+              await DerivStrategy.findByIdAndUpdate(target.strategyId, {
+                lastTradeAt: new Date(),
+                contractId: String(bought.contract_id),
+                positionOpen: true,
+                buyPrice: Number(bought.buy_price || tradeStake),
+              });
+            }
+
+            log.info(`🚀 [${sym}] Estratégia "${target.name}" (${displayType}${displayBarrier}) executada com $${tradeStake} por ${tradeDuration}s! ID: ${bought.contract_id}`);
+            break; // Abre 1 contrato por ciclo para gerenciamento de risco
           }
         }
       } catch (errSym: any) {

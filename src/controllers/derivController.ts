@@ -255,3 +255,125 @@ export async function getDerivLogs(req: AuthenticatedRequest, res: Response) {
   }
 }
 
+export async function getDerivStrategies(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const strats = await DerivStrategy.find({ userId }).sort({ createdAt: -1 }).lean();
+    const formatted = strats.map((s: any) => ({
+      id: s._id.toString(),
+      name: s.name || s.symbol,
+      symbol: s.symbol,
+      contractType: s.contractType || 'BOTH_HL',
+      barrier: s.barrier || '-1',
+      barrierLower: s.barrierLower || '+1',
+      tradeSize: s.tradeSize || 2,
+      durationSec: s.durationSec || 15,
+      minCertaintyProb: s.minCertaintyProb || 0.75,
+      active: s.active !== false,
+      positionOpen: Boolean(s.positionOpen),
+      contractId: s.contractId || null,
+      pnl: s.pnl || 0,
+      lastCheckAt: s.lastCheckAt ? new Date(s.lastCheckAt).toISOString() : '',
+      lastTradeAt: s.lastTradeAt ? new Date(s.lastTradeAt).toISOString() : '',
+      createdAt: s.createdAt ? new Date(s.createdAt).toISOString() : '',
+    }));
+
+    if (isDashboard(req)) return res.json(formatted);
+    return res.json({ success: true, message: 'ok', data: formatted });
+  } catch (e: any) {
+    console.error('❌ [GET DerivStrategies] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
+export async function createDerivStrategy(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const { symbol, name, contractType, barrier, barrierLower, tradeSize, durationSec, minCertaintyProb, active } = req.body;
+    if (!symbol) return res.status(400).json(isDashboard(req) ? { error: 'Símbolo é obrigatório' } : { success: false, message: 'Símbolo é obrigatório.' });
+
+    const strat = await DerivStrategy.create({
+      userId,
+      symbol: symbol.trim(),
+      name: name?.trim() || symbol.trim(),
+      contractType: contractType || 'BOTH_HL',
+      barrier: barrier ? String(barrier) : '-1',
+      barrierLower: barrierLower ? String(barrierLower) : '+1',
+      tradeSize: Number(tradeSize) || 2,
+      durationSec: Number(durationSec) || 15,
+      minCertaintyProb: Number(minCertaintyProb) || 0.75,
+      active: active !== false,
+    });
+
+    const data = {
+      id: strat._id.toString(),
+      name: strat.name,
+      symbol: strat.symbol,
+      contractType: strat.contractType,
+      barrier: strat.barrier,
+      barrierLower: strat.barrierLower,
+      tradeSize: strat.tradeSize,
+      durationSec: strat.durationSec,
+      minCertaintyProb: strat.minCertaintyProb,
+      active: strat.active,
+      positionOpen: false,
+    };
+
+    if (isDashboard(req)) return res.status(201).json(data);
+    return res.status(201).json({ success: true, message: 'Estratégia Deriv criada com sucesso.', data });
+  } catch (e: any) {
+    console.error('❌ [POST DerivStrategy] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
+export async function updateDerivStrategy(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const id = req.params.id || req.body.id || req.body.strategyId;
+    if (!id) return res.status(400).json(isDashboard(req) ? { error: 'ID é obrigatório' } : { success: false, message: 'ID é obrigatório.' });
+
+    const body = { ...req.body };
+    delete body._id;
+    delete body.userId;
+
+    const strat = await DerivStrategy.findOneAndUpdate(
+      { _id: id, userId },
+      { $set: body },
+      { new: true }
+    ).lean();
+
+    if (!strat) return res.status(404).json(isDashboard(req) ? { error: 'Estratégia não encontrada' } : { success: false, message: 'Estratégia não encontrada.' });
+
+    if (isDashboard(req)) return res.json(strat);
+    return res.json({ success: true, message: 'Estratégia atualizada com sucesso.', data: strat });
+  } catch (e: any) {
+    console.error('❌ [PUT DerivStrategy] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
+export async function deleteDerivStrategy(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const id = req.params.id || req.body.id || req.body.strategyId;
+    if (!id) return res.status(400).json(isDashboard(req) ? { error: 'ID é obrigatório' } : { success: false, message: 'ID é obrigatório.' });
+
+    await DerivStrategy.deleteOne({ _id: id, userId });
+
+    if (isDashboard(req)) return res.json({ success: true, message: 'Estratégia removida.' });
+    return res.json({ success: true, message: 'Estratégia removida com sucesso.' });
+  } catch (e: any) {
+    console.error('❌ [DELETE DerivStrategy] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+

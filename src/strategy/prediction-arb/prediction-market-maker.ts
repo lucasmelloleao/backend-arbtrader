@@ -351,15 +351,11 @@ export async function runMarketMaking(
       return { quoted: false, orderIds: [] };
     }
 
-    // ── REFINAMENTO 1.1: TRAILING STOP / SAÍDA ANTECIPADA DE LUCRO POR GANHO LÍQUIDO (%) ──
-    // Permite encerrar antecipadamente a QUALQUER MOMENTO, desde que o valor realizável no Bid atual
-    // pague um Lucro Líquido Real mínimo configurado (ex: minTakeProfitPct = 2.0%).
-    // O Emergency Stop (< STOP_OUT_THRESHOLD) continua 100% ativo a qualquer momento para cortar perdas.
+    // ── REFINAMENTO 1.1: TAKE PROFIT IMEDIATO A QUALQUER MOMENTO POR GANHO LÍQUIDO (%) ──
+    // Encerra antecipadamente a QUALQUER MOMENTO assim que o Bid atual pagar um Lucro Líquido Real
+    // igual ou superior ao configurado (ex: minTakeProfitPct = 2.0%), sem esperar pelos últimos 45s.
     const endMsPos = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const segsRestantesPos = endMsPos > 0 ? (endMsPos - Date.now()) / 1000 : Infinity;
-    const AT_ANY_TIME_BID_THRESHOLD = 0.98; // Cotação no topo >= 0.98
-    const NEAR_EXPIRY_BID_THRESHOLD = 0.80; // Na reta final se cotação >= 0.80
-    const TAKE_PROFIT_SEGS_LEFT = 45;       // Restando menos de 45s
 
     // Preço de entrada original pago pela posição
     const openTradePos = await PredictionArbTrade.findOne({
@@ -378,14 +374,11 @@ export async function runMarketMaking(
       settingsGlobal?.minTakeProfitPct ?? PREDICTION_ARB_CONFIG.exit.minTakeProfitPct ?? 2.0
     );
 
-    const atingeLucroTopoQualquerTempo = bAtual.bid >= AT_ANY_TIME_BID_THRESHOLD;
-    const atingeLucroRetaFinal = bAtual.bid >= NEAR_EXPIRY_BID_THRESHOLD && segsRestantesPos <= TAKE_PROFIT_SEGS_LEFT;
+    // Trava de Ganho Líquido Mínimo: encerra a qualquer momento se o ganho percentual for >= minLucroPctExigido (ex: +2.0%)
+    const atingeGanhoMinimo = ganhoPctAtual >= minLucroPctExigido && bAtual.bid > 0;
 
-    // Trava de Ganho Líquido Mínimo: só encerra antecipadamente se o ganho percentual for >= minLucroPctExigido (ex: +2.0%)
-    const atingeGanhoMinimo = ganhoPctAtual >= minLucroPctExigido;
-
-    if ((atingeLucroTopoQualquerTempo || atingeLucroRetaFinal) && atingeGanhoMinimo && segsRestantesPos > 8) {
-      log.info(`🎯 [${strategy.slug}] TAKE PROFIT ANTECIPADO ATIVADO: Lucro de +${ganhoPctAtual.toFixed(2)}% em ${sideAberto} (Entrada: $${entryPricePaid.toFixed(3)} -> Bid: $${bAtual.bid.toFixed(3)}) [Mín: +${minLucroPctExigido}%]. Garantindo lucro.`);
+    if (atingeGanhoMinimo && segsRestantesPos > 5) {
+      log.info(`🎯 [${strategy.slug}] TAKE PROFIT IMEDIATO ATIVADO: Lucro de +${ganhoPctAtual.toFixed(2)}% em ${sideAberto} (Entrada: $${entryPricePaid.toFixed(3)} -> Bid: $${bAtual.bid.toFixed(3)}) [Mín: +${minLucroPctExigido}%]. Garantindo lucro.`);
 
       const lockPrice = Math.max(0.01, bAtual.bid);
       try {
