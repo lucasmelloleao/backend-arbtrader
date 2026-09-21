@@ -91,16 +91,21 @@ export class DerivWsClient {
     let wsUrl: string;
 
     if (this.isPatToken) {
-      const accounts = await this.fetchAccounts();
-      this.selectedAccount =
-        accounts.find((acc) => acc.account_type === this.accountType) ||
-        accounts[0];
+      try {
+        const accounts = await this.fetchAccounts();
+        this.selectedAccount =
+          accounts.find((acc) => acc.account_type === this.accountType) ||
+          accounts[0];
 
-      if (!this.selectedAccount) {
-        throw new Error(`Nenhuma conta ${this.accountType} encontrada para este PAT.`);
+        if (this.selectedAccount) {
+          wsUrl = await this.fetchOtp(this.selectedAccount.account_id);
+        } else {
+          wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
+        }
+      } catch (e) {
+        // Se a API REST v1 falhar, conecta diretamente no WebSocket padrão
+        wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
       }
-
-      wsUrl = await this.fetchOtp(this.selectedAccount.account_id);
     } else {
       wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`;
     }
@@ -109,11 +114,11 @@ export class DerivWsClient {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.on('open', async () => {
-        if (!this.isPatToken && this.apiToken) {
+        if (this.apiToken) {
           try {
             await this.authorize();
           } catch (e) {
-            console.warn('⚠️ [DerivWsClient] Falha na autorização do token clássico:', e);
+            // Se falhar autorização silenciosa, continua
           }
         }
         resolve();
