@@ -300,20 +300,21 @@ export async function runDerivCycle(): Promise<void> {
         let decidedDirection: 'CALL' | 'PUT' | null = null;
         let calculatedProb = 0;
 
-        // Condições para MERCADO EM ALTA
-        if (latestPrice >= emaFast && emaFast > emaSlow && rsi >= 50 && rsi <= 75 && stochK >= 40 && tickMomentumUp >= 0.60) {
+        // Condições para MERCADO EM ALTA (Tendência forte + Confirmação Estocástica & RSI sem sobrecompra extrema)
+        if (latestPrice > emaFast && emaFast > emaSlow && rsi >= 55 && rsi <= 80 && stochK >= 50 && tickMomentumUp >= 0.65) {
           decidedDirection = 'CALL';
           const rsiScore = (rsi - 50) / 100;
           const stochScore = (stochK - 40) / 200;
-          calculatedProb = Number(Math.min(0.72 + (tickMomentumUp * 0.15) + rsiScore + stochScore, 0.98).toFixed(3));
+          calculatedProb = Number(Math.min(0.75 + (tickMomentumUp * 0.15) + rsiScore + stochScore, 0.99).toFixed(3));
         }
-        // Condições para MERCADO EM BAIXA
-        else if (latestPrice <= emaFast && emaFast < emaSlow && rsi <= 50 && rsi >= 25 && stochK <= 60 && tickMomentumDown >= 0.60) {
+        // Condições para MERCADO EM BAIXA (Tendência forte + Confirmação Estocástica & RSI sem sobrevenda extrema)
+        else if (latestPrice < emaFast && emaFast < emaSlow && rsi <= 45 && rsi >= 20 && stochK <= 50 && tickMomentumDown >= 0.65) {
           decidedDirection = 'PUT';
           const rsiScore = (50 - rsi) / 100;
           const stochScore = (60 - stochK) / 200;
-          calculatedProb = Number(Math.min(0.72 + (tickMomentumDown * 0.15) + rsiScore + stochScore, 0.98).toFixed(3));
+          calculatedProb = Number(Math.min(0.75 + (tickMomentumDown * 0.15) + rsiScore + stochScore, 0.99).toFixed(3));
         }
+
 
         // Filtro de Probabilidade Mínima da Estratégia
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
