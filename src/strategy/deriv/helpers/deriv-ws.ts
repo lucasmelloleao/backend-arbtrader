@@ -191,28 +191,41 @@ export class DerivWsClient {
     symbol: string;
     contract_type: string;
     amount: number;
-    duration: number;
-    duration_unit: string;
+    duration?: number;
+    duration_unit?: string;
     barrier?: string | number;
+    multiplier?: number;
+    take_profit?: number;
+    stop_loss?: number;
   }): Promise<any> {
+    const isMultiplier = params.contract_type === 'MULTUP' || params.contract_type === 'MULTDOWN';
+    
     const payload: any = {
       proposal: 1,
       amount: params.amount,
       basis: 'stake',
       contract_type: params.contract_type,
       currency: 'USD',
-      duration: params.duration,
-      duration_unit: params.duration_unit,
     };
 
-    if (this.isPatToken) {
+    if (isMultiplier) {
       payload.underlying_symbol = params.symbol;
+      payload.multiplier = params.multiplier || 100;
+      if (params.take_profit) payload.take_profit = params.take_profit;
+      if (params.stop_loss) payload.stop_loss = params.stop_loss;
     } else {
-      payload.symbol = params.symbol;
-    }
+      payload.duration = params.duration || 15;
+      payload.duration_unit = params.duration_unit || 's';
 
-    if (params.barrier !== undefined && params.barrier !== null) {
-      payload.barrier = String(params.barrier);
+      if (this.isPatToken) {
+        payload.underlying_symbol = params.symbol;
+      } else {
+        payload.symbol = params.symbol;
+      }
+
+      if (params.barrier !== undefined && params.barrier !== null) {
+        payload.barrier = String(params.barrier);
+      }
     }
 
     const res = await this.send(payload);

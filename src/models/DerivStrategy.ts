@@ -6,7 +6,7 @@ const DerivStrategySchema = new mongoose.Schema({
   symbol: { type: String, required: true }, // ex: 1HZ10V, R_100, frxBTCUSD
   contractType: { 
     type: String, 
-    enum: ['BOTH_HL', 'HIGHER', 'LOWER', 'BOTH_RF', 'RISE', 'FALL'], 
+    enum: ['BOTH_HL', 'HIGHER', 'LOWER', 'BOTH_RF', 'RISE', 'FALL', 'BOTH_MULT', 'MULTUP', 'MULTDOWN'], 
     default: 'BOTH_HL' 
   },
   barrier: { type: String, default: '-1' }, // Offset da barreira (ex: -1, +1, -0.57)

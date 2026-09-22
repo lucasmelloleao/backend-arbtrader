@@ -384,6 +384,18 @@ async function executeDerivCycle(): Promise<void> {
         } else if (target.contractType === 'BOTH_RF') {
           contractType = decidedDirection === 'CALL' ? 'CALL' : 'PUT';
           rawBarrier = undefined;
+        } else if (target.contractType === 'MULTUP') {
+          if (decidedDirection !== 'CALL') continue;
+          contractType = 'MULTUP';
+          rawBarrier = undefined;
+        } else if (target.contractType === 'MULTDOWN') {
+          if (decidedDirection !== 'PUT') continue;
+          contractType = 'MULTDOWN';
+          rawBarrier = undefined;
+        } else if (target.contractType === 'BOTH_MULT' || sym.startsWith('cry')) {
+          // Para ativos de Cripto ou seleção BOTH_MULT, usa Multiplier nativo
+          contractType = decidedDirection === 'CALL' ? 'MULTUP' : 'MULTDOWN';
+          rawBarrier = undefined;
         } else {
           // BOTH_HL (Higher/Lower automático)
           if (decidedDirection === 'CALL') {
@@ -395,6 +407,8 @@ async function executeDerivCycle(): Promise<void> {
           }
         }
 
+        const isMultiplier = contractType === 'MULTUP' || contractType === 'MULTDOWN';
+
         // Normalização e sanitização da barreira para evitar erro na Deriv (ex: troca vírgula por ponto)
         let barrierValue = rawBarrier ? String(rawBarrier).trim().replace(',', '.') : undefined;
 
@@ -404,7 +418,7 @@ async function executeDerivCycle(): Promise<void> {
         let durationUnit = 's';
 
         // Validação dinâmica de limites de duração por contrato na Deriv
-        if ((contractType === 'HIGHER' || contractType === 'LOWER') && tradeDuration < 15) {
+        if (!isMultiplier && (contractType === 'HIGHER' || contractType === 'LOWER') && tradeDuration < 15) {
           tradeDuration = 15;
         }
 
@@ -413,11 +427,21 @@ async function executeDerivCycle(): Promise<void> {
           symbol: sym,
           contract_type: contractType,
           amount: tradeStake,
-          duration: tradeDuration,
-          duration_unit: durationUnit,
         };
-        if (barrierValue) {
-          proposalParams.barrier = barrierValue;
+
+        if (isMultiplier) {
+          proposalParams.multiplier = 100;
+          const minTp = Number(settings.minTakeProfitPct ?? 10.0);
+          const stopLoss = Number(settings.emergencyStopPct ?? 70.0);
+          // Take profit e stop loss em USD para proteção na Deriv
+          proposalParams.take_profit = Math.max(0.1, Math.round((tradeStake * (minTp / 100)) * 100) / 100);
+          proposalParams.stop_loss = Math.max(0.35, Math.round((tradeStake * (stopLoss / 100)) * 100) / 100);
+        } else {
+          proposalParams.duration = tradeDuration;
+          proposalParams.duration_unit = durationUnit;
+          if (barrierValue) {
+            proposalParams.barrier = barrierValue;
+          }
         }
 
         let proposal = await client.getProposal(proposalParams).catch((err: any) => {
@@ -425,7 +449,7 @@ async function executeDerivCycle(): Promise<void> {
         });
 
         // Se a Deriv rejeitar a unidade em segundos ou a duração exata, tenta ajustar dinamicamente
-        if (proposal?.error && proposal.error.includes('duration')) {
+        if (!isMultiplier && proposal?.error && proposal.error.includes('duration')) {
           if (tradeDuration < 60) {
             proposalParams.duration = 60;
             proposalParams.duration_unit = 's';
@@ -443,7 +467,7 @@ async function executeDerivCycle(): Promise<void> {
           }
         } 
         // Fallback dinâmico para erro de barreira (ajusta offset mais conservador se rejeitado pela API)
-        else if (proposal?.error && (proposal.error.includes('barrier') || proposal.error.includes('Input validation failed'))) {
+        else if (!isMultiplier && proposal?.error && (proposal.error.includes('barrier') || proposal.error.includes('Input validation failed'))) {
           const numBarrier = Number(barrierValue);
           if (!isNaN(numBarrier)) {
             const adjustedBarrier = numBarrier < 0 ? Math.min(numBarrier / 2, -1.0) : Math.max(numBarrier / 2, 1.0);
@@ -461,19 +485,21 @@ async function executeDerivCycle(): Promise<void> {
         }
 
         if (!proposal || !proposal.id) {
-          log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível para esta duração (${tradeDuration}${durationUnit}). Entrada ignorada.`);
+          log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível. Entrada ignorada.`);
           continue;
         }
 
-        // Filtro de Payout Mínimo: configurável nos settings do robô (padrão 35%)
-        const payout = Number(proposal.payout || 0);
-        const askPrice = Number(proposal.ask_price || tradeStake);
-        const netProfitPct = askPrice > 0 ? ((payout - askPrice) / askPrice) * 100 : 0;
-        const requiredMinPayout = Number(settings.minPayoutPct || 35.0);
+        // Filtro de Payout Mínimo para opções digitais (em Multipliers payout é dinâmico)
+        if (!isMultiplier) {
+          const payout = Number(proposal.payout || 0);
+          const askPrice = Number(proposal.ask_price || tradeStake);
+          const netProfitPct = askPrice > 0 ? ((payout - askPrice) / askPrice) * 100 : 0;
+          const requiredMinPayout = Number(settings.minPayoutPct || 35.0);
 
-        if (netProfitPct < requiredMinPayout) {
-          log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% < Mínimo: ${requiredMinPayout}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
-          continue;
+          if (netProfitPct < requiredMinPayout) {
+            log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% < Mínimo: ${requiredMinPayout}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
+            continue;
+          }
         }
 
         if (proposal && proposal.id) {
