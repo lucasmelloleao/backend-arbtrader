@@ -1,10 +1,17 @@
-// Análise retrospectiva assistida por IA (DeepSeek) da estratégia Deriv.
+// Análise retrospectiva assistida por IA (DeepSeek ou Gemini) da estratégia Deriv.
 // Separa a lógica pura (métricas + prompt) da chamada de rede, para ser testável.
 
 import axios from 'axios';
 
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions';
-const DEFAULT_MODEL = 'deepseek-chat';
+const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+
+const SYSTEM_PROMPT =
+  'Você é um analista quantitativo de trading. Responda em português, de forma direta e acionável.';
+
+export type AiProvider = 'gemini' | 'deepseek';
 
 function somar(items: any[], campo: string): number {
   return items.reduce((acc, t) => acc + Number(t[campo] || 0), 0);
@@ -100,13 +107,13 @@ export function buildAnalysisPrompt(metrics: any): string {
   ].join('\n');
 }
 
-export async function callDeepSeek(apiKey: string, prompt: string, model = DEFAULT_MODEL): Promise<string> {
+export async function callDeepSeek(apiKey: string, prompt: string, model = DEFAULT_DEEPSEEK_MODEL): Promise<string> {
   const response = await axios.post(
     DEEPSEEK_ENDPOINT,
     {
       model,
       messages: [
-        { role: 'system', content: 'Você é um analista quantitativo de trading. Responda em português, de forma direta e acionável.' },
+        { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: prompt },
       ],
       temperature: 0.3,
@@ -126,4 +133,34 @@ export async function callDeepSeek(apiKey: string, prompt: string, model = DEFAU
     throw new Error('A DeepSeek não retornou conteúdo na resposta.');
   }
   return String(conteudo);
+}
+
+export async function callGemini(apiKey: string, prompt: string, model = DEFAULT_GEMINI_MODEL): Promise<string> {
+  const response = await axios.post(
+    `${GEMINI_ENDPOINT}/${model}:generateContent`,
+    {
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ parts: [{ text: prompt }] }],
+    },
+    {
+      params: { key: apiKey },
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+    }
+  );
+
+  const texto = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!texto) {
+    throw new Error('O Gemini não retornou conteúdo na resposta.');
+  }
+  return String(texto);
+}
+
+export async function callAiAnalysis(
+  provider: AiProvider,
+  apiKey: string,
+  prompt: string,
+  model: string
+): Promise<string> {
+  return provider === 'gemini' ? callGemini(apiKey, prompt, model) : callDeepSeek(apiKey, prompt, model);
 }

@@ -623,12 +623,17 @@ export async function getDerivAiAnalysis(req: AuthenticatedRequest, res: Respons
       return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
     }
 
-    const apiKey = process.env.DEEPSEEK_API_KEY;
+    const provider = (process.env.AI_PROVIDER || 'gemini') as 'gemini' | 'deepseek';
+    const apiKey = provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.DEEPSEEK_API_KEY;
+    const model = provider === 'gemini'
+      ? (process.env.GEMINI_MODEL || 'gemini-3.6-flash')
+      : (process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+
     if (!apiKey) {
-      return res.status(500).json(isDashboard(req) ? { error: 'Chave DeepSeek não configurada.' } : { success: false, message: 'Chave DeepSeek não configurada no servidor.' });
+      return res.status(500).json(isDashboard(req) ? { error: `Chave de IA (${provider}) não configurada.` } : { success: false, message: `Chave de IA (${provider}) não configurada no servidor.` });
     }
 
-    const { buildDerivMetrics, buildAnalysisPrompt, callDeepSeek } = require('../strategy/deriv/helpers/deriv-ai-analysis');
+    const { buildDerivMetrics, buildAnalysisPrompt, callAiAnalysis } = require('../strategy/deriv/helpers/deriv-ai-analysis');
 
     const trades = await DerivTrade.find({ userId, status: 'executed' }).lean();
     const metrics = buildDerivMetrics(trades);
@@ -638,7 +643,7 @@ export async function getDerivAiAnalysis(req: AuthenticatedRequest, res: Respons
     }
 
     const prompt = buildAnalysisPrompt(metrics);
-    const analysis = await callDeepSeek(apiKey, prompt, process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+    const analysis = await callAiAnalysis(provider, apiKey, prompt, model);
 
     return res.json({ success: true, message: 'ok', data: { metrics, analysis } });
   } catch (e: any) {
