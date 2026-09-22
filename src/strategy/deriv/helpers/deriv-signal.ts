@@ -24,8 +24,8 @@ export interface SignalDecision {
   indicators: IndicatorSnapshot;
 }
 
-// Filtro de volatilidade: retorno absoluto médio por tick abaixo disso indica mercado lateral (chop).
-export const MIN_AVG_ABS_RETURN = 0.0002;
+// Filtro de volatilidade: retorno absoluto médio por tick abaixo disso indica mercado morto/sem liquidez.
+export const MIN_AVG_ABS_RETURN = 0.00003;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -128,7 +128,9 @@ export function computeIndicators(ticks: number[]): IndicatorSnapshot {
 }
 
 function callConfidence(ind: IndicatorSnapshot): number {
-  const trendScore = clamp((ind.emaFast - ind.emaSlow) / (Math.abs(ind.emaSlow) || 1) / 0.004, 0, 1);
+  // Normalização dinâmica pela volatilidade recente do próprio ativo
+  const volNorm = Math.max(ind.avgAbsReturn * 10, 0.0005);
+  const trendScore = clamp((ind.emaFast - ind.emaSlow) / (Math.abs(ind.emaSlow) || 1) / volNorm, 0, 1);
   const rsiScore = clamp((ind.rsi - 50) / 25, 0, 1);
   const stochScore = clamp((ind.stochK - 50) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumUp - 0.5) / 0.4, 0, 1);
@@ -136,7 +138,9 @@ function callConfidence(ind: IndicatorSnapshot): number {
 }
 
 function putConfidence(ind: IndicatorSnapshot): number {
-  const trendScore = clamp((ind.emaSlow - ind.emaFast) / (Math.abs(ind.emaSlow) || 1) / 0.004, 0, 1);
+  // Normalização dinâmica pela volatilidade recente do próprio ativo
+  const volNorm = Math.max(ind.avgAbsReturn * 10, 0.0005);
+  const trendScore = clamp((ind.emaSlow - ind.emaFast) / (Math.abs(ind.emaSlow) || 1) / volNorm, 0, 1);
   const rsiScore = clamp((50 - ind.rsi) / 25, 0, 1);
   const stochScore = clamp((50 - ind.stochK) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumDown - 0.5) / 0.4, 0, 1);
