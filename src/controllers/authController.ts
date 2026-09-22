@@ -62,20 +62,23 @@ export async function login(req: AuthenticatedRequest, res: Response) {
     const isProd = process.env.NODE_ENV === 'production';
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     const useSecure = isProd || isHttps;
-    const sameSiteMode = useSecure ? 'none' : 'lax';
+    // Domínio compartilhado entre front (www) e api (api.arbtraders.com.br)
+    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
 
     // Configura os cookies session_token, refresh_token e token
     res.cookie('session_token', token, {
       httpOnly: true,
       secure: useSecure,
-      sameSite: sameSiteMode,
+      sameSite: 'lax',
+      domain: cookieDomain,
       maxAge: cookieMaxAge
     });
 
     res.cookie('token', token, {
       httpOnly: true,
       secure: useSecure,
-      sameSite: sameSiteMode,
+      sameSite: 'lax',
+      domain: cookieDomain,
       maxAge: cookieMaxAge
     });
 
@@ -84,7 +87,8 @@ export async function login(req: AuthenticatedRequest, res: Response) {
       res.cookie('refresh_token', refreshToken, {
         httpOnly: true,
         secure: useSecure,
-        sameSite: sameSiteMode,
+        sameSite: 'lax',
+        domain: cookieDomain,
         maxAge: 30 * 24 * 60 * 60 * 1000
       });
     }
@@ -202,9 +206,10 @@ export async function google(req: AuthenticatedRequest, res: Response) {
 }
 
 export async function logout(req: AuthenticatedRequest, res: Response) {
-  res.clearCookie('session_token');
-  res.clearCookie('refresh_token');
-  res.clearCookie('token');
+  const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+  res.clearCookie('session_token', { domain: cookieDomain });
+  res.clearCookie('refresh_token', { domain: cookieDomain });
+  res.clearCookie('token', { domain: cookieDomain });
   return res.json({ success: true, message: 'Sessão encerrada.' });
 }
 
