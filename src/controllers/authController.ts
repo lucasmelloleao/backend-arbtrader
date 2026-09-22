@@ -59,19 +59,23 @@ export async function login(req: AuthenticatedRequest, res: Response) {
     const token = signToken(user._id.toString());
     const rememberMe = req.body.rememberMe;
     const cookieMaxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const isProd = process.env.NODE_ENV === 'production';
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const useSecure = isProd || isHttps;
+    const sameSiteMode = useSecure ? 'none' : 'lax';
 
     // Configura os cookies session_token, refresh_token e token
     res.cookie('session_token', token, {
       httpOnly: true,
-      secure: false, // Permite HTTP localmente
-      sameSite: 'lax',
+      secure: useSecure,
+      sameSite: sameSiteMode,
       maxAge: cookieMaxAge
     });
 
     res.cookie('token', token, {
       httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
+      secure: useSecure,
+      sameSite: sameSiteMode,
       maxAge: cookieMaxAge
     });
 
@@ -79,8 +83,8 @@ export async function login(req: AuthenticatedRequest, res: Response) {
       const refreshToken = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
       res.cookie('refresh_token', refreshToken, {
         httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
+        secure: useSecure,
+        sameSite: sameSiteMode,
         maxAge: 30 * 24 * 60 * 60 * 1000
       });
     }
