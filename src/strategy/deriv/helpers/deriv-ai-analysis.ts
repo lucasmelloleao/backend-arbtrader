@@ -153,6 +153,9 @@ export async function callGemini(apiKey: string, prompt: string, model = DEFAULT
   if (!texto) {
     throw new Error('O Gemini não retornou conteúdo na resposta.');
   }
+  return String(texto);
+}
+
 export async function callAiAnalysis(
   provider: AiProvider,
   apiKey: string,
