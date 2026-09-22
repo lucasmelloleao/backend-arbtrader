@@ -186,22 +186,24 @@ async function executeDerivCycle(): Promise<void> {
         }
 
         // B. Saída Antecipada (Take Profit ou Emergency Stop)
-        // Em contratos de 15s, a operação expira rapidamente no vencimento natural
         const profitPct = buyPrice > 0 ? (currentProfit / buyPrice) * 100 : 0;
-        const durationSec = Number(settings.contractDurationSec || 15);
+        const minTakeProfit = Number(settings.minTakeProfitPct ?? 10.0);
+        const emergencyStop = Number(settings.emergencyStopPct ?? 50.0);
+        const tradeAgeSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
 
-        // Se o contrato for maior que 30s, permite TP/Stop antecipado; para 15s deixa expirar naturalmente
-        if (durationSec > 30) {
-          const tradeAgeSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
-          const minHoldPeriodSec = Math.min(30, durationSec * 0.25);
-
-          if (profitPct >= Math.max(Number(settings.minTakeProfitPct || 10.0), 10.0)) {
-            log.info(`🎯 [${trade.symbol}] TAKE PROFIT ANTECIPADO: Lucro de +${profitPct.toFixed(2)}% ($${currentProfit.toFixed(2)}). Vendendo contrato...`);
-            await client.sellContract(trade.contractId, 0).catch(() => {});
-          } else if (tradeAgeSec >= minHoldPeriodSec && profitPct <= -(Math.max(Number(settings.emergencyStopPct || 50.0), 50.0))) {
-            log.warn(`🚨 [${trade.symbol}] EMERGENCY STOP OUT (${tradeAgeSec.toFixed(0)}s decorridos): Prejuízo de ${profitPct.toFixed(2)}%. Vendendo contrato...`);
-            await client.sellContract(trade.contractId, 0).catch(() => {});
-          }
+        // 1. Take Profit Antecipado: Se atingiu o lucro configurado (ex: +15% ou +19%), vende imediatamente
+        if (profitPct >= minTakeProfit && currentProfit > 0) {
+          log.info(`🎯 [${trade.symbol}] TAKE PROFIT ANTECIPADO: Lucro de +${profitPct.toFixed(1)}% ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)}). Vendendo contrato antecipadamente...`);
+          await client.sellContract(trade.contractId, 0).catch((err) => {
+            log.warn(`⚠️ [${trade.symbol}] Falha ao vender contrato antecipadamente: ${err.message}`);
+          });
+        } 
+        // 2. Stop Loss de Emergência: Vende se o prejuízo atingir a trava configurada (após pelo menos 5s)
+        else if (tradeAgeSec >= 5 && profitPct <= -emergencyStop) {
+          log.warn(`🚨 [${trade.symbol}] EMERGENCY STOP OUT (${tradeAgeSec.toFixed(0)}s decorridos): Prejuízo de ${profitPct.toFixed(1)}%. Vendendo contrato...`);
+          await client.sellContract(trade.contractId, 0).catch((err) => {
+            log.warn(`⚠️ [${trade.symbol}] Falha no emergency stop: ${err.message}`);
+          });
         }
       } catch (e: any) {
         log.warn(`⚠️ Erro ao monitorar contrato ${trade.contractId}: ${e.message}`);
