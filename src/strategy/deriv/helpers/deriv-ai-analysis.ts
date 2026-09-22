@@ -153,14 +153,24 @@ export async function callGemini(apiKey: string, prompt: string, model = DEFAULT
   if (!texto) {
     throw new Error('O Gemini não retornou conteúdo na resposta.');
   }
-  return String(texto);
-}
-
 export async function callAiAnalysis(
   provider: AiProvider,
   apiKey: string,
   prompt: string,
   model: string
 ): Promise<string> {
-  return provider === 'gemini' ? callGemini(apiKey, prompt, model) : callDeepSeek(apiKey, prompt, model);
+  try {
+    if (provider === 'gemini') {
+      return await callGemini(apiKey, prompt, model);
+    } else {
+      return await callDeepSeek(apiKey, prompt, model);
+    }
+  } catch (err: any) {
+    // Se o Gemini falhar e houver chave da DeepSeek, tenta fallback automático
+    if (provider === 'gemini' && process.env.DEEPSEEK_API_KEY) {
+      console.warn(`[AI-ANALYSIS] Falha no Gemini (${err?.message}). Tentando fallback para DeepSeek...`);
+      return await callDeepSeek(process.env.DEEPSEEK_API_KEY, prompt, process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+    }
+    throw err;
+  }
 }
