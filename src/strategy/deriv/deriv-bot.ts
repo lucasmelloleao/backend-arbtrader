@@ -463,13 +463,14 @@ export async function runDerivCycle(): Promise<void> {
           continue;
         }
 
-        // Filtro de Payout Mínimo: evita aceitar contratos com retorno assimétrico/centavos
+        // Filtro de Payout Mínimo: configurável nos settings do robô (padrão 35%)
         const payout = Number(proposal.payout || 0);
         const askPrice = Number(proposal.ask_price || tradeStake);
         const netProfitPct = askPrice > 0 ? ((payout - askPrice) / askPrice) * 100 : 0;
+        const requiredMinPayout = Number(settings.minPayoutPct || 35.0);
 
-        if (netProfitPct < 35) {
-          log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
+        if (netProfitPct < requiredMinPayout) {
+          log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% < Mínimo: ${requiredMinPayout}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
           continue;
         }
 

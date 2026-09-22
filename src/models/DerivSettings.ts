@@ -15,6 +15,7 @@ const DerivSettingsSchema = new mongoose.Schema({
   minHighCertaintyProb: { type: Number, default: 0.80 },
   emergencyStopPct: { type: Number, default: 50 }, // Vender se prejuízo atingir 50%
   minTakeProfitPct: { type: Number, default: 10.0 }, // Sair antecipadamente se lucro >= 10%
+  minPayoutPct: { type: Number, default: 35.0 }, // Payout líquido mínimo exigido para compra (ex: 35%)
   allowedSymbols: { type: [String], default: ['R_100', 'R_50', 'frxBTCUSD', 'frxETHUSD'] },
   contractDurationSec: { type: Number, default: 15 }, // Duração do contrato em segundos (15s)
   demoBalance: { type: mongoose.Schema.Types.Mixed, default: null },
