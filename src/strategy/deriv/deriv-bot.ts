@@ -2,6 +2,7 @@ import DerivSettings from '../../models/DerivSettings';
 import DerivTrade from '../../models/DerivTrade';
 import DerivStrategy from '../../models/DerivStrategy';
 import { DerivWsClient } from './helpers/deriv-ws';
+import { evaluateSignal, MIN_AVG_ABS_RETURN, streakStakeMultiplier } from './helpers/deriv-signal';
 
 const inMemoryDerivLogs: string[] = [];
 const MAX_BUFFER = 500;
@@ -91,7 +92,21 @@ export async function getOrCreateDerivClient(settings: any, activeToken: string)
 }
 
 
+let derivCycleRunning = false;
+
 export async function runDerivCycle(): Promise<void> {
+  if (derivCycleRunning) return;
+  derivCycleRunning = true;
+  try {
+    await executeDerivCycle();
+  } catch (err: any) {
+    log.error(`❌ Erro no ciclo do robô Deriv: ${err.message}`);
+  } finally {
+    derivCycleRunning = false;
+  }
+}
+
+async function executeDerivCycle(): Promise<void> {
   const allSettings = await DerivSettings.find().lean();
   if (!allSettings || allSettings.length === 0) {
     log.info('⏳ Aguardando salvar primeira configuração no painel Deriv...');
@@ -136,7 +151,15 @@ export async function runDerivCycle(): Promise<void> {
     for (const trade of openTrades) {
       try {
         const contractInfo = await client.getOpenContract(trade.contractId).catch(() => null);
-        if (!contractInfo) continue;
+        if (!contractInfo) {
+          const ageSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
+          const staleAfterSec = Number(settings.contractDurationSec || 15) * 3 + 30;
+          if (ageSec > staleAfterSec) {
+            await DerivTrade.updateOne({ _id: trade._id }, { status: 'executed', reason: 'Expiração não resolvida (stale)', closedAt: new Date() });
+            log.warn(`🧹 [${trade.symbol}] Trade ${trade.contractId} preso em 'open' por ${ageSec.toFixed(0)}s. Marcado como encerrado para liberar novas entradas.`);
+          }
+          continue;
+        }
 
         const isSold = Boolean(contractInfo.is_sold);
         const currentProfit = Number(contractInfo.profit || 0);
@@ -187,15 +210,40 @@ export async function runDerivCycle(): Promise<void> {
 
     // 2. Verificar se podemos abrir novas posições (Regra: Apenas 1 operação por vez)
     if (!settings.allowLiveTrading) {
-      client.close();
       return;
     }
 
     const maxConcurrent = Math.min(Number(settings.maxOpenContracts || 1), 1);
     const openCount = await DerivTrade.countDocuments({ userId: settings.userId, status: 'open' });
     if (openCount >= maxConcurrent) {
-      client.close();
       return;
+    }
+
+    // 3. Stop diário de perda (maxDailyLoss) — interrompe novas entradas no dia
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayExecuted = await DerivTrade.find({ userId: settings.userId, status: 'executed', closedAt: { $gte: startOfToday } }).select('pnl').lean();
+    const todayPnl = todayExecuted.reduce((acc: number, t: any) => acc + Number(t.pnl || 0), 0);
+    const maxDailyLoss = Number(settings.maxDailyLoss ?? 20);
+    if (todayPnl <= -maxDailyLoss) {
+      log.warn(`🛑 [STOP DIÁRIO] Perda do dia ($${todayPnl.toFixed(2)}) atingiu o limite de -$${maxDailyLoss.toFixed(2)}. Nenhuma nova entrada até o próximo dia.`);
+      return;
+    }
+
+    // 4. Gestão de risco por sequência (anti-martingale): reduz stake após perdas consecutivas
+    const recentExecuted = await DerivTrade.find({ userId: settings.userId, status: 'executed' }).sort({ closedAt: -1 }).limit(10).lean();
+    let consecutiveLosses = 0;
+    for (const t of recentExecuted) {
+      if (Number(t.pnl || 0) < 0) consecutiveLosses++;
+      else break;
+    }
+    const streak = streakStakeMultiplier(consecutiveLosses);
+    if (streak.blocked) {
+      log.warn(`🛑 [RISCO] ${consecutiveLosses} perdas consecutivas. Pausando novas entradas para preservar capital.`);
+      return;
+    }
+    if (consecutiveLosses >= 2) {
+      log.info(`📉 [RISCO] Sequência de ${consecutiveLosses} perdas. Stake reduzido para ${Math.round(streak.multiplier * 100)}%.`);
     }
 
     // 2. Buscar estratégias ativas do usuário para operar por ativo
@@ -276,82 +324,17 @@ export async function runDerivCycle(): Promise<void> {
           continue;
         }
 
-        const latestPrice = ticks[ticks.length - 1];
+        const signal = evaluateSignal(ticks);
+        const { direction: decidedDirection, confidence: calculatedProb, indicators } = signal;
+        const { rsi, stochK, tickMomentumUp, tickMomentumDown, avgAbsReturn } = indicators;
 
-        // 1. EMA 9 (Rápida) e EMA 21 (Média)
-        const calcEma = (data: number[], period: number) => {
-          const k = 2 / (period + 1);
-          let ema = data[0];
-          for (let i = 1; i < data.length; i++) {
-            ema = data[i] * k + ema * (1 - k);
-          }
-          return ema;
-        };
-
-        const emaFast = calcEma(ticks, 9);
-        const emaSlow = calcEma(ticks, 21);
-
-        // 2. Canal de Donchian (Rompimento dos últimos 20 ticks)
-        const donchianSlice = ticks.slice(-20, -1);
-        const donchianHigh = Math.max(...donchianSlice);
-        const donchianLow = Math.min(...donchianSlice);
-        const donchianMid = (donchianHigh + donchianLow) / 2;
-
-        // 3. RSI de 14 períodos
-        let gains = 0;
-        let losses = 0;
-        const rsiPeriod = 14;
-        const recentPrices = ticks.slice(-(rsiPeriod + 1));
-        for (let i = 1; i < recentPrices.length; i++) {
-          const diff = recentPrices[i] - recentPrices[i - 1];
-          if (diff > 0) gains += diff;
-          else losses += Math.abs(diff);
-        }
-        const avgGain = gains / rsiPeriod;
-        const avgLoss = losses / rsiPeriod || 0.00001;
-        const rs = avgGain / avgLoss;
-        const rsi = 100 - (100 / (1 + rs));
-
-        // 4. Estocástico (14 períodos)
-        const stochPeriod = 14;
-        const stochSlice = ticks.slice(-stochPeriod);
-        const highestHigh = Math.max(...stochSlice);
-        const lowestLow = Math.min(...stochSlice);
-        const range = highestHigh - lowestLow || 0.0001;
-        const stochK = ((latestPrice - lowestLow) / range) * 100;
-
-        // 5. Momentum dos últimos 15 ticks com inclinação
-        const last15 = ticks.slice(-15);
-        let upTicks = 0;
-        let downTicks = 0;
-        for (let i = 1; i < last15.length; i++) {
-          if (last15[i] > last15[i - 1]) upTicks++;
-          else if (last15[i] < last15[i - 1]) downTicks++;
-        }
-        const tickMomentumUp = upTicks / (last15.length - 1);
-        const tickMomentumDown = downTicks / (last15.length - 1);
-        const priceSlopeUp = latestPrice > last15[0];
-        const priceSlopeDown = latestPrice < last15[0];
-
-        let decidedDirection: 'CALL' | 'PUT' | null = null;
-        let calculatedProb = 0;
-
-        // Condições para ALTA: EMA9 > EMA21 + Preço acima da metade superior do canal + RSI 52-78 + Stoch >= 50 + Momentum 15 >= 60%
-        if (latestPrice > emaFast && emaFast > emaSlow && latestPrice > donchianMid && priceSlopeUp && rsi >= 52 && rsi <= 78 && stochK >= 50 && tickMomentumUp >= 0.60) {
-          decidedDirection = 'CALL';
-          const rsiScore = (rsi - 50) / 100;
-          const stochScore = (stochK - 40) / 200;
-          calculatedProb = Number(Math.min(0.78 + (tickMomentumUp * 0.12) + rsiScore + stochScore, 0.99).toFixed(3));
-        }
-        // Condições para BAIXA: EMA9 < EMA21 + Preço abaixo da metade inferior do canal + RSI 22-48 + Stoch <= 50 + Momentum 15 >= 60%
-        else if (latestPrice < emaFast && emaFast < emaSlow && latestPrice < donchianMid && priceSlopeDown && rsi <= 48 && rsi >= 22 && stochK <= 50 && tickMomentumDown >= 0.60) {
-          decidedDirection = 'PUT';
-          const rsiScore = (50 - rsi) / 100;
-          const stochScore = (60 - stochK) / 200;
-          calculatedProb = Number(Math.min(0.78 + (tickMomentumDown * 0.12) + rsiScore + stochScore, 0.99).toFixed(3));
+        // Filtro de volatilidade: evita entrar em mercado lateral (chop), fonte de sinais ruidosos
+        if (avgAbsReturn < MIN_AVG_ABS_RETURN) {
+          log.info(`🌫️ [${sym} (${target.name})] Volatilidade muito baixa (chop). Entrada ignorada para evitar sinais ruidosos.`);
+          continue;
         }
 
-        // Filtro de Probabilidade Mínima da Estratégia
+        // Filtro de Probabilidade Mínima da Estratégia (score de confluência honesto)
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
           const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência)';
           log.info(`🔍 [${sym} (${target.name})] Certeza: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
@@ -397,7 +380,7 @@ export async function runDerivCycle(): Promise<void> {
         // Normalização e sanitização da barreira para evitar erro na Deriv (ex: troca vírgula por ponto)
         let barrierValue = rawBarrier ? String(rawBarrier).trim().replace(',', '.') : undefined;
 
-        const tradeStake = target.tradeSize;
+        const tradeStake = Math.max(1, Math.round(target.tradeSize * streak.multiplier * 100) / 100);
         let tradeDuration = target.durationSec;
         let durationUnit = 's';
 
