@@ -170,6 +170,13 @@ async function executeDerivCycle(): Promise<void> {
         if (isSold || contractInfo.is_expired) {
           const finalProfit = Number(contractInfo.profit || 0);
           const sellPrice = Number(contractInfo.sell_price || currentPayout || 0);
+          
+          // Preserva motivo de saída antecipada se já tiver sido sinalizado, senão registra vencimento
+          let closeReason = trade.reason || '';
+          if (!closeReason || closeReason.includes('Estratégia')) {
+            closeReason = finalProfit >= 0 ? 'Vencimento (Lucro)' : 'Vencimento (Perda)';
+          }
+
           await DerivTrade.updateOne(
             { _id: trade._id },
             {
@@ -177,11 +184,11 @@ async function executeDerivCycle(): Promise<void> {
               sellPrice: sellPrice,
               realizedUsd: buyPrice + finalProfit,
               pnl: finalProfit,
-              reason: finalProfit >= 0 ? 'Vencimento (Lucro)' : 'Vencimento (Perda)',
+              reason: closeReason,
               closedAt: new Date(),
             }
           );
-          log.info(`✅ [${trade.symbol}] Contrato ${trade.contractId} finalizado no vencimento. PnL: $${finalProfit.toFixed(2)}`);
+          log.info(`✅ [${trade.symbol}] Contrato ${trade.contractId} finalizado. Motivo: ${closeReason}. PnL: $${finalProfit.toFixed(2)}`);
           continue;
         }
 
@@ -193,14 +200,18 @@ async function executeDerivCycle(): Promise<void> {
 
         // 1. Take Profit Antecipado: Se atingiu o lucro configurado (ex: +15% ou +19%), vende imediatamente
         if (profitPct >= minTakeProfit && currentProfit > 0) {
-          log.info(`🎯 [${trade.symbol}] TAKE PROFIT ANTECIPADO: Lucro de +${profitPct.toFixed(1)}% ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)}). Vendendo contrato antecipadamente...`);
+          const tpReason = `Saída Antecipada (Take Profit: +${profitPct.toFixed(1)}%)`;
+          log.info(`🎯 [${trade.symbol}] ${tpReason} ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)}). Vendendo contrato antecipadamente...`);
+          await DerivTrade.updateOne({ _id: trade._id }, { reason: tpReason }).catch(() => {});
           await client.sellContract(trade.contractId, 0).catch((err) => {
             log.warn(`⚠️ [${trade.symbol}] Falha ao vender contrato antecipadamente: ${err.message}`);
           });
         } 
         // 2. Stop Loss de Emergência: Vende se o prejuízo atingir a trava configurada (após pelo menos 5s)
         else if (tradeAgeSec >= 5 && profitPct <= -emergencyStop) {
-          log.warn(`🚨 [${trade.symbol}] EMERGENCY STOP OUT (${tradeAgeSec.toFixed(0)}s decorridos): Prejuízo de ${profitPct.toFixed(1)}%. Vendendo contrato...`);
+          const stopReason = `Saída Antecipada (Emergency Stop: ${profitPct.toFixed(1)}%)`;
+          log.warn(`🚨 [${trade.symbol}] ${stopReason} (${tradeAgeSec.toFixed(0)}s decorridos). Vendendo contrato...`);
+          await DerivTrade.updateOne({ _id: trade._id }, { reason: stopReason }).catch(() => {});
           await client.sellContract(trade.contractId, 0).catch((err) => {
             log.warn(`⚠️ [${trade.symbol}] Falha no emergency stop: ${err.message}`);
           });
