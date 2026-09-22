@@ -128,60 +128,59 @@ export function computeIndicators(ticks: number[]): IndicatorSnapshot {
 }
 
 function callConfidence(ind: IndicatorSnapshot): number {
-  // Normalização dinâmica pela volatilidade recente do próprio ativo
   const volNorm = Math.max(ind.avgAbsReturn * 10, 0.0005);
   const trendScore = clamp((ind.emaFast - ind.emaSlow) / (Math.abs(ind.emaSlow) || 1) / volNorm, 0, 1);
   const rsiScore = clamp((ind.rsi - 50) / 25, 0, 1);
   const stochScore = clamp((ind.stochK - 50) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumUp - 0.5) / 0.4, 0, 1);
-  return round3(0.30 * trendScore + 0.20 * rsiScore + 0.20 * stochScore + 0.30 * momentumScore);
+  // Base de 0.70 para sinal válido + até 0.29 de bônus por confluência forte
+  const rawConfidence = 0.70 + (0.09 * trendScore + 0.07 * rsiScore + 0.06 * stochScore + 0.07 * momentumScore);
+  return round3(clamp(rawConfidence, 0.70, 0.99));
 }
 
 function putConfidence(ind: IndicatorSnapshot): number {
-  // Normalização dinâmica pela volatilidade recente do próprio ativo
   const volNorm = Math.max(ind.avgAbsReturn * 10, 0.0005);
   const trendScore = clamp((ind.emaSlow - ind.emaFast) / (Math.abs(ind.emaSlow) || 1) / volNorm, 0, 1);
   const rsiScore = clamp((50 - ind.rsi) / 25, 0, 1);
   const stochScore = clamp((50 - ind.stochK) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumDown - 0.5) / 0.4, 0, 1);
-  return round3(0.30 * trendScore + 0.20 * rsiScore + 0.20 * stochScore + 0.30 * momentumScore);
+  // Base de 0.70 para sinal válido + até 0.29 de bônus por confluência forte
+  const rawConfidence = 0.70 + (0.09 * trendScore + 0.07 * rsiScore + 0.06 * stochScore + 0.07 * momentumScore);
+  return round3(clamp(rawConfidence, 0.70, 0.99));
 }
 
 // Decide a direção por confluência de EMA 9/21/34, canal de Donchian, RSI, Estocástico e momentum.
-// A confiança agora é um score 0..1 honesto, então minCertaintyProb filtra de verdade.
 export function evaluateSignal(ticks: number[]): SignalDecision {
   const ind = computeIndicators(ticks);
   const latest = ind.latestPrice;
   const last15First = ticks[Math.max(0, ticks.length - 15)];
-  const priceSlopeUp = latest > last15First;
-  const priceSlopeDown = latest < last15First;
+  const priceSlopeUp = latest >= last15First;
+  const priceSlopeDown = latest <= last15First;
 
   let direction: Direction | null = null;
   let confidence = 0;
 
   if (
     latest > ind.emaFast &&
-    ind.emaFast > ind.emaSlow &&
-    latest > ind.donchianMid &&
-    latest > ind.emaTrend &&
+    ind.emaFast >= ind.emaSlow &&
+    latest >= ind.donchianMid &&
     priceSlopeUp &&
-    ind.rsi >= 52 &&
-    ind.rsi <= 78 &&
-    ind.stochK >= 50 &&
-    ind.tickMomentumUp >= 0.6
+    ind.rsi >= 50 &&
+    ind.rsi <= 80 &&
+    ind.stochK >= 45 &&
+    ind.tickMomentumUp >= 0.55
   ) {
     direction = 'CALL';
     confidence = callConfidence(ind);
   } else if (
     latest < ind.emaFast &&
-    ind.emaFast < ind.emaSlow &&
-    latest < ind.donchianMid &&
-    latest < ind.emaTrend &&
+    ind.emaFast <= ind.emaSlow &&
+    latest <= ind.donchianMid &&
     priceSlopeDown &&
-    ind.rsi <= 48 &&
-    ind.rsi >= 22 &&
-    ind.stochK <= 50 &&
-    ind.tickMomentumDown >= 0.6
+    ind.rsi <= 50 &&
+    ind.rsi >= 20 &&
+    ind.stochK <= 55 &&
+    ind.tickMomentumDown >= 0.55
   ) {
     direction = 'PUT';
     confidence = putConfidence(ind);
