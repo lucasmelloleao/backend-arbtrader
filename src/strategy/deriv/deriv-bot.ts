@@ -338,46 +338,48 @@ export async function runDerivCycle(): Promise<void> {
 
         // Determina o tipo de contrato e a barreira a partir das configurações específicas da estratégia
         let contractType = 'HIGHER';
-        let barrierValue: string | undefined = target.barrier;
+        let rawBarrier: string | undefined = target.barrier;
 
         if (target.contractType === 'HIGHER') {
-          if (decidedDirection !== 'CALL') continue; // Só compra se mercado estiver em alta
+          if (decidedDirection !== 'CALL') continue;
           contractType = 'HIGHER';
-          barrierValue = target.barrier;
+          rawBarrier = target.barrier;
         } else if (target.contractType === 'LOWER') {
-          if (decidedDirection !== 'PUT') continue; // Só compra se mercado estiver em baixa
+          if (decidedDirection !== 'PUT') continue;
           contractType = 'LOWER';
-          barrierValue = target.barrierLower || target.barrier;
+          rawBarrier = target.barrierLower || target.barrier;
         } else if (target.contractType === 'RISE') {
           if (decidedDirection !== 'CALL') continue;
           contractType = 'CALL';
-          barrierValue = undefined;
+          rawBarrier = undefined;
         } else if (target.contractType === 'FALL') {
           if (decidedDirection !== 'PUT') continue;
           contractType = 'PUT';
-          barrierValue = undefined;
+          rawBarrier = undefined;
         } else if (target.contractType === 'BOTH_RF') {
           contractType = decidedDirection === 'CALL' ? 'CALL' : 'PUT';
-          barrierValue = undefined;
+          rawBarrier = undefined;
         } else {
           // BOTH_HL (Higher/Lower automático)
           if (decidedDirection === 'CALL') {
             contractType = 'HIGHER';
-            barrierValue = target.barrier;
+            rawBarrier = target.barrier;
           } else {
             contractType = 'LOWER';
-            barrierValue = target.barrierLower || (target.barrier.startsWith('-') ? `+${target.barrier.slice(1)}` : target.barrier);
+            rawBarrier = target.barrierLower || (target.barrier?.startsWith('-') ? `+${target.barrier.slice(1)}` : target.barrier);
           }
         }
+
+        // Normalização e sanitização da barreira para evitar erro na Deriv (ex: troca vírgula por ponto)
+        let barrierValue = rawBarrier ? String(rawBarrier).trim().replace(',', '.') : undefined;
 
         const tradeStake = target.tradeSize;
         let tradeDuration = target.durationSec;
         let durationUnit = 's';
 
         // Validação dinâmica de limites de duração por contrato na Deriv
-        // Para contratos HIGHER/LOWER (High/Low com barreira), a Deriv geralmente exige duração mínima em segundos ou minutos
         if ((contractType === 'HIGHER' || contractType === 'LOWER') && tradeDuration < 15) {
-          tradeDuration = 15; // Mínimo seguro para Higher/Lower na Deriv
+          tradeDuration = 15;
         }
 
         // Requisita proposta para a Deriv
@@ -399,7 +401,6 @@ export async function runDerivCycle(): Promise<void> {
         // Se a Deriv rejeitar a unidade em segundos ou a duração exata, tenta ajustar dinamicamente
         if (proposal?.error && proposal.error.includes('duration')) {
           if (tradeDuration < 60) {
-            // Tenta 1 minuto (60s / 1m)
             proposalParams.duration = 60;
             proposalParams.duration_unit = 's';
             proposal = await client.getProposal(proposalParams).catch((err: any) => {
@@ -421,6 +422,16 @@ export async function runDerivCycle(): Promise<void> {
 
         if (!proposal || !proposal.id) {
           log.info(`⏳ [${sym}] Contrato ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} indisponível para esta duração (${tradeDuration}${durationUnit}). Entrada ignorada.`);
+          continue;
+        }
+
+        // Filtro de Payout Mínimo: evita aceitar contratos com retorno assimétrico/centavos
+        const payout = Number(proposal.payout || 0);
+        const askPrice = Number(proposal.ask_price || tradeStake);
+        const netProfitPct = askPrice > 0 ? ((payout - askPrice) / askPrice) * 100 : 0;
+
+        if (netProfitPct < 35) {
+          log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
           continue;
         }
 
