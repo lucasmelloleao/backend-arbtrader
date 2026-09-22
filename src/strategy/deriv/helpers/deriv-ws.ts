@@ -211,8 +211,11 @@ export class DerivWsClient {
     if (isMultiplier) {
       payload.underlying_symbol = params.symbol;
       payload.multiplier = params.multiplier || 100;
-      if (params.take_profit) payload.take_profit = params.take_profit;
-      if (params.stop_loss) payload.stop_loss = params.stop_loss;
+      if (params.take_profit || params.stop_loss) {
+        payload.limit_order = {};
+        if (params.take_profit) payload.limit_order.take_profit = params.take_profit;
+        if (params.stop_loss) payload.limit_order.stop_loss = params.stop_loss;
+      }
     } else {
       payload.duration = params.duration || 15;
       payload.duration_unit = params.duration_unit || 's';
