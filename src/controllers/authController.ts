@@ -92,21 +92,20 @@ export async function login(req: AuthenticatedRequest, res: Response) {
     // Dispara notificação por e-mail sem travar a resposta
     sendLoginNotificationEmail(user.email, user.name);
 
-    if (isDashboardPath) {
-      return res.json({ token, user: { id: user._id, name: user.name, email: user.email } });
-    } else {
-      return res.json({
-        success: true,
-        message: 'Login realizado.',
-        data: {
-          user: {
-            id: user._id.toString(),
-            name: user.name,
-            email: user.email
-          }
+    return res.json({
+      success: true,
+      token,
+      message: 'Login realizado.',
+      data: {
+        token,
+        user: {
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email
         }
-      });
-    }
+      },
+      user: { id: user._id, name: user.name, email: user.email }
+    });
   } catch (error: any) {
     console.error('❌ [Login Controller] Error:', error?.message);
     const isDashboardPath = req.path.includes('/auth/');
