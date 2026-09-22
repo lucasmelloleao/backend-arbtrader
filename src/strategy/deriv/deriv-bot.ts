@@ -415,6 +415,20 @@ export async function runDerivCycle(): Promise<void> {
               return null;
             });
           }
+        } 
+        // Fallback dinâmico para erro de barreira (ajusta offset mais conservador se rejeitado pela API)
+        else if (proposal?.error && (proposal.error.includes('barrier') || proposal.error.includes('Input validation failed'))) {
+          const numBarrier = Number(barrierValue);
+          if (!isNaN(numBarrier)) {
+            const adjustedBarrier = numBarrier < 0 ? Math.min(numBarrier / 2, -1.0) : Math.max(numBarrier / 2, 1.0);
+            barrierValue = adjustedBarrier > 0 ? `+${adjustedBarrier.toFixed(2)}` : `${adjustedBarrier.toFixed(2)}`;
+            proposalParams.barrier = barrierValue;
+            log.info(`🔄 [${sym}] Reajustando barreira para offset dinâmico ${barrierValue}...`);
+            proposal = await client.getProposal(proposalParams).catch((err: any) => {
+              log.warn(`⚠️ [${sym}] Falha no retry da barreira ${barrierValue}: ${err.message}`);
+              return null;
+            });
+          }
         } else if (proposal?.error) {
           log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''}: ${proposal.error}`);
           proposal = null;
