@@ -230,20 +230,31 @@ async function executeDerivCycle(): Promise<void> {
       return;
     }
 
-    // 4. Gestão de risco por sequência (anti-martingale): reduz stake após perdas consecutivas
+    // 4. Gestão de risco por sequência (anti-martingale): reduz stake ou pausa temporariamente por 10 min
     const recentExecuted = await DerivTrade.find({ userId: settings.userId, status: 'executed' }).sort({ closedAt: -1 }).limit(10).lean();
     let consecutiveLosses = 0;
+    let lastLossDate: Date | null = null;
     for (const t of recentExecuted) {
-      if (Number(t.pnl || 0) < 0) consecutiveLosses++;
-      else break;
+      if (Number(t.pnl || 0) < 0) {
+        consecutiveLosses++;
+        if (!lastLossDate && t.closedAt) lastLossDate = new Date(t.closedAt);
+      } else {
+        break;
+      }
     }
     const streak = streakStakeMultiplier(consecutiveLosses);
     if (streak.blocked) {
-      log.warn(`🛑 [RISCO] ${consecutiveLosses} perdas consecutivas. Pausando novas entradas para preservar capital.`);
-      return;
+      const cooldownSec = 600; // 10 minutos de pausa
+      const elapsedSec = lastLossDate ? (Date.now() - lastLossDate.getTime()) / 1000 : Infinity;
+      if (elapsedSec < cooldownSec) {
+        const remainingMin = Math.ceil((cooldownSec - elapsedSec) / 60);
+        log.warn(`🛑 [RISCO] ${consecutiveLosses} perdas consecutivas. Em pausa de proteção (${remainingMin} min restantes).`);
+        return;
+      }
+      log.info(`🔄 [RISCO] Pausa de proteção concluída. Retomando operações com stake reduzido (25%).`);
     }
     if (consecutiveLosses >= 2) {
-      log.info(`📉 [RISCO] Sequência de ${consecutiveLosses} perdas. Stake reduzido para ${Math.round(streak.multiplier * 100)}%.`);
+      log.info(`📉 [RISCO] Sequência de ${consecutiveLosses} perdas. Stake reduzido para ${Math.round((streak.multiplier || 0.25) * 100)}%.`);
     }
 
     // 2. Buscar estratégias ativas do usuário para operar por ativo
@@ -374,7 +385,8 @@ async function executeDerivCycle(): Promise<void> {
         // Normalização e sanitização da barreira para evitar erro na Deriv (ex: troca vírgula por ponto)
         let barrierValue = rawBarrier ? String(rawBarrier).trim().replace(',', '.') : undefined;
 
-        const tradeStake = Math.max(1, Math.round(target.tradeSize * streak.multiplier * 100) / 100);
+        const activeMultiplier = streak.multiplier > 0 ? streak.multiplier : 0.25;
+        const tradeStake = Math.max(1, Math.round(target.tradeSize * activeMultiplier * 100) / 100);
         let tradeDuration = target.durationSec;
         let durationUnit = 's';
 
