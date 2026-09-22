@@ -250,20 +250,35 @@ export async function runDerivCycle(): Promise<void> {
     for (const target of activeTargets) {
       const sym = target.symbol;
       try {
-        // Busca 50 ticks para análise rápida de momentum + indicadores em tempo real
-        const ticks = await client.getTicksHistory(sym, 50).catch((err: any) => {
+        // 1. Cooldown Anti-Sequência de Loss (Pausa o ativo por 2.5 min se o último trade fechou em perda)
+        const lastLossTrade = await DerivTrade.findOne({
+          userId: settings.userId,
+          symbol: sym,
+          status: 'executed',
+        }).sort({ closedAt: -1 }).lean();
+
+        if (lastLossTrade && (lastLossTrade.pnl || 0) < 0 && lastLossTrade.closedAt) {
+          const secondsSinceLoss = (Date.now() - new Date(lastLossTrade.closedAt).getTime()) / 1000;
+          if (secondsSinceLoss < 150) {
+            log.info(`⏸️ [${sym} (${target.name})] Em cooldown pós-loss (${Math.round(150 - secondsSinceLoss)}s restantes). Aguardando estabilização do mercado...`);
+            continue;
+          }
+        }
+
+        // Busca 60 ticks para cálculo robusto de médias e canal
+        const ticks = await client.getTicksHistory(sym, 60).catch((err: any) => {
           log.warn(`⚠️ [${sym}] Falha ao buscar histórico de cotações: ${err?.message || err}`);
           return [];
         });
 
-        if (!ticks || ticks.length < 30) {
-          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/30) na Deriv. Aguardando novo fluxo de cotação...`);
+        if (!ticks || ticks.length < 35) {
+          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/35) na Deriv. Aguardando novo fluxo de cotação...`);
           continue;
         }
 
         const latestPrice = ticks[ticks.length - 1];
 
-        // 1. EMA 5 (Rápida) e EMA 13 (Média)
+        // 1. EMA 9 (Rápida) e EMA 21 (Média)
         const calcEma = (data: number[], period: number) => {
           const k = 2 / (period + 1);
           let ema = data[0];
@@ -273,13 +288,19 @@ export async function runDerivCycle(): Promise<void> {
           return ema;
         };
 
-        const emaFast = calcEma(ticks, 5);
-        const emaSlow = calcEma(ticks, 13);
+        const emaFast = calcEma(ticks, 9);
+        const emaSlow = calcEma(ticks, 21);
 
-        // 2. RSI de 10 períodos
+        // 2. Canal de Donchian (Rompimento dos últimos 20 ticks)
+        const donchianSlice = ticks.slice(-20, -1);
+        const donchianHigh = Math.max(...donchianSlice);
+        const donchianLow = Math.min(...donchianSlice);
+        const donchianMid = (donchianHigh + donchianLow) / 2;
+
+        // 3. RSI de 14 períodos
         let gains = 0;
         let losses = 0;
-        const rsiPeriod = 10;
+        const rsiPeriod = 14;
         const recentPrices = ticks.slice(-(rsiPeriod + 1));
         for (let i = 1; i < recentPrices.length; i++) {
           const diff = recentPrices[i] - recentPrices[i - 1];
@@ -291,7 +312,7 @@ export async function runDerivCycle(): Promise<void> {
         const rs = avgGain / avgLoss;
         const rsi = 100 - (100 / (1 + rs));
 
-        // 3. Estocástico Rápido (14 períodos %K e %D)
+        // 4. Estocástico (14 períodos)
         const stochPeriod = 14;
         const stochSlice = ticks.slice(-stochPeriod);
         const highestHigh = Math.max(...stochSlice);
@@ -299,35 +320,36 @@ export async function runDerivCycle(): Promise<void> {
         const range = highestHigh - lowestLow || 0.0001;
         const stochK = ((latestPrice - lowestLow) / range) * 100;
 
-        // 4. Momentum dos últimos 8 ticks
-        const last8 = ticks.slice(-8);
+        // 5. Momentum dos últimos 15 ticks com inclinação
+        const last15 = ticks.slice(-15);
         let upTicks = 0;
         let downTicks = 0;
-        for (let i = 1; i < last8.length; i++) {
-          if (last8[i] > last8[i - 1]) upTicks++;
-          else if (last8[i] < last8[i - 1]) downTicks++;
+        for (let i = 1; i < last15.length; i++) {
+          if (last15[i] > last15[i - 1]) upTicks++;
+          else if (last15[i] < last15[i - 1]) downTicks++;
         }
-        const tickMomentumUp = upTicks / (last8.length - 1);
-        const tickMomentumDown = downTicks / (last8.length - 1);
+        const tickMomentumUp = upTicks / (last15.length - 1);
+        const tickMomentumDown = downTicks / (last15.length - 1);
+        const priceSlopeUp = latestPrice > last15[0];
+        const priceSlopeDown = latestPrice < last15[0];
 
         let decidedDirection: 'CALL' | 'PUT' | null = null;
         let calculatedProb = 0;
 
-        // Condições para MERCADO EM ALTA (Tendência forte + Confirmação Estocástica & RSI sem sobrecompra extrema)
-        if (latestPrice > emaFast && emaFast > emaSlow && rsi >= 55 && rsi <= 80 && stochK >= 50 && tickMomentumUp >= 0.65) {
+        // Condições para ALTA: EMA9 > EMA21 + Preço acima da metade superior do canal + RSI 52-78 + Stoch >= 50 + Momentum 15 >= 60%
+        if (latestPrice > emaFast && emaFast > emaSlow && latestPrice > donchianMid && priceSlopeUp && rsi >= 52 && rsi <= 78 && stochK >= 50 && tickMomentumUp >= 0.60) {
           decidedDirection = 'CALL';
           const rsiScore = (rsi - 50) / 100;
           const stochScore = (stochK - 40) / 200;
-          calculatedProb = Number(Math.min(0.75 + (tickMomentumUp * 0.15) + rsiScore + stochScore, 0.99).toFixed(3));
+          calculatedProb = Number(Math.min(0.78 + (tickMomentumUp * 0.12) + rsiScore + stochScore, 0.99).toFixed(3));
         }
-        // Condições para MERCADO EM BAIXA (Tendência forte + Confirmação Estocástica & RSI sem sobrevenda extrema)
-        else if (latestPrice < emaFast && emaFast < emaSlow && rsi <= 45 && rsi >= 20 && stochK <= 50 && tickMomentumDown >= 0.65) {
+        // Condições para BAIXA: EMA9 < EMA21 + Preço abaixo da metade inferior do canal + RSI 22-48 + Stoch <= 50 + Momentum 15 >= 60%
+        else if (latestPrice < emaFast && emaFast < emaSlow && latestPrice < donchianMid && priceSlopeDown && rsi <= 48 && rsi >= 22 && stochK <= 50 && tickMomentumDown >= 0.60) {
           decidedDirection = 'PUT';
           const rsiScore = (50 - rsi) / 100;
           const stochScore = (60 - stochK) / 200;
-          calculatedProb = Number(Math.min(0.75 + (tickMomentumDown * 0.15) + rsiScore + stochScore, 0.99).toFixed(3));
+          calculatedProb = Number(Math.min(0.78 + (tickMomentumDown * 0.12) + rsiScore + stochScore, 0.99).toFixed(3));
         }
-
 
         // Filtro de Probabilidade Mínima da Estratégia
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
