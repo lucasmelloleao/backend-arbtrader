@@ -616,6 +616,37 @@ export async function testDerivProposal(req: AuthenticatedRequest, res: Response
   }
 }
 
+export async function getDerivAiAnalysis(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+    }
+
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json(isDashboard(req) ? { error: 'Chave DeepSeek não configurada.' } : { success: false, message: 'Chave DeepSeek não configurada no servidor.' });
+    }
+
+    const { buildDerivMetrics, buildAnalysisPrompt, callDeepSeek } = require('../strategy/deriv/helpers/deriv-ai-analysis');
+
+    const trades = await DerivTrade.find({ userId, status: 'executed' }).lean();
+    const metrics = buildDerivMetrics(trades);
+
+    if (!metrics.totalTrades) {
+      return res.json({ success: true, message: 'ok', data: { metrics, analysis: 'Nenhuma operação encerrada ainda para analisar. Deixe o robô operar um pouco e tente novamente.' } });
+    }
+
+    const prompt = buildAnalysisPrompt(metrics);
+    const analysis = await callDeepSeek(apiKey, prompt, process.env.DEEPSEEK_MODEL || 'deepseek-chat');
+
+    return res.json({ success: true, message: 'ok', data: { metrics, analysis } });
+  } catch (e: any) {
+    console.error('❌ [POST DerivAiAnalysis] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
 
 
 

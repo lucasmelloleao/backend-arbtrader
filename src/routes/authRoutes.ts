@@ -246,7 +246,8 @@ import {
   deleteDerivStrategy,
   getDerivContractsFor,
   getDerivBarrierRange,
-  testDerivProposal
+  testDerivProposal,
+  getDerivAiAnalysis
 } from '../controllers/derivController';
 
 router.get('/deriv/settings', authMiddleware as any, getDerivSettings as any);
@@ -263,6 +264,7 @@ router.delete('/deriv/trades', authMiddleware as any, deleteDerivTrades as any);
 router.get('/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
 router.get('/deriv/balance', authMiddleware as any, getDerivBalance as any);
 router.get('/deriv/logs', authMiddleware as any, getDerivLogs as any);
+router.post('/deriv/ai-analysis', authMiddleware as any, getDerivAiAnalysis as any);
 
 router.get('/auth/deriv/settings', authMiddleware as any, getDerivSettings as any);
 router.post('/auth/deriv/settings', authMiddleware as any, updateDerivSettings as any);
@@ -278,5 +280,6 @@ router.delete('/auth/deriv/trades', authMiddleware as any, deleteDerivTrades as 
 router.get('/auth/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary as any);
 router.get('/auth/deriv/balance', authMiddleware as any, getDerivBalance as any);
 router.get('/auth/deriv/logs', authMiddleware as any, getDerivLogs as any);
+router.post('/auth/deriv/ai-analysis', authMiddleware as any, getDerivAiAnalysis as any);
 
 export default router;
