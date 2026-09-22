@@ -336,6 +336,8 @@ export async function runDerivCycle(): Promise<void> {
           continue;
         }
 
+        log.info(`🎯 [${sym} (${target.name})] CONFLUÊNCIA APROVADA: Direção ${decidedDirection} com ${(calculatedProb * 100).toFixed(1)}% de Certeza (Mínimo exigido: ${(target.minCertaintyProb * 100).toFixed(0)}%). Iniciando cotação...`);
+
         // Determina o tipo de contrato e a barreira a partir das configurações específicas da estratégia
         let contractType = 'HIGHER';
         let rawBarrier: string | undefined = target.barrier;
