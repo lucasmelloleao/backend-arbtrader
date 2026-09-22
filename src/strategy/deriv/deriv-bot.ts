@@ -326,12 +326,12 @@ async function executeDerivCycle(): Promise<void> {
 
         const signal = evaluateSignal(ticks);
         const { direction: decidedDirection, confidence: calculatedProb, indicators } = signal;
-        const { rsi, stochK, tickMomentumUp, tickMomentumDown } = indicators;
+        const { rsi, stochK, tickMomentumUp, tickMomentumDown, kaufmanER, hurstExponent } = indicators;
 
         // Filtro de Probabilidade Mínima da Estratégia
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
-          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência)';
-          log.info(`🔍 [${sym} (${target.name})] Certeza: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
+          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência/Chop)';
+          log.info(`🔍 [${sym} (${target.name})] Certeza: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | ER: ${kaufmanER.toFixed(2)} | Hurst: ${hurstExponent.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
           continue;
         }
 

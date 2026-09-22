@@ -16,6 +16,8 @@ export interface IndicatorSnapshot {
   tickMomentumDown: number;
   latestPrice: number;
   avgAbsReturn: number;
+  kaufmanER: number; // Eficiência de Kaufman (0..1)
+  hurstExponent: number; // Expoente de Hurst (0..1)
 }
 
 export interface SignalDecision {
@@ -26,6 +28,10 @@ export interface SignalDecision {
 
 // Filtro de volatilidade: retorno absoluto médio por tick abaixo disso indica mercado morto/sem liquidez.
 export const MIN_AVG_ABS_RETURN = 0.00003;
+
+// Filtros de Regime de Mercado:
+export const MIN_KAUFMAN_ER = 0.30; // ER < 0.30 indica ruído/consolidação sem direção
+export const MIN_HURST_EXPONENT = 0.52; // H < 0.52 indica passeio aleatório ou reversão ruidosa
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -43,6 +49,49 @@ export function calcEma(data: number[], period: number): number {
     ema = data[i] * k + ema * (1 - k);
   }
   return ema;
+}
+
+// Eficiência de Preço de Kaufman (ER) sobre os últimos N ticks
+export function calcKaufmanER(prices: number[], period = 20): number {
+  if (prices.length <= period) return 0.5;
+  const slice = prices.slice(-period);
+  const netChange = Math.abs(slice[slice.length - 1] - slice[0]);
+  let totalPath = 0;
+  for (let i = 1; i < slice.length; i++) {
+    totalPath += Math.abs(slice[i] - slice[i - 1]);
+  }
+  if (totalPath === 0) return 0;
+  return round3(clamp(netChange / totalPath, 0, 1));
+}
+
+// Expoente de Hurst simplificado via Rescaled Range (R/S) sobre os ticks
+export function calcHurstExponent(prices: number[], period = 30): number {
+  if (prices.length < period) return 0.5;
+  const slice = prices.slice(-period);
+  const mean = slice.reduce((a, b) => a + b, 0) / period;
+  
+  // Desvio padrão
+  const variance = slice.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+  if (stdDev === 0) return 0.5;
+
+  // Desvios acumulados
+  let cumDev = 0;
+  let maxDev = -Infinity;
+  let minDev = Infinity;
+  for (let i = 0; i < period; i++) {
+    cumDev += (slice[i] - mean);
+    if (cumDev > maxDev) maxDev = cumDev;
+    if (cumDev < minDev) minDev = cumDev;
+  }
+
+  const range = maxDev - minDev;
+  const rs = range / stdDev;
+  if (rs <= 0) return 0.5;
+
+  // H = log(R/S) / log(N)
+  const hurst = Math.log(rs) / Math.log(period);
+  return round3(clamp(hurst, 0.1, 0.99));
 }
 
 // RSI com suavização de Wilder (mais estável que a média simples anterior).
@@ -111,6 +160,10 @@ export function computeIndicators(ticks: number[]): IndicatorSnapshot {
   }
   const avgAbsReturn = ticks.length > 1 ? absReturnSum / (ticks.length - 1) : 0;
 
+  // Indicadores de Regime de Mercado
+  const kaufmanER = calcKaufmanER(ticks, 20);
+  const hurstExponent = calcHurstExponent(ticks, 30);
+
   return {
     emaFast,
     emaSlow,
@@ -124,6 +177,8 @@ export function computeIndicators(ticks: number[]): IndicatorSnapshot {
     tickMomentumDown,
     latestPrice,
     avgAbsReturn,
+    kaufmanER,
+    hurstExponent,
   };
 }
 
@@ -133,8 +188,11 @@ function callConfidence(ind: IndicatorSnapshot): number {
   const rsiScore = clamp((ind.rsi - 50) / 25, 0, 1);
   const stochScore = clamp((ind.stochK - 50) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumUp - 0.5) / 0.4, 0, 1);
-  // Base de 0.70 para sinal válido + até 0.29 de bônus por confluência forte
-  const rawConfidence = 0.70 + (0.09 * trendScore + 0.07 * rsiScore + 0.06 * stochScore + 0.07 * momentumScore);
+  const erScore = clamp((ind.kaufmanER - 0.25) / 0.5, 0, 1);
+  const hurstScore = clamp((ind.hurstExponent - 0.50) / 0.3, 0, 1);
+
+  // Base de 0.70 + bônus de confluência técnica + bônus de regime direcional (Kaufman + Hurst)
+  const rawConfidence = 0.70 + (0.07 * trendScore + 0.05 * rsiScore + 0.05 * stochScore + 0.05 * momentumScore + 0.04 * erScore + 0.03 * hurstScore);
   return round3(clamp(rawConfidence, 0.70, 0.99));
 }
 
@@ -144,12 +202,15 @@ function putConfidence(ind: IndicatorSnapshot): number {
   const rsiScore = clamp((50 - ind.rsi) / 25, 0, 1);
   const stochScore = clamp((50 - ind.stochK) / 40, 0, 1);
   const momentumScore = clamp((ind.tickMomentumDown - 0.5) / 0.4, 0, 1);
-  // Base de 0.70 para sinal válido + até 0.29 de bônus por confluência forte
-  const rawConfidence = 0.70 + (0.09 * trendScore + 0.07 * rsiScore + 0.06 * stochScore + 0.07 * momentumScore);
+  const erScore = clamp((ind.kaufmanER - 0.25) / 0.5, 0, 1);
+  const hurstScore = clamp((ind.hurstExponent - 0.50) / 0.3, 0, 1);
+
+  // Base de 0.70 + bônus de confluência técnica + bônus de regime direcional (Kaufman + Hurst)
+  const rawConfidence = 0.70 + (0.07 * trendScore + 0.05 * rsiScore + 0.05 * stochScore + 0.05 * momentumScore + 0.04 * erScore + 0.03 * hurstScore);
   return round3(clamp(rawConfidence, 0.70, 0.99));
 }
 
-// Decide a direção por confluência de EMA 9/21/34, canal de Donchian, RSI, Estocástico e momentum.
+// Decide a direção por confluência de EMA 9/21/34, canal de Donchian, RSI, Estocástico, Momentum, Kaufman ER e Hurst
 export function evaluateSignal(ticks: number[]): SignalDecision {
   const ind = computeIndicators(ticks);
   const latest = ind.latestPrice;
@@ -160,30 +221,35 @@ export function evaluateSignal(ticks: number[]): SignalDecision {
   let direction: Direction | null = null;
   let confidence = 0;
 
-  if (
-    latest > ind.emaFast &&
-    ind.emaFast >= ind.emaSlow &&
-    latest >= ind.donchianMid &&
-    priceSlopeUp &&
-    ind.rsi >= 50 &&
-    ind.rsi <= 80 &&
-    ind.stochK >= 45 &&
-    ind.tickMomentumUp >= 0.55
-  ) {
-    direction = 'CALL';
-    confidence = callConfidence(ind);
-  } else if (
-    latest < ind.emaFast &&
-    ind.emaFast <= ind.emaSlow &&
-    latest <= ind.donchianMid &&
-    priceSlopeDown &&
-    ind.rsi <= 50 &&
-    ind.rsi >= 20 &&
-    ind.stochK <= 55 &&
-    ind.tickMomentumDown >= 0.55
-  ) {
-    direction = 'PUT';
-    confidence = putConfidence(ind);
+  // Filtro de Regime: Rejeita se o mercado estiver em consolidação pura (ER < 0.28 e Hurst < 0.50)
+  const isTrendingRegime = ind.kaufmanER >= 0.28 || ind.hurstExponent >= 0.52;
+
+  if (isTrendingRegime) {
+    if (
+      latest > ind.emaFast &&
+      ind.emaFast >= ind.emaSlow &&
+      latest >= ind.donchianMid &&
+      priceSlopeUp &&
+      ind.rsi >= 50 &&
+      ind.rsi <= 80 &&
+      ind.stochK >= 45 &&
+      ind.tickMomentumUp >= 0.55
+    ) {
+      direction = 'CALL';
+      confidence = callConfidence(ind);
+    } else if (
+      latest < ind.emaFast &&
+      ind.emaFast <= ind.emaSlow &&
+      latest <= ind.donchianMid &&
+      priceSlopeDown &&
+      ind.rsi <= 50 &&
+      ind.rsi >= 20 &&
+      ind.stochK <= 55 &&
+      ind.tickMomentumDown >= 0.55
+    ) {
+      direction = 'PUT';
+      confidence = putConfidence(ind);
+    }
   }
 
   return { direction, confidence, indicators: ind };
