@@ -75,11 +75,11 @@ app.get('/readyz', (req, res) => {
       console.log(`🚀 [auth-backend] Servidor rodando com sucesso na porta ${PORT}`);
     });
 
-    // Inicializa o loop de monitoramento de alta frequência do Robô Deriv (2s de intervalo)
+    // Inicializa o loop de monitoramento de alta frequência do Robô Deriv (600ms de intervalo)
     const { runDerivCycle } = await import('./strategy/deriv/deriv-bot');
     setInterval(() => {
       runDerivCycle().catch((err: any) => console.error('⚠️ [DerivBot Loop] Erro:', err.message));
-    }, 2_000);
+    }, 600);
   } catch (err: any) {
     console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
     process.exit(1);
