@@ -93,10 +93,17 @@ export class FxProBot {
       const strategies = await FxProStrategy.find(stratQuery);
       if (!strategies || strategies.length === 0) return;
 
-      const keyQuery = userId
-        ? { $or: [{ userId }, { userId: userObjId }], exchangeId: { $in: ['fxpro', 'fxpro-ctrader', 'ctrader', 'pepperstone'] }, active: true }
-        : { exchangeId: { $in: ['fxpro', 'fxpro-ctrader', 'ctrader', 'pepperstone'] }, active: true };
-      const key = await ExchangeKey.findOne(keyQuery).lean();
+      const key =
+        (await ExchangeKey.findOne({
+          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+          exchangeId: { $in: ['fxpro', 'fxpro-ctrader'] },
+          active: true,
+        }).lean()) ||
+        (await ExchangeKey.findOne({
+          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+          exchangeId: { $in: ['ctrader', 'pepperstone'] },
+          active: true,
+        }).lean());
 
       if (!key) return;
       const settings = await FxProSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
@@ -147,11 +154,16 @@ export class FxProBot {
   private static async processStrategy(strat: IFxProStrategy): Promise<void> {
     const key = strat.exchangeKeyId
       ? await ExchangeKey.findById(strat.exchangeKeyId).lean()
-      : await ExchangeKey.findOne({
+      : (await ExchangeKey.findOne({
           userId: strat.userId,
-          exchangeId: { $in: ['fxpro', 'fxpro-ctrader', 'ctrader', 'pepperstone'] },
+          exchangeId: { $in: ['fxpro', 'fxpro-ctrader'] },
           active: true,
-        }).lean();
+        }).lean()) ||
+        (await ExchangeKey.findOne({
+          userId: strat.userId,
+          exchangeId: { $in: ['ctrader', 'pepperstone'] },
+          active: true,
+        }).lean());
 
     if (!key) {
       log.warn(`⚠️ [${strat.symbol}] Chave de API cTrader (FxPro) não vinculada ou inativa para este usuário.`);
