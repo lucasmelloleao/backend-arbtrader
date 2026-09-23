@@ -40,13 +40,18 @@ async function startScalpExecutor() {
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
         if (ctraderKey) {
-          const adapter = await getSharedCtraderAdapter(ctraderKey);
+          const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';
+          const targetAccountId = settings.accountId || ctraderKey.accountId;
+          const adapter = await getSharedCtraderAdapter(ctraderKey, {
+            accountId: targetAccountId,
+            environment: envOverride
+          });
           await adapter.loadMarkets();
           const tradeSize = settings.tradeSize || 100;
 
           // 1. RECONCILE CTRADER: Sincroniza posições reais abertas na cTrader
           try {
-            const accountId = Number(ctraderKey.accountId);
+            const accountId = Number(targetAccountId);
             const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
             const cTraderOpenSymbols = new Set<string>();
 

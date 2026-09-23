@@ -434,6 +434,8 @@ export async function getForexSettings(req: AuthenticatedRequest, res: Response)
       stepPips: settings.stepPips ?? 15,
       trailingPips: settings.trailingPips ?? 10,
       maxGridLevels: settings.maxGridLevels ?? 5,
+      accountType: settings.accountType ?? 'demo',
+      accountId: settings.accountId ?? '',
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
         : {},
@@ -493,6 +495,8 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
       stepPips: settings.stepPips ?? 15,
       trailingPips: settings.trailingPips ?? 10,
       maxGridLevels: settings.maxGridLevels ?? 5,
+      accountType: settings.accountType ?? 'demo',
+      accountId: settings.accountId ?? '',
       symbolProfiles: settings.symbolProfiles
         ? Object.fromEntries((settings.symbolProfiles as Map<string, any>).entries())
         : {},

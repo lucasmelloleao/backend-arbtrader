@@ -36,6 +36,9 @@ const ForexArbSettingsSchema = new mongoose.Schema({
   stepPips: { type: Number, default: 15 },           // Distância em pips para abrir próxima ordem a favor
   trailingPips: { type: Number, default: 10 },       // Distância do trailing stop global em pips
   maxGridLevels: { type: Number, default: 5 },       // Número máximo de ordens empilhadas na grade
+  // ─── Pepperstone / cTrader Account Settings ───────────────────────────────
+  accountType: { type: String, enum: ['demo', 'live', 'real'], default: 'demo' },
+  accountId: { type: String, default: '' },
   symbolProfiles: { type: Map, of: ForexSymbolProfileSchema, default: {} },
 }, { timestamps: true });
 

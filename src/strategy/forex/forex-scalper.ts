@@ -711,7 +711,12 @@ async function runExitLoop() {
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
         if (ctraderKey) {
-          const adapter = await getSharedCtraderAdapter(ctraderKey);
+          const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';
+          const targetAccountId = settings.accountId || ctraderKey.accountId;
+          const adapter = await getSharedCtraderAdapter(ctraderKey, {
+            accountId: targetAccountId,
+            environment: envOverride
+          });
           const tradeSize = settings.tradeSize || 100;
           const tickers = await adapter.fetchTickers(symbols);
 
@@ -937,13 +942,18 @@ async function startScalper() {
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
         if (ctraderKey) {
-          const adapter = await getSharedCtraderAdapter(ctraderKey);
+          const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';
+          const targetAccountId = settings.accountId || ctraderKey.accountId;
+          const adapter = await getSharedCtraderAdapter(ctraderKey, {
+            accountId: targetAccountId,
+            environment: envOverride
+          });
           await preloadHistoricalCandles(adapter, symbols);
           const tradeSize = settings.tradeSize || 100;
 
           // 1. Sincroniza posições reais da cTrader por símbolo
           try {
-            const accountId = Number(ctraderKey.accountId);
+            const accountId = Number(targetAccountId);
             const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
             const cTraderOpenSymbols = new Set<string>();
 

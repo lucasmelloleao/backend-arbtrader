@@ -358,7 +358,11 @@ async function startScalpScanner() {
         const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
 
         if (ctraderKey) {
-          const adapter = await getSharedCtraderAdapter(ctraderKey);
+          const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';
+          const adapter = await getSharedCtraderAdapter(ctraderKey, {
+            accountId: settings.accountId || ctraderKey.accountId,
+            environment: envOverride
+          });
           const tradeSize = settings.tradeSize || 100;
 
           try {
