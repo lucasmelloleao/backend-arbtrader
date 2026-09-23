@@ -259,23 +259,32 @@ export class CtraderClient {
     this.appAuthed = true;
     log.info(`✅ CtraderClient: aplicação autorizada (${this.environment})`);
 
-    // 2. Valida o access token e descobre as contas (se accountId não foi fornecido)
+    // 2. Valida o access token e descobre as contas
+    const listRes = await this.request(
+      PAYLOAD_TYPE.PROTO_OA_GET_ACCOUNTS_BY_ACCESS_TOKEN_REQ,
+      accList,
+      { accessToken: this.creds.accessToken },
+      10000,
+    );
+    if (listRes.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
+      throw new Error(`CtraderClient: token inválido: ${listRes.errorCode} ${listRes.description || ''}`);
+    }
+    const accounts: Array<{ ctidTraderAccountId: string | number; traderLogin?: string | number; isLive?: boolean }> = listRes.ctidTraderAccount || [];
+    log.info('📋 CONTAS CTRADER AUTORIZADAS NO ACCESS TOKEN:', JSON.stringify(accounts));
+    if (!accounts.length) throw new Error('CtraderClient: nenhuma conta associada ao access token');
+
     let accountId = this.creds.accountId;
-    if (!accountId) {
-      const listRes = await this.request(
-        PAYLOAD_TYPE.PROTO_OA_GET_ACCOUNTS_BY_ACCESS_TOKEN_REQ,
-        accList,
-        { accessToken: this.creds.accessToken },
-        10000,
+    if (accountId) {
+      // Se o usuário passou o login da conta (ex: 10650441) ou o ctidTraderAccountId (ex: 48840066), localiza a conta correspondente
+      const found = accounts.find(
+        (a) => String(a.ctidTraderAccountId) === String(accountId) || String(a.traderLogin) === String(accountId),
       );
-      if (listRes.payloadType === PAYLOAD_TYPE.PROTO_OA_ERROR_RES) {
-        throw new Error(`CtraderClient: token inválido: ${listRes.errorCode} ${listRes.description || ''}`);
+      if (found) {
+        accountId = String(found.ctidTraderAccountId);
       }
-      const accounts = listRes.ctidTraderAccount || [];
-      log.info('📋 CONTAS CTRADER AUTORIZADAS NO ACCESS TOKEN:', JSON.stringify(accounts));
-      if (!accounts.length) throw new Error('CtraderClient: nenhuma conta associada ao access token');
+    } else {
       // Prefere conta do ambiente correto
-      const matching = accounts.find((a: any) => this.environment === 'live' ? a.isLive : !a.isLive);
+      const matching = accounts.find((a) => (this.environment === 'live' ? a.isLive : !a.isLive));
       accountId = String(matching?.ctidTraderAccountId || accounts[0].ctidTraderAccountId);
     }
 
