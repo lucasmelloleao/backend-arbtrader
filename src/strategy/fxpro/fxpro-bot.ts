@@ -396,7 +396,16 @@ export class FxProBot {
       return;
     }
 
-    if (!openTrades || openTrades.length === 0) return;
+    if (!openTrades || openTrades.length === 0) {
+      if (strat.currentPositionId && !matchingLivePos) {
+        await FxProStrategy.findByIdAndUpdate(strat._id, {
+          currentPositionId: undefined,
+          currentSide: undefined,
+          currentPnlUsd: 0,
+        });
+      }
+      return;
+    }
 
     const posMap = new Map<string, any>();
     for (const p of cTraderPositions) {
@@ -408,8 +417,8 @@ export class FxProBot {
       if (livePos) {
         const currentPnl = Number(livePos.netPnl || livePos.unrealizedPnl || livePos.pnl || 0);
         await FxProStrategy.findByIdAndUpdate(strat._id, { currentPnlUsd: currentPnl });
-      } else if (cTraderPositions.length >= 0) {
-        log.info(`🏁 [${t.symbol}] Posição #${t.positionId} encerrada na cTrader. Sincronizando resultado.`);
+      } else {
+        log.info(`🏁 [${t.symbol}] Posição #${t.positionId} não encontrada na cTrader (encerrada). Sincronizando resultado.`);
         const exitPrice = t.takeProfitPrice || t.entryPrice;
         const pnl = Number(t.pnlUsd || 0);
         const isWin = pnl >= 0;

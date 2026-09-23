@@ -47,7 +47,7 @@ const FxProStrategySchema = new mongoose.Schema(
       enum: ['running', 'stopped', 'error', 'paused'],
       default: 'running',
     },
-    timeframe: { type: String, default: '5m' },
+    timeframe: { type: String, default: '1m' },
     lotSize: { type: Number, default: 0.01, min: 0.01 },
     leverage: { type: Number, default: 1000 },
     takeProfitPips: { type: Number, default: 20 },
