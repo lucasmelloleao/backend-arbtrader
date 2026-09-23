@@ -160,6 +160,10 @@ router.delete('/forex-arb/trades', authMiddleware as any, deleteForexTrades as a
 router.get('/forex-arb/opportunities', authMiddleware as any, getForexOpportunities as any);
 router.get('/forex-arb/settings', authMiddleware as any, getForexSettings as any);
 router.post('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
+router.put('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
+router.get('/auth/forex-arb/settings', authMiddleware as any, getForexSettings as any);
+router.post('/auth/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
+router.put('/auth/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.put('/forex-arb/ctrader-credentials', authMiddleware as any, updateCtraderCredentials as any);
 router.post('/forex-arb/close', authMiddleware as any, closeForexStrategy as any);
 router.post('/forex-arb/void-close', authMiddleware as any, voidCloseForexStrategy as any);

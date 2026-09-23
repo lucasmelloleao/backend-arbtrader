@@ -472,6 +472,19 @@ export async function updateForexSettings(req: AuthenticatedRequest, res: Respon
       { returnDocument: 'after', upsert: true }
     );
 
+    // Sincroniza também na ExchangeKey correspondente (se existir) para garantir coerência total
+    if (body.accountType !== undefined || body.accountId !== undefined) {
+      const exKeyUpdate: any = {};
+      if (body.accountId) exKeyUpdate.accountId = String(body.accountId).trim();
+      if (body.accountType) exKeyUpdate.environment = (body.accountType === 'live' || body.accountType === 'real') ? 'live' : 'demo';
+      if (Object.keys(exKeyUpdate).length > 0) {
+        await ExchangeKey.updateMany(
+          { userId, exchangeId: { $in: ['ctrader', 'pepperstone'] } },
+          { $set: exKeyUpdate }
+        );
+      }
+    }
+
     const formatted = {
       _id: settings._id.toString(),
       userId: settings.userId.toString(),
