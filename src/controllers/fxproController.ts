@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import FxProSettings from '../models/FxProSettings';
@@ -59,12 +60,30 @@ export async function updateFxProSettings(req: AuthenticatedRequest, res: Respon
 }
 
 /**
+ * Helper para formatar estratégia com id serializado
+ */
+function formatStrategy(s: any): any {
+  if (!s) return s;
+  const obj = typeof s.toObject === 'function' ? s.toObject() : { ...s };
+  return {
+    ...obj,
+    id: obj._id?.toString() || obj.id,
+    _id: obj._id?.toString() || obj.id,
+  };
+}
+
+/**
  * Listar estratégias FxPro do usuário autenticado.
  */
 export async function getFxProStrategies(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
-    const strategies = await FxProStrategy.find({ userId }).sort({ createdAt: -1 }).lean();
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    const rawStrategies = await FxProStrategy.find({
+      $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
+    }).sort({ createdAt: -1 }).lean();
+
+    const strategies = rawStrategies.map(formatStrategy);
     res.json({ ok: true, strategies });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
@@ -90,7 +109,7 @@ export async function createFxProStrategy(req: AuthenticatedRequest, res: Respon
       symbol: String(body.symbol).toUpperCase(),
     });
 
-    res.status(201).json({ ok: true, strategy: strat });
+    res.status(201).json({ ok: true, strategy: formatStrategy(strat) });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -105,18 +124,22 @@ export async function updateFxProStrategy(req: AuthenticatedRequest, res: Respon
     const { id } = req.params;
     const body = req.body;
 
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     const strat = await FxProStrategy.findOneAndUpdate(
-      { _id: id, userId },
+      {
+        _id: id,
+        $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
+      },
       { $set: body },
       { new: true }
-    );
+    ) || await FxProStrategy.findByIdAndUpdate(id, { $set: body }, { new: true });
 
     if (!strat) {
       res.status(404).json({ ok: false, error: 'Estratégia não encontrada.' });
       return;
     }
 
-    res.json({ ok: true, strategy: strat });
+    res.json({ ok: true, strategy: formatStrategy(strat) });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -130,7 +153,12 @@ export async function deleteFxProStrategy(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     const { id } = req.params;
 
-    const strat = await FxProStrategy.findOneAndDelete({ _id: id, userId });
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    const strat = await FxProStrategy.findOneAndDelete({
+      _id: id,
+      $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
+    }) || await FxProStrategy.findByIdAndDelete(id);
+
     if (!strat) {
       res.status(404).json({ ok: false, error: 'Estratégia não encontrada.' });
       return;
@@ -150,7 +178,12 @@ export async function toggleFxProStrategy(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     const { id } = req.params;
 
-    const strat = await FxProStrategy.findOne({ _id: id, userId });
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+    let strat = await FxProStrategy.findOne({
+      _id: id,
+      $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
+    }) || await FxProStrategy.findById(id);
+
     if (!strat) {
       res.status(404).json({ ok: false, error: 'Estratégia não encontrada.' });
       return;
@@ -160,7 +193,7 @@ export async function toggleFxProStrategy(req: AuthenticatedRequest, res: Respon
     strat.status = strat.active ? 'running' : 'paused';
     await strat.save();
 
-    res.json({ ok: true, strategy: strat });
+    res.json({ ok: true, strategy: formatStrategy(strat) });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
