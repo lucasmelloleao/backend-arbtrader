@@ -14,7 +14,7 @@ export interface BarrierProposalCheck {
 export class DerivBarrierOptimizer {
   private static readonly MIN_EDGE = 0.04; // Exige 4% de vantagem matemática mínima
   private static readonly MIN_PAYOUT_RATIO = 0.40; // Retorno mínimo de 40% (R >= 0.40)
-  private static readonly MAX_PAYOUT_RATIO = 0.85; // Teto de 85% para manter P_win alto
+  private static readonly MAX_PAYOUT_RATIO = 0.95; // Teto de 95% para acomodar contratos padrão Rise/Fall e Higher/Lower
 
   /**
    * Calcula o desvio padrão dos retornos por tick (Volatilidade Realizada)
