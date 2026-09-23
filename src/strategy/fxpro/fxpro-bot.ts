@@ -137,10 +137,12 @@ export class FxProBot {
 
       for (const livePos of cTraderPositions) {
         const posIdStr = String(livePos.positionId || livePos.id);
-        const sym = (livePos.symbol || '').replace('/', '').toUpperCase();
+        const rawSym = (livePos.symbol || '').replace('/', '').toUpperCase();
+        const strat = strategies.find((s) => s.symbol.toUpperCase() === rawSym) || strategies[0];
+        const sym = rawSym || (strat ? strat.symbol.toUpperCase() : 'FOREX');
+
         if (!existingPosIds.has(posIdStr)) {
           log.info(`📥 [${sym}] Detectada posição #${posIdStr} na cTrader. Sincronizando para monitoramento.`);
-          const strat = strategies.find((s) => s.symbol.toUpperCase() === sym);
           const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
           const slDist = ((strat?.stopLossPips) || 6) * pipSize;
           const tpDist = ((strat?.takeProfitPips) || 8) * pipSize;
@@ -148,16 +150,16 @@ export class FxProBot {
           const side = livePos.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
 
           await FxProTrade.create({
-            userId: userId || strat?.userId,
-            strategyId: strat?._id,
+            userId: userId || strat?.userId || key.userId,
+            strategyId: strat?._id || undefined,
             exchangeKeyId: key._id,
             positionId: posIdStr,
             symbol: sym,
             side,
             lotSize: Number(livePos.volume || strat?.lotSize || 0.01),
             entryPrice: entryP,
-            stopLossPrice: side === 'BUY' ? entryP - slDist : entryP + slDist,
-            takeProfitPrice: side === 'BUY' ? entryP + tpDist : entryP - tpDist,
+            stopLossPrice: side === 'BUY' ? (entryP > 0 ? entryP - slDist : undefined) : (entryP > 0 ? entryP + slDist : undefined),
+            takeProfitPrice: side === 'BUY' ? (entryP > 0 ? entryP + tpDist : undefined) : (entryP > 0 ? entryP - tpDist : undefined),
             pnlUsd: Number(livePos.netPnl || livePos.unrealizedPnl || livePos.pnl || 0),
             pips: 0,
             status: 'open',

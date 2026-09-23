@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 export interface IFxProTrade extends mongoose.Document {
   userId: mongoose.Types.ObjectId;
-  strategyId: mongoose.Types.ObjectId;
+  strategyId?: mongoose.Types.ObjectId;
   exchangeKeyId?: mongoose.Types.ObjectId;
   positionId: string;
   orderId?: string;
@@ -37,7 +37,7 @@ export interface IFxProTrade extends mongoose.Document {
 const FxProTradeSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    strategyId: { type: mongoose.Schema.Types.ObjectId, ref: 'FxProStrategy', required: true, index: true },
+    strategyId: { type: mongoose.Schema.Types.ObjectId, ref: 'FxProStrategy', required: false, index: true },
     exchangeKeyId: { type: mongoose.Schema.Types.ObjectId, ref: 'ExchangeKey' },
     positionId: { type: String, required: true, index: true },
     orderId: { type: String },

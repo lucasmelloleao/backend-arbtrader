@@ -741,6 +741,7 @@ export class CtraderAdapter {
       if (!meta) continue;
       const data = {
         positionId: String(row.positionId),
+        symbol: meta.symbol,
         netPnl: Number(row.netUnrealizedPnL || 0) / div,
         grossPnl: Number(row.grossUnrealizedPnL || 0) / div,
         volume: meta.volume,
@@ -762,6 +763,7 @@ export class CtraderAdapter {
       if (!out.has(posId)) {
         const data = {
           positionId: posId,
+          symbol: meta.symbol,
           netPnl: 0,
           grossPnl: 0,
           volume: meta.volume,
