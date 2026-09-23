@@ -14,6 +14,8 @@ const DerivStrategySchema = new mongoose.Schema({
   tradeSize: { type: Number, default: 2 }, // Aporte em USD
   durationSec: { type: Number, default: 15 }, // Duração em segundos
   minCertaintyProb: { type: Number, default: 0.75 }, // Certeza mínima exigida (0.70 a 0.98)
+  minTakeProfitPct: { type: Number, default: 15 }, // % de Lucro para Saída Antecipada (Take Profit)
+  emergencyStopPct: { type: Number, default: 70 }, // % de Prejuízo para Stop Loss de Emergência
   active: { type: Boolean, default: true },
   contractId: { type: String, default: null },
   positionOpen: { type: Boolean, default: false },

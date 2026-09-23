@@ -309,8 +309,9 @@ export async function getDerivStrategies(req: AuthenticatedRequest, res: Respons
       barrier: s.barrier || '-1',
       barrierLower: s.barrierLower || '+1',
       tradeSize: s.tradeSize || 2,
-      durationSec: s.durationSec || 15,
-      minCertaintyProb: s.minCertaintyProb || 0.75,
+            minCertaintyProb: s.minCertaintyProb ?? 0.75,
+      minTakeProfitPct: s.minTakeProfitPct ?? 15,
+      emergencyStopPct: s.emergencyStopPct ?? 70,
       active: s.active !== false,
       positionOpen: Boolean(s.positionOpen),
       contractId: s.contractId || null,
@@ -334,7 +335,7 @@ export async function createDerivStrategy(req: AuthenticatedRequest, res: Respon
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
     const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
-    const { symbol, name, contractType, barrier, barrierLower, tradeSize, durationSec, minCertaintyProb, active } = req.body;
+    const { symbol, name, contractType, barrier, barrierLower, tradeSize, durationSec, minCertaintyProb, minTakeProfitPct, emergencyStopPct, active } = req.body;
     if (!symbol) return res.status(400).json(isDashboard(req) ? { error: 'Símbolo é obrigatório' } : { success: false, message: 'Símbolo é obrigatório.' });
 
     const strat = await DerivStrategy.create({
@@ -347,6 +348,8 @@ export async function createDerivStrategy(req: AuthenticatedRequest, res: Respon
       tradeSize: Number(tradeSize) || 2,
       durationSec: Number(durationSec) || 15,
       minCertaintyProb: Number(minCertaintyProb) || 0.75,
+      minTakeProfitPct: minTakeProfitPct !== undefined ? Number(minTakeProfitPct) : 15,
+      emergencyStopPct: emergencyStopPct !== undefined ? Number(emergencyStopPct) : 70,
       active: active !== false,
     });
 
@@ -360,6 +363,8 @@ export async function createDerivStrategy(req: AuthenticatedRequest, res: Respon
       tradeSize: strat.tradeSize,
       durationSec: strat.durationSec,
       minCertaintyProb: strat.minCertaintyProb,
+      minTakeProfitPct: strat.minTakeProfitPct,
+      emergencyStopPct: strat.emergencyStopPct,
       active: strat.active,
       positionOpen: false,
     };

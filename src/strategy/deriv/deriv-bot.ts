@@ -192,25 +192,28 @@ async function executeDerivCycle(): Promise<void> {
           continue;
         }
 
-        // B. Saída Antecipada (Take Profit ou Emergency Stop)
+        // B. Saída Antecipada (Take Profit ou Emergency Stop específico por ativo)
         const profitPct = buyPrice > 0 ? (currentProfit / buyPrice) * 100 : 0;
-        const minTakeProfit = Number(settings.minTakeProfitPct ?? 10.0);
-        const emergencyStop = Number(settings.emergencyStopPct ?? 50.0);
+        
+        // Busca estratégia individual do ativo para aplicar seus parâmetros específicos
+        const assetStrategy = await DerivStrategy.findOne({ userId: settings.userId, symbol: trade.symbol }).lean();
+        const minTakeProfit = Number(assetStrategy?.minTakeProfitPct ?? settings.minTakeProfitPct ?? 15.0);
+        const emergencyStop = Number(assetStrategy?.emergencyStopPct ?? settings.emergencyStopPct ?? 70.0);
         const tradeAgeSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
 
-        // 1. Take Profit Antecipado: Se atingiu o lucro configurado (ex: +15% ou +19%), vende imediatamente
+        // 1. Take Profit Antecipado: Se atingiu o lucro configurado para o ativo, vende imediatamente
         if (profitPct >= minTakeProfit && currentProfit > 0) {
           const tpReason = `Saída Antecipada (Take Profit: +${profitPct.toFixed(1)}%)`;
-          log.info(`🎯 [${trade.symbol}] ${tpReason} ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)}). Vendendo contrato antecipadamente...`);
+          log.info(`🎯 [${trade.symbol}] ${tpReason} ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)} | Meta: +${minTakeProfit}%). Vendendo contrato antecipadamente...`);
           await DerivTrade.updateOne({ _id: trade._id }, { reason: tpReason }).catch(() => {});
           await client.sellContract(trade.contractId, 0).catch((err) => {
             log.warn(`⚠️ [${trade.symbol}] Falha ao vender contrato antecipadamente: ${err.message}`);
           });
         } 
-        // 2. Stop Loss de Emergência: Vende se o prejuízo atingir a trava configurada (após pelo menos 5s)
+        // 2. Stop Loss de Emergência: Vende se o prejuízo atingir a trava configurada para o ativo (após pelo menos 5s)
         else if (tradeAgeSec >= 5 && profitPct <= -emergencyStop) {
           const stopReason = `Saída Antecipada (Emergency Stop: ${profitPct.toFixed(1)}%)`;
-          log.warn(`🚨 [${trade.symbol}] ${stopReason} (${tradeAgeSec.toFixed(0)}s decorridos). Vendendo contrato...`);
+          log.warn(`🚨 [${trade.symbol}] ${stopReason} (${tradeAgeSec.toFixed(0)}s decorridos | Trava: -${emergencyStop}%). Vendendo contrato...`);
           await DerivTrade.updateOne({ _id: trade._id }, { reason: stopReason }).catch(() => {});
           await client.sellContract(trade.contractId, 0).catch((err) => {
             log.warn(`⚠️ [${trade.symbol}] Falha no emergency stop: ${err.message}`);
@@ -283,6 +286,8 @@ async function executeDerivCycle(): Promise<void> {
       tradeSize: number;
       durationSec: number;
       minCertaintyProb: number;
+      minTakeProfitPct?: number;
+      emergencyStopPct?: number;
       strategyId?: any;
     }> = [];
 
@@ -297,6 +302,8 @@ async function executeDerivCycle(): Promise<void> {
           tradeSize: Number(st.tradeSize) || 2,
           durationSec: Number(st.durationSec) || 15,
           minCertaintyProb: Number(st.minCertaintyProb) || 0.75,
+          minTakeProfitPct: st.minTakeProfitPct !== undefined ? Number(st.minTakeProfitPct) : undefined,
+          emergencyStopPct: st.emergencyStopPct !== undefined ? Number(st.emergencyStopPct) : undefined,
           strategyId: st._id,
         });
       }
@@ -431,8 +438,8 @@ async function executeDerivCycle(): Promise<void> {
 
         if (isMultiplier) {
           proposalParams.multiplier = 100;
-          const minTp = Number(settings.minTakeProfitPct ?? 10.0);
-          const stopLoss = Number(settings.emergencyStopPct ?? 70.0);
+          const minTp = Number(target.minTakeProfitPct ?? settings.minTakeProfitPct ?? 15.0);
+          const stopLoss = Number(target.emergencyStopPct ?? settings.emergencyStopPct ?? 70.0);
           // Take profit e stop loss em USD para proteção na Deriv
           proposalParams.take_profit = Math.max(0.1, Math.round((tradeStake * (minTp / 100)) * 100) / 100);
           proposalParams.stop_loss = Math.max(0.35, Math.round((tradeStake * (stopLoss / 100)) * 100) / 100);
