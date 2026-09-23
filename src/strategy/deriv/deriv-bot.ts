@@ -4,6 +4,7 @@ import DerivStrategy from '../../models/DerivStrategy';
 import { DerivWsClient } from './helpers/deriv-ws';
 import { evaluateSignal, streakStakeMultiplier } from './helpers/deriv-signal';
 import { DerivBarrierOptimizer } from './helpers/deriv-barrier';
+import { DerivMetaLabeler } from './helpers/deriv-meta-labeler';
 
 const inMemoryDerivLogs: string[] = [];
 const MAX_BUFFER = 500;
@@ -390,8 +391,8 @@ async function executeDerivCycle(): Promise<void> {
 
         // Verifica se o filtro CUSUM detectou quebra estrutural
         if (indicators.cusumExceeded) {
-          cusumQuarantineMap.set(sym, Date.now() + 300000); // 5 minutos de quarentena
-          log.warn(`🚨 [${sym}] Alerta CUSUM de Quebra Estrutural! Ativo colocado em quarentena preventiva de 5 minutos.`);
+          cusumQuarantineMap.set(sym, Date.now() + 60000); // 60 segundos de quarentena
+          log.warn(`🚨 [${sym}] Alerta CUSUM de Choque Estrutural! Ativo em quarentena preventiva de 60 segundos.`);
           continue;
         }
 
@@ -590,6 +591,25 @@ async function executeDerivCycle(): Promise<void> {
           // Ajusta stake ótimo com Kelly fracionário
           tradeStake = evCheck.stake;
           log.info(`📊 [${sym}] Proposta com EV Positivo Validada (EV: +${evCheck.expectedValue} | Edge: +${(evCheck.edge * 100).toFixed(1)}% | Retorno R: +${(evCheck.payoutRatio * 100).toFixed(1)}% | Stake Kelly: $${tradeStake}).`);
+        }
+
+        // --- GATE 4: META-LABELING AI VETO (LÓPEZ DE PRADO) ---
+        const featureVector = DerivMetaLabeler.extractFeatures(
+          er,
+          r2,
+          slope,
+          imbalance,
+          varianceRatio,
+          tickVol,
+          evCheckResult?.payoutRatio || 0.55
+        );
+        const aiInference = DerivMetaLabeler.evaluateOpportunity(featureVector, 0.55);
+
+        if (aiInference.isVetoed) {
+          log.warn(`🤖 [AI GATE 4 VETO] [${sym}] Entrada bloqueada pela IA: ${aiInference.reason} Condições atuais historicamente degradam o EV.`);
+          continue;
+        } else if (aiInference.probWin < 1.0) {
+          log.info(`🤖 [AI GATE 4 APROVADO] [${sym}] Probabilidade estimada de sucesso da estratégia: ${(aiInference.probWin * 100).toFixed(1)}%.`);
         }
 
         if (proposal && proposal.id) {

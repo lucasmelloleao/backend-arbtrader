@@ -247,7 +247,9 @@ import {
   getDerivContractsFor,
   getDerivBarrierRange,
   testDerivProposal,
-  getDerivAiAnalysis
+  getDerivAiAnalysis,
+  trainDerivMetaModel,
+  getDerivMetaModelStatus
 } from '../controllers/derivController';
 
 router.get('/deriv/settings', authMiddleware as any, getDerivSettings as any);
@@ -265,6 +267,8 @@ router.get('/deriv/trades/summary', authMiddleware as any, getDerivTradesSummary
 router.get('/deriv/balance', authMiddleware as any, getDerivBalance as any);
 router.get('/deriv/logs', authMiddleware as any, getDerivLogs as any);
 router.post('/deriv/ai-analysis', authMiddleware as any, getDerivAiAnalysis as any);
+router.post('/deriv/meta-model/train', authMiddleware as any, trainDerivMetaModel as any);
+router.get('/deriv/meta-model/status', authMiddleware as any, getDerivMetaModelStatus as any);
 
 router.get('/auth/deriv/settings', authMiddleware as any, getDerivSettings as any);
 router.post('/auth/deriv/settings', authMiddleware as any, updateDerivSettings as any);
@@ -281,5 +285,7 @@ router.get('/auth/deriv/trades/summary', authMiddleware as any, getDerivTradesSu
 router.get('/auth/deriv/balance', authMiddleware as any, getDerivBalance as any);
 router.get('/auth/deriv/logs', authMiddleware as any, getDerivLogs as any);
 router.post('/auth/deriv/ai-analysis', authMiddleware as any, getDerivAiAnalysis as any);
+router.post('/auth/deriv/meta-model/train', authMiddleware as any, trainDerivMetaModel as any);
+router.get('/auth/deriv/meta-model/status', authMiddleware as any, getDerivMetaModelStatus as any);
 
 export default router;

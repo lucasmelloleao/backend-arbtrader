@@ -656,6 +656,54 @@ export async function getDerivAiAnalysis(req: AuthenticatedRequest, res: Respons
   }
 }
 
+export async function trainDerivMetaModel(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+    }
+
+    const { DerivMetaLabeler } = require('../strategy/deriv/helpers/deriv-meta-labeler');
+    const result = await DerivMetaLabeler.trainModel(String(userId));
+
+    if (!result.success) {
+      return res.status(400).json(isDashboard(req) ? { error: result.message } : { success: false, message: result.message });
+    }
+
+    return res.json({ success: true, message: result.message, data: result.metadata });
+  } catch (e: any) {
+    console.error('❌ [POST TrainDerivMetaModel] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
+export async function getDerivMetaModelStatus(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+    }
+
+    const { DerivMetaLabeler } = require('../strategy/deriv/helpers/deriv-meta-labeler');
+    const metadata = DerivMetaLabeler.getMetadata();
+
+    const executedCount = await DerivTrade.countDocuments({ userId, status: 'executed' });
+
+    return res.json({
+      success: true,
+      data: {
+        isTrained: Boolean(metadata),
+        metadata,
+        totalExecutedTrades: executedCount,
+        minTradesRequired: 15,
+      }
+    });
+  } catch (e: any) {
+    console.error('❌ [GET DerivMetaModelStatus] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
 
 
 

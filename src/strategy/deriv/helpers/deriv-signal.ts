@@ -141,31 +141,34 @@ export class DerivSignalEngine {
 
   /**
    * Filtro CUSUM (Cumulative Sum) para detecção de quebra estrutural / choque de regime
-   * Acumula desvios normalizados em relação à média recente.
-   * Dispara se a soma acumulada positiva ou negativa exceder o limiar h = 4.5 sigmas.
+   * Acumula inovações de retornos normalizados dos últimos ticks.
+   * Dispara apenas se houver desvio extremo acumulado sustentado (choque de volatilidade anômalo).
    */
   public static checkCusumAnomaly(prices: number[]): boolean {
-    if (prices.length < 30) return false;
-    const slice = prices.slice(-Math.min(prices.length, this.WINDOW_CUSUM));
-    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
-    const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / slice.length;
+    if (prices.length < 20) return false;
+    const slice = prices.slice(-30);
+    const returns: number[] = [];
+    for (let i = 1; i < slice.length; i++) {
+      returns.push(slice[i] - slice[i - 1]);
+    }
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (returns.length - 1 || 1);
     const stdDev = Math.sqrt(variance);
     if (stdDev === 0) return false;
 
-    // Constante de tolerância k e limiar de decisão h
-    const k = 0.5 * stdDev;
-    const h = 4.5 * stdDev;
-
+    // Acumula inovações de retorno
     let sPos = 0;
     let sNeg = 0;
+    const k = 1.0 * stdDev;
+    const h = 6.0 * stdDev; // Limiar de choque severo
 
-    for (let i = 0; i < slice.length; i++) {
-      const diff = slice[i] - mean;
-      sPos = Math.max(0, sPos + diff - k);
-      sNeg = Math.max(0, sNeg - diff - k);
+    for (let i = 0; i < returns.length; i++) {
+      const z = returns[i] - mean;
+      sPos = Math.max(0, sPos + z - k);
+      sNeg = Math.max(0, sNeg - z - k);
 
       if (sPos > h || sNeg > h) {
-        return true; // Quebra estrutural detectada
+        return true; // Choque estrutural detectado
       }
     }
     return false;
