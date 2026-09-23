@@ -61,9 +61,12 @@ export async function login(req: AuthenticatedRequest, res: Response) {
     const cookieMaxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
     const isProd = process.env.NODE_ENV === 'production';
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-    const useSecure = isProd || isHttps;
+    // Em dev local (localhost), não usa Secure nem Domínio para o cookie pousar no localhost.
+    const origin = req.headers.origin || '';
+    const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1');
+    const useSecure = !isLocalhost && (isProd || isHttps);
     // Domínio compartilhado entre front (www) e api (api.arbtraders.com.br)
-    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+    const cookieDomain = isLocalhost ? undefined : (process.env.COOKIE_DOMAIN || undefined);
 
     // Configura os cookies session_token, refresh_token e token
     res.cookie('session_token', token, {
@@ -206,7 +209,9 @@ export async function google(req: AuthenticatedRequest, res: Response) {
 }
 
 export async function logout(req: AuthenticatedRequest, res: Response) {
-  const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+  const origin = req.headers.origin || '';
+  const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1');
+  const cookieDomain = isLocalhost ? undefined : (process.env.COOKIE_DOMAIN || undefined);
   res.clearCookie('session_token', { domain: cookieDomain });
   res.clearCookie('refresh_token', { domain: cookieDomain });
   res.clearCookie('token', { domain: cookieDomain });
