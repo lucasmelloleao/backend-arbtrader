@@ -663,8 +663,9 @@ export async function trainDerivMetaModel(req: AuthenticatedRequest, res: Respon
       return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
     }
 
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     const { DerivMetaLabeler } = require('../strategy/deriv/helpers/deriv-meta-labeler');
-    const result = await DerivMetaLabeler.trainModel(String(userId));
+    const result = await DerivMetaLabeler.trainModel(userObjId);
 
     if (!result.success) {
       return res.status(400).json(isDashboard(req) ? { error: result.message } : { success: false, message: result.message });
@@ -684,19 +685,27 @@ export async function getDerivMetaModelStatus(req: AuthenticatedRequest, res: Re
       return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
     }
 
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     const { DerivMetaLabeler } = require('../strategy/deriv/helpers/deriv-meta-labeler');
     const metadata = DerivMetaLabeler.getMetadata();
 
-    const executedCount = await DerivTrade.countDocuments({ userId, status: 'executed' });
+    const executedCount = await DerivTrade.countDocuments({
+      $or: [{ userId }, { userId: userObjId }],
+      status: 'executed'
+    });
 
+    const isDash = isDashboard(req);
+    const data = {
+      isTrained: Boolean(metadata),
+      metadata,
+      totalExecutedTrades: executedCount,
+      minTradesRequired: 15,
+    };
+
+    if (isDash) return res.json(data);
     return res.json({
       success: true,
-      data: {
-        isTrained: Boolean(metadata),
-        metadata,
-        totalExecutedTrades: executedCount,
-        minTradesRequired: 15,
-      }
+      data
     });
   } catch (e: any) {
     console.error('❌ [GET DerivMetaModelStatus] Error:', e.message);
