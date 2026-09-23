@@ -386,6 +386,7 @@ router.post('/icmarkets/settings', authMiddleware as any, updateIcMarketsSetting
 router.put('/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
 router.get('/icmarkets/strategies', authMiddleware as any, getIcMarketsStrategies as any);
 router.post('/icmarkets/strategies', authMiddleware as any, createIcMarketsStrategy as any);
+router.put('/icmarkets/strategies', authMiddleware as any, updateIcMarketsStrategy as any);
 router.put('/icmarkets/strategies/:id', authMiddleware as any, updateIcMarketsStrategy as any);
 router.delete('/icmarkets/strategies/:id', authMiddleware as any, deleteIcMarketsStrategy as any);
 router.post('/icmarkets/strategies/:id/toggle', authMiddleware as any, toggleIcMarketsStrategy as any);
@@ -404,6 +405,7 @@ router.post('/auth/icmarkets/settings', authMiddleware as any, updateIcMarketsSe
 router.put('/auth/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
 router.get('/auth/icmarkets/strategies', authMiddleware as any, getIcMarketsStrategies as any);
 router.post('/auth/icmarkets/strategies', authMiddleware as any, createIcMarketsStrategy as any);
+router.put('/auth/icmarkets/strategies', authMiddleware as any, updateIcMarketsStrategy as any);
 router.put('/auth/icmarkets/strategies/:id', authMiddleware as any, updateIcMarketsStrategy as any);
 router.delete('/auth/icmarkets/strategies/:id', authMiddleware as any, deleteIcMarketsStrategy as any);
 router.post('/auth/icmarkets/strategies/:id/toggle', authMiddleware as any, toggleIcMarketsStrategy as any);

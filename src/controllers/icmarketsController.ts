@@ -126,11 +126,21 @@ export async function createIcMarketsStrategy(req: AuthenticatedRequest, res: Re
 export async function updateIcMarketsStrategy(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
-    const { id } = req.params;
+    const id = req.params.id || req.body.id || req.body._id;
     const body = req.body;
 
+    if (!id) {
+      res.status(400).json({ ok: false, error: 'ID da estratégia não informado.' });
+      return;
+    }
+
+    const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+
     const strategy = await IcMarketsStrategy.findOneAndUpdate(
-      { _id: id, userId },
+      {
+        _id: id,
+        $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
+      },
       { $set: body },
       { new: true }
     );
