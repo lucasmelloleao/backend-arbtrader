@@ -223,14 +223,18 @@ export class CtraderAdapter {
     const ask = evt.ask ? Number(evt.ask) / PRICE_DIVISOR : 0;
     if (bid <= 0 && ask <= 0) return;
     const last = bid > 0 && ask > 0 ? (bid + ask) / 2 : (bid || ask);
-    this.tickers.set(market.symbol, {
+    const tickerData: CtraderTicker = {
       symbol: market.symbol,
       bid,
       ask,
       last,
       quoteVolume: 0, // Open API não expõe volume 24h por ticker
       timestamp: evt.timestamp ? Number(evt.timestamp) : Date.now(),
-    });
+    };
+    this.tickers.set(market.symbol, tickerData);
+    // Salva também com a chave compacta (ex: "EURUSD" além de "EUR/USD")
+    const compact = market.symbol.replace('/', '');
+    this.tickers.set(compact, tickerData);
   }
 
   private async ensureSpots(symbols: string[]) {
@@ -244,9 +248,6 @@ export class CtraderAdapter {
     }
     if (!toSubscribe.length) return;
     try {
-      // Assina e aguarda a confirmação (ProtoOASubscribeSpotsRes) antes de
-      // marcar como subscribed — assim o waitForTicks não começa antes de a
-      // cTrader estar de fato enviando spots para os símbolos.
       const res = await this.client.sendRequest(
         PAYLOAD_TYPE.PROTO_OA_SUBSCRIBE_SPOTS_REQ,
         'ProtoOASubscribeSpotsReq',
@@ -265,21 +266,21 @@ export class CtraderAdapter {
 
   async fetchTickers(pairs: string[]): Promise<Record<string, CtraderTicker>> {
     await this.connect();
-    // Garante que os markets estão carregados (necessário para resolveSymbol
-    // mapear símbolo → symbolId e assinar os spots corretos).
     if (this.marketsBySymbol.size === 0) {
       await this.loadMarkets();
     }
     await this.ensureSpots(pairs);
-    // O primeiro ProtoOASpotEvent chega logo após a assinatura; aguarda um tick
-    // de cada par (ou usa o que já tem em cache).
     await this.waitForTicks(pairs, 1500);
     const out: Record<string, CtraderTicker> = {};
     for (const sym of pairs) {
-      const t = this.tickers.get(sym);
+      const t = this.getTicker(sym);
       if (t && (t.bid > 0 || t.ask > 0)) out[sym] = t;
     }
     return out;
+  }
+
+  public getTicker(symbol: string): CtraderTicker | undefined {
+    return this.tickers.get(symbol) || this.tickers.get(symbol.replace('/', '')) || (this.resolveSymbol(symbol) ? this.tickers.get(this.resolveSymbol(symbol)!.symbol) : undefined);
   }
 
   async fetchTicker(symbol: string): Promise<CtraderTicker> {
@@ -288,10 +289,10 @@ export class CtraderAdapter {
       await this.loadMarkets();
     }
     await this.ensureSpots([symbol]);
-    const existing = this.tickers.get(symbol);
+    const existing = this.getTicker(symbol);
     if (existing && (existing.bid > 0 || existing.ask > 0)) return existing;
     await this.waitForTicks([symbol], 5000);
-    const t = this.tickers.get(symbol);
+    const t = this.getTicker(symbol);
     if (!t || (t.bid <= 0 && t.ask <= 0)) {
       throw new Error(`CtraderAdapter: sem preço para ${symbol}`);
     }
@@ -300,7 +301,7 @@ export class CtraderAdapter {
 
   private async waitForTicks(symbols: string[], timeoutMs: number) {
     const missing = new Set(symbols.filter((s) => {
-      const t = this.tickers.get(s);
+      const t = this.getTicker(s);
       return !t || (t.bid <= 0 && t.ask <= 0);
     }));
     if (!missing.size) return;
@@ -309,7 +310,7 @@ export class CtraderAdapter {
     while (Date.now() < deadline && missing.size > 0) {
       await wait();
       for (const s of Array.from(missing)) {
-        const t = this.tickers.get(s);
+        const t = this.getTicker(s);
         if (t && (t.bid > 0 || t.ask > 0)) missing.delete(s);
       }
     }
