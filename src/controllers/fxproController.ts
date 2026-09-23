@@ -4,6 +4,8 @@ import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import FxProSettings from '../models/FxProSettings';
 import FxProStrategy from '../models/FxProStrategy';
 import FxProTrade from '../models/FxProTrade';
+import ExchangeKey from '../models/ExchangeKey';
+import { getSharedCtraderAdapter } from '../strategy/forex/ctrader/ctrader-factory';
 import { FxProBot, getFxProLogBuffer } from '../strategy/fxpro/fxpro-bot';
 import { FxProMetaLabeler } from '../strategy/fxpro/helpers/fxpro-meta-labeler';
 
@@ -360,6 +362,141 @@ export async function getFxProLogs(req: AuthenticatedRequest, res: Response): Pr
       return;
     }
     res.json({ success: true, message: 'ok', data: responseData });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+/**
+ * Obter saldo e métricas da conta cTrader FxPro.
+ */
+export async function getFxProBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
+   try {
+     const userId = req.userId;
+     const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+       ? new mongoose.Types.ObjectId(userId)
+       : userId;
+
+     const key =
+       (await ExchangeKey.findOne({
+         ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+         exchangeId: { $in: ['fxpro', 'fxpro-ctrader'] },
+         active: true,
+       }).lean()) ||
+       (await ExchangeKey.findOne({
+         ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+         exchangeId: { $in: ['ctrader', 'pepperstone'] },
+         active: true,
+       }).lean());
+
+     if (!key) {
+       res.json({ ok: false, error: 'Chave cTrader não encontrada ou inativa.' });
+       return;
+     }
+
+     const settings = await FxProSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
+     const overrides = {
+       accountId: settings?.accountId || undefined,
+       environment: (settings?.accountType === 'real' ? 'live' : 'demo') as ('demo' | 'live'),
+     };
+
+     const adapter = await getSharedCtraderAdapter(key, overrides);
+     const info = await adapter.fetchAccountInfo();
+
+     res.json({
+       ok: true,
+       data: {
+         balance: info.balance || 0,
+         equity: info.equity || 0,
+         leverage: info.leverage || 1000,
+         currency: info.currency || 'USD',
+         accountType: settings?.accountType || 'demo',
+         accountId: settings?.accountId || key.accountId,
+       },
+     });
+   } catch (e: any) {
+     res.status(500).json({ ok: false, error: e.message });
+   }
+ }
+
+/**
+ * Fechar posição aberta a mercado na cTrader.
+ */
+export async function closeFxProPosition(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const { positionId, symbol } = req.body;
+
+    if (!positionId) {
+      res.status(400).json({ ok: false, error: 'Informe o positionId.' });
+      return;
+    }
+
+    const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+      ? new mongoose.Types.ObjectId(userId)
+      : userId;
+
+    const key =
+      (await ExchangeKey.findOne({
+        ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+        exchangeId: { $in: ['fxpro', 'fxpro-ctrader'] },
+        active: true,
+      }).lean()) ||
+      (await ExchangeKey.findOne({
+        ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+        exchangeId: { $in: ['ctrader', 'pepperstone'] },
+        active: true,
+      }).lean());
+
+    if (!key) {
+      res.status(404).json({ ok: false, error: 'Chave cTrader não vinculada.' });
+      return;
+    }
+
+    const settings = await FxProSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
+    const overrides = {
+      accountId: settings?.accountId || undefined,
+      environment: (settings?.accountType === 'real' ? 'live' : 'demo') as ('demo' | 'live'),
+    };
+
+    const adapter = await getSharedCtraderAdapter(key, overrides);
+
+    // Consulta posição aberta para obter volume exato
+    const pnlMap: Map<string, any> = await adapter.getPositionsPnL();
+    const livePos = pnlMap.get(String(positionId));
+    const volumeProtocol = livePos ? Number(livePos.volume || 0) * 100 : 100; // 0.01 lote = 100
+
+    console.log(`[FXPRO-CONTROLLER] 📤 Encerrando manualmente posição #${positionId} (${livePos?.symbol || symbol || 'FX'}) volume=${volumeProtocol}...`);
+    const closeRes = await adapter.closePosition(String(positionId), volumeProtocol);
+
+    // Atualiza status no banco de dados
+    await FxProTrade.updateMany(
+      { positionId: String(positionId) },
+      {
+        status: 'closed',
+        exitPrice: closeRes?.price || livePos?.entryPrice || 0,
+        pnlUsd: closeRes?.realizedPnl ?? (livePos?.netPnl || 0),
+        closedAt: new Date(),
+        closeReason: 'manual',
+      }
+    );
+
+    // Limpa estado da estratégia
+    await FxProStrategy.updateMany(
+      { currentPositionId: String(positionId) },
+      {
+        $unset: { currentPositionId: 1, currentSide: 1 },
+        $set: { currentPnlUsd: 0, entryPrice: 0 },
+        $inc: {
+          totalTrades: 1,
+          winningTrades: (closeRes?.realizedPnl ?? 0) >= 0 ? 1 : 0,
+          losingTrades: (closeRes?.realizedPnl ?? 0) < 0 ? 1 : 0,
+          totalProfitUsd: closeRes?.realizedPnl ?? 0,
+        },
+      }
+    );
+
+    res.json({ ok: true, message: `Posição #${positionId} encerrada com sucesso.`, result: closeRes });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
