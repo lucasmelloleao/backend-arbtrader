@@ -399,9 +399,8 @@ export class FxProBot {
     if (!openTrades || openTrades.length === 0) {
       if (strat.currentPositionId && !matchingLivePos) {
         await FxProStrategy.findByIdAndUpdate(strat._id, {
-          currentPositionId: undefined,
-          currentSide: undefined,
-          currentPnlUsd: 0,
+          $unset: { currentPositionId: 1, currentSide: 1 },
+          $set: { currentPnlUsd: 0, entryPrice: 0 },
         });
       }
       return;
@@ -431,9 +430,8 @@ export class FxProBot {
         });
 
         await FxProStrategy.findByIdAndUpdate(strat._id, {
-          currentPositionId: undefined,
-          currentSide: undefined,
-          currentPnlUsd: 0,
+          $unset: { currentPositionId: 1, currentSide: 1 },
+          $set: { currentPnlUsd: 0, entryPrice: 0 },
           $inc: {
             totalTrades: 1,
             winningTrades: isWin ? 1 : 0,

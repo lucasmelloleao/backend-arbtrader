@@ -83,6 +83,26 @@ export async function getFxProStrategies(req: AuthenticatedRequest, res: Respons
       $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
     }).sort({ createdAt: -1 }).lean();
 
+    for (const strat of rawStrategies) {
+      if (strat.currentPositionId) {
+        const hasOpenTrade = await FxProTrade.exists({
+          strategyId: strat._id,
+          status: 'open',
+          positionId: strat.currentPositionId,
+        });
+        if (!hasOpenTrade) {
+          await FxProStrategy.findByIdAndUpdate(strat._id, {
+            $unset: { currentPositionId: 1, currentSide: 1 },
+            $set: { currentPnlUsd: 0, entryPrice: 0 },
+          });
+          delete strat.currentPositionId;
+          delete strat.currentSide;
+          strat.currentPnlUsd = 0;
+          strat.entryPrice = 0;
+        }
+      }
+    }
+
     const strategies = rawStrategies.map(formatStrategy);
     res.json({ ok: true, strategies });
   } catch (e: any) {

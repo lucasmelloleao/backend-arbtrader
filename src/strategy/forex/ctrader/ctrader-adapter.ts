@@ -736,6 +736,23 @@ export class CtraderAdapter {
         if (m && !out.has(`${m[1]}/${m[2]}`)) out.set(`${m[1]}/${m[2]}`, data);
       }
     }
+
+    for (const [posId, meta] of positionToSymbol.entries()) {
+      if (!out.has(posId)) {
+        const data = {
+          positionId: posId,
+          netPnl: 0,
+          grossPnl: 0,
+          volume: meta.volume,
+          side: meta.side,
+          entryPrice: meta.entryPrice,
+        };
+        out.set(posId, data);
+        if (!out.has(meta.symbol)) out.set(meta.symbol, data);
+        const flatSym = meta.symbol.replace('/', '');
+        if (!out.has(flatSym)) out.set(flatSym, data);
+      }
+    }
     return out;
   }
 
