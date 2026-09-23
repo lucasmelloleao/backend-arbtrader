@@ -2,8 +2,10 @@
 // Opera múltiplos pares Forex/CFD via cTrader Open API Protobuf
 // Integra Gates 1, 2, 3 (Random Walk, Kaufman ER, Spread) e Gate 4 (IA Meta-Labeling Random Forest)
 
+import mongoose from 'mongoose';
 import FxProStrategy, { IFxProStrategy } from '../../models/FxProStrategy';
 import FxProTrade, { IFxProTrade } from '../../models/FxProTrade';
+import FxProSettings from '../../models/FxProSettings';
 import ExchangeKey from '../../models/ExchangeKey';
 import { getSharedCtraderAdapter } from '../forex/ctrader/ctrader-factory';
 import {
@@ -82,6 +84,37 @@ export class FxProBot {
     return { running: this.isRunning };
   }
 
+  public static async syncAllPositions(userId?: any): Promise<void> {
+    try {
+      const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+        ? new mongoose.Types.ObjectId(userId)
+        : userId;
+      const stratQuery = userId ? { $or: [{ userId }, { userId: userObjId }] } : {};
+      const strategies = await FxProStrategy.find(stratQuery);
+      if (!strategies || strategies.length === 0) return;
+
+      const keyQuery = userId
+        ? { $or: [{ userId }, { userId: userObjId }], exchangeId: { $in: ['fxpro', 'fxpro-ctrader', 'ctrader', 'pepperstone'] }, active: true }
+        : { exchangeId: { $in: ['fxpro', 'fxpro-ctrader', 'ctrader', 'pepperstone'] }, active: true };
+      const key = await ExchangeKey.findOne(keyQuery).lean();
+
+      if (!key) return;
+      const settings = await FxProSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
+      const overrides = {
+        accountId: settings?.accountId || undefined,
+        environment: (settings?.accountType === 'real' ? 'live' : 'demo') as ('demo' | 'live'),
+      };
+      const adapter = await getSharedCtraderAdapter(key, overrides);
+      if (!adapter) return;
+
+      for (const strat of strategies) {
+        await this.reconcileOpenPositions(strat as IFxProStrategy, adapter);
+      }
+    } catch (e: any) {
+      log.warn(`⚠️ Erro ao sincronizar posições cTrader: ${e.message}`);
+    }
+  }
+
   private static lastCycleLog = 0;
 
   private static async processCycle(): Promise<void> {
@@ -127,7 +160,12 @@ export class FxProBot {
 
     let adapter: any = null;
     try {
-      adapter = await getSharedCtraderAdapter(key);
+      const settings = await FxProSettings.findOne({ userId: strat.userId }).lean();
+      const overrides = {
+        accountId: settings?.accountId || undefined,
+        environment: (settings?.accountType === 'real' ? 'live' : 'demo') as ('demo' | 'live'),
+      };
+      adapter = await getSharedCtraderAdapter(key, overrides);
     } catch (e: any) {
       log.error(`❌ [${strat.symbol}] Erro ao conectar na cTrader Open API: ${e.message}`);
       return;

@@ -15,8 +15,19 @@ const log = {
 
 const adapterCache = new Map<string, CtraderAdapter>();
 
+export type CtraderAdapterOverrides = {
+  accountId?: string;
+  environment?: 'demo' | 'live';
+};
+
 // Cria o adaptador cTrader a partir de uma ExchangeKey do banco.
-export function buildCtraderAdapter(key: any, opts: { onTokenRefresh?: (accessToken: string, refreshToken: string) => Promise<void> } = {}): CtraderAdapter {
+export function buildCtraderAdapter(
+  key: any,
+  opts: {
+    onTokenRefresh?: (accessToken: string, refreshToken: string) => Promise<void>;
+    overrides?: CtraderAdapterOverrides;
+  } = {}
+): CtraderAdapter {
   const aad = key.userId ? `${key.userId}-${key.exchangeId}` : '';
   const decrypt = (v: string | undefined | null) => {
     if (!v) return '';
@@ -28,14 +39,18 @@ export function buildCtraderAdapter(key: any, opts: { onTokenRefresh?: (accessTo
   if (!key.clientId) throw new Error('CtraderAdapter: clientId ausente na ExchangeKey');
   if (!clientSecret) throw new Error('CtraderAdapter: clientSecret ausente na ExchangeKey');
   if (!accessToken) throw new Error('CtraderAdapter: accessToken ausente na ExchangeKey');
+
+  const accountId = opts.overrides?.accountId || (key.accountId ? String(key.accountId) : '');
+  const environment = (opts.overrides?.environment || key.environment) === 'live' ? 'live' : 'demo';
+
   return new CtraderAdapter({
     clientId: String(key.clientId),
     clientSecret,
     accessToken,
     refreshToken: refreshToken || undefined,
-    accountId: key.accountId ? String(key.accountId) : '',
-    environment: key.environment === 'demo' ? 'demo' : 'live',
-  }, opts);
+    accountId,
+    environment,
+  }, { onTokenRefresh: opts.onTokenRefresh });
 }
 
 // Persiste o novo par de tokens no ExchangeKey (criptografado) após refresh.
@@ -56,24 +71,32 @@ export async function persistCtraderTokens(keyId: string, key: any, accessToken:
 }
 
 // Retorna um adaptador compartilhado (com cache) para uma ExchangeKey.
-export async function getSharedCtraderAdapter(key: any): Promise<CtraderAdapter> {
+export async function getSharedCtraderAdapter(
+  key: any,
+  overrides?: CtraderAdapterOverrides
+): Promise<CtraderAdapter> {
   const keyId = String(key._id || '');
-  if (keyId && adapterCache.has(keyId)) {
-    const cached = adapterCache.get(keyId)!;
+  const accountId = overrides?.accountId || (key.accountId ? String(key.accountId) : '');
+  const environment = (overrides?.environment || key.environment) === 'live' ? 'live' : 'demo';
+  const cacheKey = `${keyId}:${accountId}:${environment}`;
+
+  if (cacheKey && adapterCache.has(cacheKey)) {
+    const cached = adapterCache.get(cacheKey)!;
     try {
       await cached.connect();
       return cached;
     } catch {
-      adapterCache.delete(keyId);
+      adapterCache.delete(cacheKey);
       await cached.destroy().catch(() => {});
     }
   }
   const adapter = buildCtraderAdapter(key, {
+    overrides: { accountId, environment },
     onTokenRefresh: (accessToken, refreshToken) =>
       persistCtraderTokens(keyId, key, accessToken, refreshToken),
   });
   await adapter.connect();
-  if (keyId) adapterCache.set(keyId, adapter);
+  if (cacheKey) adapterCache.set(cacheKey, adapter);
   return adapter;
 }
 

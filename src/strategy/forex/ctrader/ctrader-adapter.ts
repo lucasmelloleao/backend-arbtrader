@@ -672,6 +672,9 @@ export class CtraderAdapter {
    */
   async getPositionsPnL(): Promise<Map<string, { positionId: string; netPnl: number; grossPnl: number; volume: number; side: string }>> {
     await this.connect();
+    if (this.marketsById.size === 0) {
+      await this.loadMarkets().catch((e) => log.warn('⚠️ CtraderAdapter: falha ao carregar markets no getPositionsPnL:', e.message));
+    }
     const accountId = Number(this.creds.accountId);
     const out = new Map<string, { positionId: string; netPnl: number; grossPnl: number; volume: number; side: string }>();
 

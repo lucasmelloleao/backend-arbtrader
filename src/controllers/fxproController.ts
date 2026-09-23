@@ -78,6 +78,7 @@ function formatStrategy(s: any): any {
 export async function getFxProStrategies(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
+    await FxProBot.syncAllPositions(userId).catch(() => {});
     const userObjId = mongoose.Types.ObjectId.isValid(String(userId)) ? new mongoose.Types.ObjectId(String(userId)) : userId;
     const rawStrategies = await FxProStrategy.find({
       $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
@@ -225,6 +226,7 @@ export async function toggleFxProStrategy(req: AuthenticatedRequest, res: Respon
 export async function getFxProTrades(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
+    await FxProBot.syncAllPositions(userId).catch(() => {});
     const { periodo, symbol, limit } = req.query;
 
     const query: any = { userId };
