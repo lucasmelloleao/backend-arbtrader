@@ -1,5 +1,4 @@
-// Motor Quantitativo Ortogonal Deriv (Gatekeeper -> Vetor Direcional -> Micro-Imbalance)
-// Sem colinearidade de indicadores: 3 camadas independentes e sequenciais.
+// Motor Quantitativo Ortogonal Deriv com CUSUM, Teste de Razão de Variância (Lo-MacKinlay) e Spike Filter
 
 export type Direction = 'CALL' | 'PUT';
 
@@ -11,13 +10,15 @@ export interface IndicatorSnapshot {
   emaFast: number;
   emaSlow: number;
   latestPrice: number;
-  // Campos mantidos para compatibilidade retroativa e logs informativos
+  varianceRatio: number; // Lo-MacKinlay Variance Ratio (q=10)
+  cusumExceeded: boolean; // Alerta de quebra estrutural CUSUM
+  regimeScore: number; // Score de qualidade para Asset Rotation (ER * 0.5 + R2 * 0.5)
+  // Campos mantidos para logs informativos e compatibilidade
   rsi?: number;
   stochK?: number;
   tickMomentumUp?: number;
   tickMomentumDown?: number;
   kaufmanER: number;
-  hurstExponent?: number;
 }
 
 export interface SignalDecision {
@@ -31,6 +32,7 @@ export class DerivSignalEngine {
   public static readonly WINDOW_FAST = 9;
   public static readonly WINDOW_SLOW = 21;
   public static readonly WINDOW_MICRO = 10;
+  public static readonly WINDOW_CUSUM = 80;
 
   // Kaufman Efficiency Ratio (ER)
   public static calculateER(prices: number[]): number {
@@ -106,6 +108,69 @@ export class DerivSignalEngine {
     return total === 0 ? 0 : Number(((ups - downs) / total).toFixed(3));
   }
 
+  /**
+   * Teste de Razão de Variância (Lo-MacKinlay) com q = 10 ticks
+   * VR = Var(retornos agregados em q) / (q * Var(retorno 1 tick))
+   * VR > 1.10 -> Persistência de Tendência (Efeito Manada)
+   * VR ≈ 1.00 -> Random Walk Puro (Passeio Aleatório / Cassino)
+   * VR < 0.90 -> Reversão à Média Ruidosa
+   */
+  public static calculateVarianceRatio(prices: number[], q = 10): number {
+    if (prices.length < q * 3) return 1.0;
+
+    // 1-period returns
+    const r1: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      r1.push(prices[i] - prices[i - 1]);
+    }
+    const mean1 = r1.reduce((a, b) => a + b, 0) / r1.length;
+    const var1 = r1.reduce((a, b) => a + Math.pow(b - mean1, 2), 0) / (r1.length - 1 || 1);
+    if (var1 === 0) return 1.0;
+
+    // q-period returns
+    const rq: number[] = [];
+    for (let i = q; i < prices.length; i++) {
+      rq.push(prices[i] - prices[i - q]);
+    }
+    const meanQ = rq.reduce((a, b) => a + b, 0) / rq.length;
+    const varQ = rq.reduce((a, b) => a + Math.pow(b - meanQ, 2), 0) / (rq.length - 1 || 1);
+
+    const vr = varQ / (q * var1);
+    return Number(vr.toFixed(3));
+  }
+
+  /**
+   * Filtro CUSUM (Cumulative Sum) para detecção de quebra estrutural / choque de regime
+   * Acumula desvios normalizados em relação à média recente.
+   * Dispara se a soma acumulada positiva ou negativa exceder o limiar h = 4.5 sigmas.
+   */
+  public static checkCusumAnomaly(prices: number[]): boolean {
+    if (prices.length < 30) return false;
+    const slice = prices.slice(-Math.min(prices.length, this.WINDOW_CUSUM));
+    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+    const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / slice.length;
+    const stdDev = Math.sqrt(variance);
+    if (stdDev === 0) return false;
+
+    // Constante de tolerância k e limiar de decisão h
+    const k = 0.5 * stdDev;
+    const h = 4.5 * stdDev;
+
+    let sPos = 0;
+    let sNeg = 0;
+
+    for (let i = 0; i < slice.length; i++) {
+      const diff = slice[i] - mean;
+      sPos = Math.max(0, sPos + diff - k);
+      sNeg = Math.max(0, sNeg - diff - k);
+
+      if (sPos > h || sNeg > h) {
+        return true; // Quebra estrutural detectada
+      }
+    }
+    return false;
+  }
+
   public static evaluate(prices: number[]): SignalDecision {
     const currentPrice = prices[prices.length - 1] || 0;
 
@@ -121,6 +186,9 @@ export class DerivSignalEngine {
           emaFast: 0,
           emaSlow: 0,
           latestPrice: currentPrice,
+          varianceRatio: 1.0,
+          cusumExceeded: false,
+          regimeScore: 0,
           kaufmanER: 0,
         },
       };
@@ -133,6 +201,9 @@ export class DerivSignalEngine {
     const emaFast = this.calculateEMA(prices, this.WINDOW_FAST);
     const emaSlow = this.calculateEMA(prices, this.WINDOW_SLOW);
     const imbalance = this.calculateImbalance(prices);
+    const varianceRatio = this.calculateVarianceRatio(prices, 10);
+    const cusumExceeded = this.checkCusumAnomaly(prices);
+    const regimeScore = Number(((er * 0.5) + (r2 * 0.5)).toFixed(3));
 
     const indicators: IndicatorSnapshot = {
       er,
@@ -142,13 +213,16 @@ export class DerivSignalEngine {
       emaFast,
       emaSlow,
       latestPrice: currentPrice,
+      varianceRatio,
+      cusumExceeded,
+      regimeScore,
       kaufmanER: er,
       tickMomentumUp: Math.max(0, imbalance),
       tickMomentumDown: Math.max(0, -imbalance),
     };
 
     // 1. Camada de Regime (Gatekeeper de Ruído vs Tendência)
-    // 1.1. Filtro de Spike / Cauda Gorda: se a variação do último tick for > 3 * sigma_tick, rejeita choque de volatilidade
+    // 1.1. Filtro de Spike / Cauda Gorda (> 3 sigmas)
     const returns: number[] = [];
     for (let i = 1; i < regimePrices.length; i++) {
       returns.push(Math.abs(regimePrices[i] - regimePrices[i - 1]));
@@ -159,11 +233,20 @@ export class DerivSignalEngine {
     const lastTickJump = Math.abs(prices[prices.length - 1] - prices[prices.length - 2]);
 
     if (lastTickJump > 3 * sigmaTick && sigmaTick > 0.001) {
-      // Choque de volatilidade / Anomalia de tick
       return { direction: null, confidence: 0, indicators };
     }
 
-    // 1.2. Gatekeeper: Aborta se for ruído estocástico (ER e R²)
+    // 1.2. Filtro CUSUM (Quebra Estrutural / Mudança Brusca)
+    if (cusumExceeded) {
+      return { direction: null, confidence: 0, indicators };
+    }
+
+    // 1.3. Teste de Razão de Variância (Lo-MacKinlay): Rejeita Random Walk Puro (VR < 1.08)
+    if (varianceRatio < 1.08) {
+      return { direction: null, confidence: 0, indicators };
+    }
+
+    // 1.4. Gatekeeper Clássico de Regime: ER e R²
     if (er < 0.28 || r2 < 0.35) {
       return { direction: null, confidence: 0, indicators };
     }

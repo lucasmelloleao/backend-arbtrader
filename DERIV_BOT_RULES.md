@@ -1,7 +1,7 @@
-# Regras e Arquitetura Operacional do Robô Deriv (Modelo Ortogonal, EV Positivo & Blindagem de Risco)
+# Regras e Arquitetura Operacional do Robô Deriv (Modelo Quantitativo Institucional)
 
 ## 1. Visão Geral
-O robô opera de forma quantitativa e automatizada na API da **Deriv**, analisando séries temporais de ticks em tempo real. A arquitetura adota **3 Gates Ortogonais e Sequenciais**, **Otimizador Dinâmico de Barreira**, **Filtro de Spike por Volatilidade Realizada**, **Teto Rígido (Hard Cap) de Kelly** e **Tolerância Adaptativa a Slippage**.
+O robô opera de forma quantitativa e automatizada na API da **Deriv**, analisando séries temporais de ticks em tempo real. A arquitetura adota um **Pipeline de Decisão em 3 Gates Ortogonais**, **Asset Rotation (Roteamento Dinâmico de Liquidez)**, **Filtro CUSUM**, **Teste de Razão de Variância (Lo-MacKinlay)**, **Otimizador Dinâmico de Barreira**, **Gestão Rigorosa de EV & Kelly** e **Gravação de Telemetria/Snapshot de Métricas no Banco de Dados**.
 
 Contratos suportados:
 - **Higher / Lower (Com Barreira Dinâmica Otimizada)**: Índices sintéticos (`1HZ75V`, `1HZ25V`, `1HZ50V`, `1HZ10V`, `1HZ100V`), duração padrão de **15 segundos**.
@@ -9,98 +9,110 @@ Contratos suportados:
 
 ---
 
-## 2. Estrutura em 3 Gates Ortogonais
+## 2. Roteamento Dinâmico de Liquidez (Asset Rotation)
 
-```
-[Fluxo de Ticks em Tempo Real]
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│ 1. Gatekeeper de Regime & Spike Filter  │ ──(Falha / Spike)──► [Sem Operação]
-│    Spike <= 3σ + ER >= 0.28 + R² >= 0.35│
-└─────────────────────────────────────────┘
-              │ (Aprovado: Mercado Direcional e Estável)
-              ▼
-┌─────────────────────────────────────────┐
-│ 2. Vetor Direcional (Macro)             │ ──(Determina Lado: CALL / PUT)
-│    EMA 9/21 + Inclinação OLS (Slope)    │
-└─────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│ 3. Gatilho de Micro-Timing (Imbalance)  │ ──(Score de Entrada: 0.0 a 1.0)
-│    Tick Imbalance (últimos 10 ticks)    │
-└─────────────────────────────────────────┘
-```
-
-### Camada 1: Gatekeeper de Regime & Filtro de Spike (Cauda Gorda)
-1. **Filtro de Spike (Choque de Volatilidade)**:
-   - Calcula o desvio padrão dos retornos por tick ($\sigma_{\text{tick}}$).
-   - Se a variação absoluta do último tick for superior a $3 \times \sigma_{\text{tick}}$, o movimento é classificado como anomalia estocástica e a entrada é rejeitada.
-2. **Kaufman Efficiency Ratio ($ER$) & Regressão Linear ($R^2$)**:
-   - **$ER \ge 0.28$**: Eficiência do movimento direcional vs volatilidade do caminho percorrido.
-   - **$R^2 \ge 0.35$**: Força do ajuste da reta linear de tendência sobre 40 ticks.
-   - Se qualquer um dos dois falhar, o cálculo é abortado antes de avaliar direção.
-
-### Camada 2: Vetor Direcional
-- **Direção de Alta (CALL / HIGHER / MULTUP)**: $Preço > EMA_9 > EMA_{21}$, Inclinação OLS ($Slope$) $> 0$ e $Imbalance > 0$.
-- **Direção de Baixa (PUT / LOWER / MULTDOWN)**: $Preço < EMA_9 < EMA_{21}$, Inclinação OLS ($Slope$) $< 0$ e $Imbalance < 0$.
-
-### Camada 3: Micro-Fluxo (Order Flow Proxy)
-Calcula a pressão compradora vs vendedora nos últimos 10 ticks:
-$$\text{Tick Imbalance} = \frac{\text{Ticks de Alta} - \text{Ticks de Baixa}}{\text{Total de Ticks}}$$
+Em vez de fixar o capital em um único índice sintético, o robô monitora todos os ativos configurados simultaneamente a cada ciclo:
+1. **Coleta de Ticks**: Consulta o fluxo recente de todos os índices candidatos.
+2. **Cálculo do Regime Score**:
+   $$\text{Regime Score} = (0.50 \times ER) + (0.50 \times R^2)$$
+3. **Classificação & Priorização**: Ordena todos os ativos pelo Regime Score e direciona o capital **exclusivamente para o ativo que apresentar a tendência mais limpa e previsível** naquele segundo.
 
 ---
 
-## 3. Cálculo de Confiança Calibrada
+## 3. Pipeline de 3 Gates Ortogonais & Filtros Estruturais
+
+```
+[Fluxo Multi-Ativos em Tempo Real]
+                │
+                ▼
+┌────────────────────────────────────────────────────────┐
+│ 1. Gatekeeper Estrutural & Regime                      │ ──(Falha / Anomalia)──► [Quarentena / Descarte]
+│    • Spike Filter (Salto <= 3σ)                        │
+│    • CUSUM Anomaly Check (Sem quebra de fase)          │
+│    • Lo-MacKinlay Variance Ratio (VR >= 1.08)          │
+│    • Kaufman ER >= 0.28 + OLS R² >= 0.35               │
+└────────────────────────────────────────────────────────┘
+                │ (Aprovado: Regime Persistente e Estável)
+                ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Vetor Direcional (Macro)                            │ ──(Determina Lado: CALL / PUT)
+│    EMA 9/21 + Inclinação OLS (Slope)                   │
+└────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Gatilho de Micro-Timing (Imbalance)                 │ ──(Score de Entrada: 0.0 a 1.0)
+│    Tick Imbalance (últimos 10 ticks)                   │
+└────────────────────────────────────────────────────────┘
+```
+
+### Detalhamento dos Filtros do Gatekeeper:
+- **Filtro CUSUM (Cumulative Sum)**: Detecta viradas bruscas no algoritmo da Deriv. Se a soma acumulada de desvios ultrapassar o limiar $h = 4.5\sigma$, o ativo entra em **Quarentena Preventiva de 5 minutos (300s)**.
+- **Teste de Razão de Variância (Lo-MacKinlay com $q = 10$)**:
+  $$VR = \frac{\text{Var}(r_{10})}{10 \times \text{Var}(r_1)}$$
+  - Se $VR < 1.08$: O mercado é classificado como **Random Walk Puro (Passeio Aleatório / Cassino)** e o robô rejeita a operação.
+  - Se $VR \ge 1.08$: Mercado com persistência direcional comprovada (Efeito Manada).
+- **Filtro de Spike (Cauda Gorda)**: Rejeita se o salto do último tick for superior a $3 \times \sigma_{\text{tick}}$.
+- **Gatekeeper Clássico**: $ER \ge 0.28$ e $R^2 \ge 0.35$.
+
+---
+
+## 4. Confiança Calibrada
 
 $$\text{Confiança} = (0.35 \times \text{Norm}(ER)) + (0.35 \times R^2) + (0.30 \times \vert{}\text{Tick Imbalance}\vert{})$$
 
 - $\text{Norm}(ER) = \min(1.0, \frac{ER}{0.60})$
-- **Gatilho de Execução**: $\text{Confiança} \ge 0.72$ (com todos os Gates 1 e 2 satisfeitos).
+- **Gatilho de Execução**: $\text{Confiança} \ge 0.72$.
 
 ---
 
-## 4. Otimizador Dinâmico de Barreira, $EV$ e Gestão de Slippage
+## 5. Otimizador de Barreira, Validação de $EV$ e Kelly Blindado
 
-### 4.1. Offset Dinâmico de Barreira por Volatilidade
+### 5.1. Offset Dinâmico de Barreira
 $$\sigma_{15\text{s}} = \sigma_{\text{tick}} \times \sqrt{15}$$
 $$\text{Offset Alvo } (\Delta) = \pm (0.30 \times \sigma_{15\text{s}})$$
-- **HIGHER**: Barreira deslocada abaixo do preço atual ($-\Delta$).
-- **LOWER**: Barreira deslocada acima do preço atual ($+\Delta$).
 
-### 4.2. Critério de Valor Esperado ($EV > 0$) e Edge Operacional
-1. **Retorno Líquido ($R$)**: $R = \frac{\text{Payout} - \text{Ask Price}}{\text{Ask Price}}$
-2. **Faixa Sweet Spot**: Exige $40\% \le R \le 85\%$ ($0.40 \le R \le 0.85$).
-3. **Probabilidade Implícita da Corretora ($P_{\text{Deriv}}$)**: $P_{\text{Deriv}} = \frac{\text{Ask Price}}{\text{Payout}}$
-4. **Vantagem Matemática ($\text{Edge}$)**: $\text{Edge} = P_{\text{modelo}} - P_{\text{Deriv}} \ge \text{Edge Mínimo}$ (Base: $4\%$).
-5. **Valor Esperado ($EV$)**:
-   $$EV = (P_{\text{modelo}} \times R) - (1 - P_{\text{modelo}}) > 0$$
+### 5.2. Critério de Expectativa Matemática ($EV > 0$)
+1. **Faixa Sweet Spot**: $40\% \le R \le 85\%$.
+2. **Edge Matemático**: $\text{Edge} = P_{\text{modelo}} - P_{\text{Deriv}} \ge \text{Edge Mínimo}$ (Base: $4\%$).
+3. **Valor Esperado**: $EV = (P_{\text{modelo}} \times R) - (1 - P_{\text{modelo}}) > 0$.
 
-### 4.3. Dimensionamento com Hard Cap de Kelly (Teto de Segurança)
+### 5.3. Dimensionamento com Hard Cap de Kelly
 $$f^* = \frac{P_{\text{modelo}} \times (R + 1) - 1}{R}$$
-$$\text{Stake Proposto} = \text{Base Stake} \times (1 + 0.25 \times f^*)$$
-$$\text{Stake Final} = \min(\text{Stake Proposto}, \, \text{Base Stake} \times 1.5)$$
-*(O stake nunca ultrapassa 1.5x o valor base, blindando a conta contra anomalias na API).*
+$$\text{Stake Final} = \min(\text{Base Stake} \times (1 + 0.25 \times f^*), \, \text{Base Stake} \times 1.5)$$
 
-### 4.4. Tolerância a Slippage e Adaptação de Latência
-- Ao receber a confirmação de execução (`buy`), compara o preço real executado com o cotado no `proposal`.
-- Se o slippage corroer o $EV$ para $\le 0$, registra `SLIPPAGE_WARNING`.
-- Se ocorrerem **3 warnings consecutivos**, o robô eleva automaticamente o **Edge Mínimo de $4\%$ para $6\%$** para compensar o atraso de rede.
+### 5.4. Tolerância a Slippage e Compensação de Latência
+- Compara preço real executado com o cotado no `proposal`.
+- Se 3 derrapagens consecutivas corromperem o $EV$ para $\le 0$, eleva o Edge Mínimo de $4\%$ para $6\%$.
 
 ---
 
-## 5. Gestão de Saída (Take Profit & Stop Loss)
+## 6. Telemetria e Snapshot de Auditoria no Banco de Dados
 
-- **Contratos Curtos (15s)**: Saída antecipada desativada. Correm até o vencimento natural para evitar spread negativo.
-- **Multiplicadores / Cripto (120s)**: Saída antecipada ativa a partir de $+25\%$ de lucro líquido ou Trailing Stop.
+A cada trade disparado, o robô salva um snapshot completo no documento `DerivTrade`:
+- `metrics.er`: Eficiência de Kaufman no instante do sinal.
+- `metrics.r2`: Coeficiente de Determinação da Regressão Linear.
+- `metrics.slope`: Inclinação do vetor de tendência.
+- `metrics.imbalance`: Desequilíbrio do micro fluxo de ticks.
+- `metrics.varianceRatio`: Razão de Variância (Lo-MacKinlay).
+- `metrics.regimeScore`: Score de seleção no Asset Rotation.
+- `metrics.tickVolatility`: Desvio padrão ($\sigma_{\text{tick}}$).
+- `metrics.modelConfidence`: Confiança calculada pelo modelo.
+- `metrics.expectedValue`: Valor Esperado ($EV$) líquido.
+- `metrics.edge`: Vantagem sobre a probabilidade implícita do broker.
+- `metrics.payoutRatio`: Retorno líquido $R$ da proposta.
+- `metrics.brokerProb`: Probabilidade implícita da Deriv ($\text{Ask} / \text{Payout}$).
+- `metrics.barrier`: Offset e barreira utilizada.
+- `metrics.spotPrice`: Preço exato do ativo no instante da entrada.
 
 ---
 
-## 6. Gestão de Risco e Resfriamento
+## 7. Gestão de Risco e Resfriamento
 
-- **Cooldown Pós-Loss**: Pausa o ativo por **180 segundos (3 minutos)** se o último trade fechou em perda.
-- **3 ou mais Perdas Consecutivas**: Stake reduzido para **$25\%$** e pausa global de proteção de **180 segundos**.
-- **2 Perdas Consecutivas**: Stake reduzido para **$50\%$**.
-- **1 Vitória**: Restaura o stake integral ($100\%$).
-- **Stop Diário de Perda (`maxDailyLoss`)**: Bloqueia novas entradas no dia caso atinja o limite.
+- **Quarentena CUSUM**: 5 minutos de bloqueio preventivo no ativo se houver quebra estrutural.
+- **Cooldown Pós-Loss**: Pausa de 180 segundos no ativo após operação perdedora.
+- **Sequência de Perdas (Anti-Martingale)**:
+  - 2 perdas seguidas: Stake reduzido para $50\%$.
+  - 3 ou mais perdas: Stake reduzido para $25\%$ e pausa global de 180s.
+  - 1 vitória: Restaura $100\%$ do stake nominal.
+- **Stop Diário de Perda (`maxDailyLoss`)**: Interrompe o robô no dia caso atinja o limite.

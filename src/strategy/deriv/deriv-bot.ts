@@ -43,6 +43,9 @@ export const activeDerivClients = new Map<string, { client: DerivWsClient; token
 let consecutiveSlippageWarnings = 0;
 let dynamicMinEdgeBonus = 0;
 
+// Quarentena Preventiva CUSUM por ativo (5 minutos = 300s)
+const cusumQuarantineMap = new Map<string, number>();
+
 export async function getOrCreateDerivClient(settings: any, activeToken: string): Promise<{ client: DerivWsClient; accountInfo: any } | null> {
 
   const clientKey = `${settings.userId || 'default'}_${settings.accountType || 'demo'}`;
@@ -336,10 +339,27 @@ async function executeDerivCycle(): Promise<void> {
       }
     }
 
+    // --- ASSET ROTATION & GATHERING CANDIDATES ---
+    // Analisa todos os ativos candidatos em paralelo, calcula Regime Score e ordena pelo melhor ambiente
+    const evaluatedCandidates: Array<{
+      target: any;
+      ticks: number[];
+      signal: any;
+      regimeScore: number;
+    }> = [];
+
     for (const target of activeTargets) {
       const sym = target.symbol;
       try {
-        // 1. Cooldown Anti-Sequência de Loss (Pausa o ativo por 180s se o último trade fechou em perda)
+        // 1. Quarentena Preventiva CUSUM (5 minutos = 300s)
+        const cusumQuarantineUntil = cusumQuarantineMap.get(sym) || 0;
+        if (Date.now() < cusumQuarantineUntil) {
+          const remainingSec = Math.ceil((cusumQuarantineUntil - Date.now()) / 1000);
+          log.info(`🛡️ [${sym} (${target.name})] Em Quarentena Preventiva CUSUM (${remainingSec}s restantes).`);
+          continue;
+        }
+
+        // 2. Cooldown Pós-Loss (180s)
         const lastLossTrade = await DerivTrade.findOne({
           userId: settings.userId,
           symbol: sym,
@@ -349,34 +369,72 @@ async function executeDerivCycle(): Promise<void> {
         if (lastLossTrade && (lastLossTrade.pnl || 0) < 0 && lastLossTrade.closedAt) {
           const secondsSinceLoss = (Date.now() - new Date(lastLossTrade.closedAt).getTime()) / 1000;
           if (secondsSinceLoss < 180) {
-            log.info(`⏸️ [${sym} (${target.name})] Em cooldown pós-loss (${Math.round(180 - secondsSinceLoss)}s restantes). Aguardando estabilização do mercado...`);
+            log.info(`⏸️ [${sym} (${target.name})] Em cooldown pós-loss (${Math.round(180 - secondsSinceLoss)}s restantes).`);
             continue;
           }
         }
 
-        // Busca 60 ticks para cálculo robusto de médias e canal
+        // Busca 60 ticks para cálculo de regime e sinal
         const ticks = await client.getTicksHistory(sym, 60).catch((err: any) => {
           log.warn(`⚠️ [${sym}] Falha ao buscar histórico de cotações: ${err?.message || err}`);
           return [];
         });
 
         if (!ticks || ticks.length < 40) {
-          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/40) na Deriv. Aguardando novo fluxo de cotação...`);
+          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/40).`);
           continue;
         }
 
         const signal = evaluateSignal(ticks);
+        const { indicators } = signal;
+
+        // Verifica se o filtro CUSUM detectou quebra estrutural
+        if (indicators.cusumExceeded) {
+          cusumQuarantineMap.set(sym, Date.now() + 300000); // 5 minutos de quarentena
+          log.warn(`🚨 [${sym}] Alerta CUSUM de Quebra Estrutural! Ativo colocado em quarentena preventiva de 5 minutos.`);
+          continue;
+        }
+
+        // Verifica Teste de Razão de Variância (Lo-MacKinlay)
+        if (indicators.varianceRatio < 1.08) {
+          log.info(`🎲 [${sym}] Random Walk Detectado (VR: ${indicators.varianceRatio} < 1.08). Ativo ignorado no momento.`);
+          continue;
+        }
+
+        evaluatedCandidates.push({
+          target,
+          ticks,
+          signal,
+          regimeScore: indicators.regimeScore || 0,
+        });
+      } catch (errEval: any) {
+        log.warn(`⚠️ [${sym}] Erro ao pré-avaliar ativo: ${errEval.message}`);
+      }
+    }
+
+    // Ordena os ativos pelo Ranking de Qualidade (Regime Score: maior ER + R²)
+    evaluatedCandidates.sort((a, b) => b.regimeScore - a.regimeScore);
+
+    if (evaluatedCandidates.length > 0) {
+      const topAsset = evaluatedCandidates[0];
+      log.info(`🏆 [ASSET ROTATION] Ativo de Maior Qualidade: ${topAsset.target.symbol} (Regime Score: ${topAsset.regimeScore} | Candidatos: ${evaluatedCandidates.length}).`);
+    }
+
+    for (const candidate of evaluatedCandidates) {
+      const { target, ticks, signal } = candidate;
+      const sym = target.symbol;
+      try {
         const { direction: decidedDirection, confidence: calculatedProb, indicators } = signal;
-        const { er, r2, slope, imbalance } = indicators;
+        const { er, r2, slope, imbalance, varianceRatio } = indicators;
 
         // Filtro de Probabilidade Mínima da Estratégia
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
           const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Ruído/Chop)';
-          log.info(`🔍 [${sym} (${target.name})] Confiança: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Slope: ${slope > 0 ? '+' : ''}${slope.toFixed(4)} | Imbalance: ${(imbalance * 100).toFixed(0)}%.`);
+          log.info(`🔍 [${sym} (${target.name})] Confiança: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | VR: ${varianceRatio} | Imbalance: ${(imbalance * 100).toFixed(0)}%.`);
           continue;
         }
 
-        log.info(`🎯 [${sym} (${target.name})] GATES QUANTITATIVOS APROVADOS: Direção ${decidedDirection} com ${(calculatedProb * 100).toFixed(1)}% de Confiança (Mín: ${(target.minCertaintyProb * 100).toFixed(0)}% | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Imb: ${(imbalance * 100).toFixed(0)}%).`);
+        log.info(`🎯 [${sym} (${target.name})] GATES QUANTITATIVOS APROVADOS: Direção ${decidedDirection} com ${(calculatedProb * 100).toFixed(1)}% de Confiança (Mín: ${(target.minCertaintyProb * 100).toFixed(0)}% | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | VR: ${varianceRatio} | Imb: ${(imbalance * 100).toFixed(0)}%).`);
 
         // Determina o tipo de contrato e a barreira a partir das configurações específicas da estratégia
         let contractType = 'HIGHER';
@@ -570,7 +628,23 @@ async function executeDerivCycle(): Promise<void> {
               status: 'open',
               buyPrice: Number(bought.buy_price || tradeStake),
               investedUsd: Number(bought.buy_price || tradeStake),
-              reason: `Estratégia "${target.name}" (${(calculatedProb * 100).toFixed(0)}% Confiança | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Imb: ${(imbalance * 100).toFixed(0)}%)`,
+              reason: `Estratégia "${target.name}" (${(calculatedProb * 100).toFixed(0)}% Confiança | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | VR: ${varianceRatio} | Imb: ${(imbalance * 100).toFixed(0)}%)`,
+              metrics: {
+                er,
+                r2,
+                slope,
+                imbalance,
+                varianceRatio,
+                regimeScore: candidate.regimeScore || 0,
+                tickVolatility: tickVol || 0,
+                modelConfidence: calculatedProb,
+                expectedValue: evCheckResult?.expectedValue || 0,
+                edge: evCheckResult?.edge || 0,
+                payoutRatio: evCheckResult?.payoutRatio || 0,
+                brokerProb: evCheckResult?.brokerProb || 0,
+                barrier: proposal.barrier || barrierValue || '',
+                spotPrice: ticks[ticks.length - 1] || 0,
+              },
               openedAt: new Date(),
             });
 
