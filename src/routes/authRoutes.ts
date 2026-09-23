@@ -83,7 +83,9 @@ import {
   voidCloseForexStrategy,
   closeAllForexStrategies,
   getForexLogs,
-  getForexLivePrices
+  getForexLivePrices,
+  getPepperstoneMetaModelStatus,
+  trainPepperstoneMetaModel
 } from '../controllers/forexArbController';
 import {
   getPredictionStrategies,
@@ -164,6 +166,8 @@ router.post('/forex-arb/void-close', authMiddleware as any, voidCloseForexStrate
 router.post('/forex-arb/close-all', authMiddleware as any, closeAllForexStrategies as any);
 router.get('/forex-arb/logs', authMiddleware as any, getForexLogs as any);
 router.get('/forex-arb/live-prices', authMiddleware as any, getForexLivePrices as any);
+router.get('/forex-arb/ai/status', authMiddleware as any, getPepperstoneMetaModelStatus as any);
+router.post('/forex-arb/ai/train', authMiddleware as any, trainPepperstoneMetaModel as any);
 
 router.get('/bot-status', authMiddleware as any, getBotStatus as any);
 router.get('/auth/bot-status', authMiddleware as any, getBotStatus as any);

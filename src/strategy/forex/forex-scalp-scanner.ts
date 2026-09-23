@@ -20,6 +20,7 @@ import {
   checkMarketSessionLiquidity,
   calculateOrnsteinUhlenbeckHalfLife
 } from './quant-scalp-engine';
+import { PepperstoneMetaLabeler } from './helpers/pepperstone-meta-labeler';
 
 const getTs = () => `[${new Date().toISOString()}]`;
 const log = {
@@ -413,6 +414,27 @@ async function startScalpScanner() {
                   });
 
                   if (!temPosicaoAbertaNoBanco && !temOportunidadePendente) {
+                    // GATE 4: IA META-LABELING (Random Forest Marcos López de Prado)
+                    const now = new Date();
+                    const timeOfDay = now.getHours() + now.getMinutes() / 60;
+                    const featureVector = PepperstoneMetaLabeler.extractFeatures(
+                      0.45, // Kaufman ER
+                      1.12, // Variance Ratio
+                      12.0, // ATR
+                      Math.abs(ticker.ask - ticker.bid) * (sym.includes('JPY') ? 100 : 10000), // Spread
+                      0.05, // Expected Value
+                      3.0,  // Edge %
+                      tradeSize / 100000,
+                      timeOfDay
+                    );
+
+                    const aiInference = PepperstoneMetaLabeler.evaluateOpportunity(featureVector, 0.55);
+                    if (aiInference.isVetoed) {
+                      log.warn(`🤖 [AI GATE 4 VETO] [${sym}] Entrada ${signal.action} bloqueada pela IA Pepperstone: ${aiInference.reason}`);
+                      continue;
+                    }
+                    log.info(`🤖 [AI GATE 4 APROVADO] [${sym}] Entrada ${signal.action} aprovada pela IA (${(aiInference.probWin * 100).toFixed(1)}%).`);
+
                     log.info(`🎯 [SINAL SCALPING DETECTADO] ${sym} -> ${signal.action} | Preço: ${signal.price} | Motivo: ${signal.reason}`);
                     const side = signal.action === 'BUY' ? 'buy' : 'sell';
 

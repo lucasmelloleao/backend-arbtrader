@@ -210,11 +210,50 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    let trades = await ForexArbTrade.find({ userId, type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100).lean();
-    if (!trades || trades.length === 0) {
+    const { periodo, symbol, limit } = req.query as any;
+
+    const query: any = { userId, type: { $ne: 'opportunity_found' } };
+    if (symbol) {
+      const symUpper = String(symbol).toUpperCase().replace('/', '');
+      query.$or = [
+        { 'legs.symbol': new RegExp(symUpper, 'i') },
+        { strategyName: new RegExp(symUpper, 'i') }
+      ];
+    }
+
+    if (periodo === '5m') {
+      query.createdAt = { $gte: new Date(Date.now() - 5 * 60 * 1000) };
+    } else if (periodo === '10m') {
+      query.createdAt = { $gte: new Date(Date.now() - 10 * 60 * 1000) };
+    } else if (periodo === '30m') {
+      query.createdAt = { $gte: new Date(Date.now() - 30 * 60 * 1000) };
+    } else if (periodo === '1h') {
+      query.createdAt = { $gte: new Date(Date.now() - 60 * 60 * 1000) };
+    } else if (periodo === '2h') {
+      query.createdAt = { $gte: new Date(Date.now() - 2 * 60 * 60 * 1000) };
+    } else if (periodo === '3h') {
+      query.createdAt = { $gte: new Date(Date.now() - 3 * 60 * 60 * 1000) };
+    } else if (periodo === '5h') {
+      query.createdAt = { $gte: new Date(Date.now() - 5 * 60 * 60 * 1000) };
+    } else if (periodo === '12h') {
+      query.createdAt = { $gte: new Date(Date.now() - 12 * 60 * 60 * 1000) };
+    } else if (periodo === '24h') {
+      query.createdAt = { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+    } else if (periodo === 'today') {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      query.createdAt = { $gte: startOfDay };
+    } else if (periodo === '7d') {
+      query.createdAt = { $gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) };
+    } else if (periodo === '30d') {
+      query.createdAt = { $gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) };
+    }
+
+    let trades = await ForexArbTrade.find(query).sort({ createdAt: -1 }).limit(Number(limit) || 1000).lean();
+    if ((!trades || trades.length === 0) && !periodo && !symbol) {
       trades = await ForexArbTrade.find({ type: { $ne: 'opportunity_found' } }).sort({ createdAt: -1 }).limit(100).lean();
     }
-    if (!trades || trades.length === 0) {
+    if ((!trades || trades.length === 0) && !periodo && !symbol) {
       trades = await ForexArbTrade.find({}).sort({ createdAt: -1 }).limit(100).lean();
     }
     const formatted = trades.map((t: any) => {
@@ -862,6 +901,43 @@ export async function getForexLivePrices(req: AuthenticatedRequest, res: Respons
     return res.json({ success: true, message: 'ok', data });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
+  }
+}
+
+// --- AI META-LABELING (GATE 4) PEPPERSTONE ---
+export async function getPepperstoneMetaModelStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const { PepperstoneMetaLabeler } = require('../strategy/forex/helpers/pepperstone-meta-labeler');
+    const metadata = PepperstoneMetaLabeler.getMetadata();
+    const userId = req.userId;
+    const totalTrades = await ForexArbTrade.countDocuments(userId ? { userId } : {});
+
+    res.json({
+      ok: true,
+      data: {
+        isTrained: Boolean(metadata?.trainedAt),
+        metadata,
+        totalExecutedTrades: totalTrades,
+        minTradesRequired: 5,
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+export async function trainPepperstoneMetaModel(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const { PepperstoneMetaLabeler } = require('../strategy/forex/helpers/pepperstone-meta-labeler');
+    const result = await PepperstoneMetaLabeler.trainModel(userId);
+    if (result.success) {
+      res.json({ ok: true, message: result.message, metadata: result.metadata });
+    } else {
+      res.status(400).json({ ok: false, error: result.message });
+    }
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 }
 
