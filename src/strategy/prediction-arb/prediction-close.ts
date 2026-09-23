@@ -102,6 +102,7 @@ export async function closeStrategy(strategyId: string, opts: { dryRun?: boolean
     yesShares,
     noShares,
     pnl: Number(pnl.toFixed(4)),
+    metrics: openTrade?.metrics || (strat as any).metrics || {},
     reason,
   });
 

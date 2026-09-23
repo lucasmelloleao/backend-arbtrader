@@ -466,6 +466,9 @@ export async function runMarketMaking(
   }
 
   // ── REFINAMENTO 2: ATR DINÂMICO NO SPOT DISTANCE GUARD ────────────────────
+  let quantGates: any = null;
+  let atrPctVal = 0.15;
+  let distPctVal = 0.20;
   const coinMatch = slugLower.match(/^(btc|eth|sol|doge|xrp)/i);
   if (coinMatch) {
     const symbol = coinMatch[1].toUpperCase();
@@ -478,6 +481,7 @@ export async function runMarketMaking(
     }
 
     const { spotPrice, atrPct } = await fetchSpotAtrInfo(symbol);
+    atrPctVal = atrPct || 0.15;
     const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
 
     // Piso Fixo: Altcoins = 0.15%, Majors = 0.08%.
@@ -487,14 +491,14 @@ export async function runMarketMaking(
     const minDistPctRequired = Math.max(pisoPct, atrDinamicoPct);
 
     if (spotPrice > 0 && strikeEstimate > 0) {
-      const distPct = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
-      if (distPct < minDistPctRequired) {
-        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
+      distPctVal = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
+      if (distPctVal < minDistPctRequired) {
+        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPctVal.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
         return { quoted: false, orderIds: [] };
       }
 
       // ── GATES QUANTITATIVOS SPOT: KAUFMAN ER & VARIANCE RATIO (RANDOM WALK FILTER) ──
-      const quantGates = await calculateSpotQuantGates(symbol, highCertaintySide, strikeEstimate);
+      quantGates = await calculateSpotQuantGates(symbol, highCertaintySide, strikeEstimate);
       if (!quantGates.gatesPassed) {
         log.warn(`🎲 [${strategy.slug}] QUANT GATES REJEITADOS: ${quantGates.reason} (ER: ${quantGates.er} | VR: ${quantGates.varianceRatio}). Entrada bloqueada.`);
         return { quoted: false, orderIds: [] };
@@ -504,6 +508,7 @@ export async function runMarketMaking(
   }
 
   // ── EXPECTED VALUE (EV) E KELLY CRITERION CHECK ──────────────────────────
+  const saldoDisponivel = await getOnchainBalance(String(keyDoc?.depositWallet || '')).catch(() => 0);
   const targetEntryPrice = (highCertaintySide === 'YES' ? (bYes.ask > 0 ? bYes.ask : bYes.bid) : (bNo.ask > 0 ? bNo.ask : bNo.bid));
   const estimatedRealProb = Math.min(0.99, Math.max(currentProb, 0.96)); // Probabilidade estimada com base no oráculo
   const bankrollUsd = saldoDisponivel > 0 ? saldoDisponivel : 100;
@@ -519,8 +524,8 @@ export async function runMarketMaking(
   const featureVector = PolymarketMetaLabeler.extractFeatures(
     quantGates?.er || 0.35,
     quantGates?.varianceRatio || 1.10,
-    atrPct || 0.15,
-    spotDistancePct || 0.20,
+    atrPctVal,
+    distPctVal,
     evResult.expectedValue,
     evResult.edgePct,
     targetEntryPrice,
@@ -583,7 +588,6 @@ export async function runMarketMaking(
   //     ativas exceder o saldo disponível. Sem isso, o MM empilha ordens
   //     maker que travam o capital (ex: $4.95 ativos de $5.38) e as novas
   //     ordens são rejeitadas pelo CLOB com "not enough balance".
-  const saldoDisponivel = await getOnchainBalance(String(keyDoc?.depositWallet || '')).catch(() => 0);
   // Custo REAL da rodada: no modo lado leve (completar hedge) só a perna leve
   // é comprada (tamanho = diferença exata); senão, o par inteiro.
   const ladoLeveCalc = yesShares > noShares ? 'NO' : (noShares > yesShares ? 'YES' : null);
@@ -757,6 +761,16 @@ export async function runMarketMaking(
       yesShares: ladoLeve === 'YES' ? tamanhoLadoLeve : (ladoLeve ? 0 : sharesPerQuote),
       noShares: ladoLeve === 'NO' ? tamanhoLadoLeve : (ladoLeve ? 0 : sharesPerQuote),
       orderIds,
+      metrics: {
+        er: quantGates?.er || 0,
+        varianceRatio: quantGates?.varianceRatio || 1.0,
+        atrPct: atrPctVal,
+        spotDistancePct: distPctVal,
+        expectedValue: evResult?.expectedValue || 0,
+        edgePct: evResult?.edgePct || 0,
+        entryPrice: yesPrice > 0 ? yesPrice : noPrice,
+        segsRestantes,
+      },
       reason: ladoLeve
         ? `MM completando hedge: ${tamanhoLadoLeve} ${ladoLeve} (attempt ${proximoAttempt})`
         : (modoTaker ? 'Entrada taker simultânea (par balanceado)' : `MM maker tentativa ${proximoAttempt}`),
