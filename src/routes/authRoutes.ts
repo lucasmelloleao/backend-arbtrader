@@ -92,7 +92,9 @@ import {
   deletePredictionStrategy,
   getPredictionTrades,
   getPredictionTradesSummary,
-  deletePredictionTrades
+  deletePredictionTrades,
+  trainPredictionMetaModel,
+  getPredictionMetaModelStatus
 } from '../controllers/predictionArbController';
 import {
   getPredictionArbSettings,
@@ -186,6 +188,8 @@ router.post('/prediction-arb/increase', authMiddleware as any, increasePredictio
 router.post('/prediction-arb/void-close', authMiddleware as any, voidClosePredictionStrategy as any);
 router.get('/prediction-arb/manual-scan', authMiddleware as any, manualScanPrediction as any);
 router.get('/prediction-arb/logs', authMiddleware as any, getPredictionLogs as any);
+router.post('/prediction-arb/meta-model/train', authMiddleware as any, trainPredictionMetaModel as any);
+router.get('/prediction-arb/meta-model/status', authMiddleware as any, getPredictionMetaModelStatus as any);
 
 router.get('/auth/prediction-arb/strategies', authMiddleware as any, getPredictionStrategies as any);
 router.post('/auth/prediction-arb/strategies', authMiddleware as any, createPredictionStrategy as any);
@@ -203,6 +207,8 @@ router.post('/auth/prediction-arb/increase', authMiddleware as any, increasePred
 router.post('/auth/prediction-arb/void-close', authMiddleware as any, voidClosePredictionStrategy as any);
 router.get('/auth/prediction-arb/manual-scan', authMiddleware as any, manualScanPrediction as any);
 router.get('/auth/prediction-arb/logs', authMiddleware as any, getPredictionLogs as any);
+router.post('/auth/prediction-arb/meta-model/train', authMiddleware as any, trainPredictionMetaModel as any);
+router.get('/auth/prediction-arb/meta-model/status', authMiddleware as any, getPredictionMetaModelStatus as any);
 
 router.get('/portfolio/resumo', authMiddleware as any, getPortfolioResumo as any);
 router.get('/portfolio/historico', authMiddleware as any, getPortfolioHistorico as any);

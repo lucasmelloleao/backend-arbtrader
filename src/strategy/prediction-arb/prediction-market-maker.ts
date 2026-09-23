@@ -13,6 +13,8 @@ import { resolvePolymarketKey } from './prediction-scanner';
 import { resolveClobCredentials, placeOrder, cancelOrder, fetchBook, fetchPositions, signOrder, getOnchainBalance } from './helpers/clob-client';
 import { placeOrderViaSdk, cancelOrderViaSdk, fetchPositionsViaSdk, fetchPositionsViaDataApi } from './helpers/secure-client';
 import { makerEntryPrices, fetchSpotPrice, fetchSpotAtrInfo, checkSpotSpike } from './helpers/pricing';
+import { calculatePolymarketEV, calculateSpotQuantGates } from './helpers/polymarket-math';
+import { PolymarketMetaLabeler } from './helpers/polymarket-meta-labeler';
 import { PREDICTION_ARB_CONFIG } from '../../config/prediction-arb';
 
 const log = {
@@ -490,7 +492,51 @@ export async function runMarketMaking(
         log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPct.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
         return { quoted: false, orderIds: [] };
       }
+
+      // ── GATES QUANTITATIVOS SPOT: KAUFMAN ER & VARIANCE RATIO (RANDOM WALK FILTER) ──
+      const quantGates = await calculateSpotQuantGates(symbol, highCertaintySide, strikeEstimate);
+      if (!quantGates.gatesPassed) {
+        log.warn(`🎲 [${strategy.slug}] QUANT GATES REJEITADOS: ${quantGates.reason} (ER: ${quantGates.er} | VR: ${quantGates.varianceRatio}). Entrada bloqueada.`);
+        return { quoted: false, orderIds: [] };
+      }
+      log.info(`🎯 [${strategy.slug}] GATES QUANTITATIVOS APROVADOS: ${quantGates.reason}`);
     }
+  }
+
+  // ── EXPECTED VALUE (EV) E KELLY CRITERION CHECK ──────────────────────────
+  const targetEntryPrice = (highCertaintySide === 'YES' ? (bYes.ask > 0 ? bYes.ask : bYes.bid) : (bNo.ask > 0 ? bNo.ask : bNo.bid));
+  const estimatedRealProb = Math.min(0.99, Math.max(currentProb, 0.96)); // Probabilidade estimada com base no oráculo
+  const bankrollUsd = saldoDisponivel > 0 ? saldoDisponivel : 100;
+  
+  const evResult = calculatePolymarketEV(targetEntryPrice, estimatedRealProb, bankrollUsd, 2.0);
+  if (!evResult.isValid) {
+    log.warn(`⚠️ [${strategy.slug}] EV NEGATIVO OU EDGE INSUFICIENTE: ${evResult.reason} (Preço: $${targetEntryPrice.toFixed(3)} | Prob: ${(estimatedRealProb * 100).toFixed(1)}%). Entrada rejeitada.`);
+    return { quoted: false, orderIds: [] };
+  }
+  log.info(`📊 [${strategy.slug}] EXPECTATIVA MATEMÁTICA VALIDADA: ${evResult.reason}`);
+
+  // ── GATE 4: IA META-LABELING VETO CHECK (RANDOM FOREST) ──────────────────
+  const featureVector = PolymarketMetaLabeler.extractFeatures(
+    quantGates?.er || 0.35,
+    quantGates?.varianceRatio || 1.10,
+    atrPct || 0.15,
+    spotDistancePct || 0.20,
+    evResult.expectedValue,
+    evResult.edgePct,
+    targetEntryPrice,
+    segsRestantes
+  );
+  const aiEvaluation = PolymarketMetaLabeler.evaluateOpportunity(featureVector, 0.55);
+  if (aiEvaluation.isVetoed) {
+    log.warn(`🤖 [POLYMARKET AI GATE 4 VETO] [${strategy.slug}] Entrada bloqueada pela IA: ${aiEvaluation.reason}`);
+    return { quoted: false, orderIds: [] };
+  }
+  log.info(`🤖 [POLYMARKET AI GATE 4] [${strategy.slug}] ${aiEvaluation.reason}`);
+
+  // Ajuste do aporte pelo Kelly Criterion fracionário caso o capital permita
+  if (evResult.suggestedStakeUsd >= 1.0 && evResult.suggestedStakeUsd < sharesPerQuote) {
+    sharesPerQuote = Math.floor(evResult.suggestedStakeUsd);
+    log.info(`💡 [${strategy.slug}] Aporte calibrado por Fractional Kelly: $${sharesPerQuote}.00`);
   }
 
   // ── REFINAMENTO 3: SONDAGEM DE PROFUNDIDADE NO BID PARA ABSORÇÃO ──────────

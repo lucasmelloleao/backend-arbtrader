@@ -368,6 +368,55 @@ export async function getPredictionTradesSummary(req: AuthenticatedRequest, res:
   }
 }
 
+export async function trainPredictionMetaModel(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const { PolymarketMetaLabeler } = require('../strategy/prediction-arb/helpers/polymarket-meta-labeler');
+    const result = await PolymarketMetaLabeler.trainModel(userId);
+
+    if (!result.success) {
+      return res.status(400).json(isDashboard(req) ? { error: result.message } : { success: false, message: result.message });
+    }
+
+    return res.json({ success: true, message: result.message, data: result.metadata });
+  } catch (e: any) {
+    console.error('❌ [POST TrainPredictionMetaModel] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
+export async function getPredictionMetaModelStatus(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+
+    const { PolymarketMetaLabeler } = require('../strategy/prediction-arb/helpers/polymarket-meta-labeler');
+    const metadata = PolymarketMetaLabeler.getMetadata();
+
+    const executedCount = await (PredictionArbTrade as any).countDocuments({
+      userId,
+      type: 'close_pair',
+      status: 'executed'
+    });
+
+    const isDash = isDashboard(req);
+    const data = {
+      isTrained: Boolean(metadata && metadata.trainedAt),
+      metadata,
+      totalExecutedTrades: executedCount,
+      minTradesRequired: 10,
+    };
+
+    if (isDash) return res.json(data);
+    return res.json({ success: true, data });
+  } catch (e: any) {
+    console.error('❌ [GET PredictionMetaModelStatus] Error:', e.message);
+    return res.status(500).json(isDashboard(req) ? { error: e.message } : { success: false, message: e.message });
+  }
+}
+
 export function isValidObjectId(id: any): boolean {
   return mongoose.Types.ObjectId.isValid(String(id || ''));
 }
