@@ -3,7 +3,7 @@ import ExchangeKey from '../models/ExchangeKey';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { encryptSecretKey } from '../utils/encryption';
 
-const CTRADER_IDS = ['ctrader', 'pepperstone', 'fxpro', 'fxpro-ctrader'];
+const CTRADER_IDS = ['ctrader', 'pepperstone', 'fxpro', 'fxpro-ctrader', 'deriv'];
 const FIX_IDS = ['fix', 'pepperstone-fix', 'ctrader-fix'];
 const DUKASCOPY_IDS = ['dukascopy'];
 const HYPERLIQUID_IDS = ['hyperliquid'];
@@ -93,16 +93,35 @@ export async function getExchanges(req: AuthenticatedRequest, res: Response) {
 
     const exchanges = await ExchangeKey.find({ userId }).select(HIDDEN_FIELDS).sort({ createdAt: -1 });
 
+    const formatted = exchanges.map((ex: any) => {
+      const obj = ex.toObject ? ex.toObject() : ex;
+      return {
+        id: obj._id.toString(),
+        _id: obj._id.toString(),
+        exchangeId: obj.exchangeId,
+        nome: obj.name,
+        apiKey: obj.apiKey,
+        ativa: obj.active !== false,
+        clientId: obj.clientId || obj.apiKey,
+        accountId: obj.accountId || '',
+        environment: obj.environment || 'live',
+        host: obj.host,
+        senderCompId: obj.senderCompId,
+        targetCompId: obj.targetCompId,
+        username: obj.username,
+        quotePort: obj.quotePort,
+        tradePort: obj.tradePort,
+        jnlpUrl: obj.jnlpUrl,
+        relayerApiKey: obj.relayerApiKey,
+        depositWallet: obj.depositWallet,
+        clobApiKey: obj.clobApiKey,
+        pusdBalance: obj.pusdBalance,
+      };
+    });
+
     if (isDashboardPath) {
-      return res.json({ success: true, exchanges });
+      return res.json({ success: true, exchanges: formatted });
     } else {
-      const formatted = exchanges.map((ex: any) => ({
-        id: ex._id.toString(),
-        exchangeId: ex.exchangeId,
-        nome: ex.name,
-        apiKey: ex.apiKey,
-        ativa: ex.active
-      }));
       return res.json({ success: true, message: 'ok', data: formatted });
     }
   } catch (e: any) {
@@ -270,9 +289,12 @@ export async function updateExchange(req: AuthenticatedRequest, res: Response) {
     };
 
     if (isCtraderKey) {
-      if (body.clientId) updateData.clientId = String(body.clientId).trim();
-      if (body.accountId) updateData.accountId = String(body.accountId).trim();
-      if (body.username) updateData.username = String(body.username).trim();
+      if (body.clientId) {
+        updateData.clientId = String(body.clientId).trim();
+        updateData.apiKey = String(body.clientId).trim();
+      }
+      if (body.accountId !== undefined) updateData.accountId = String(body.accountId).trim();
+      if (body.username !== undefined) updateData.username = String(body.username).trim();
       if (body.environment) updateData.environment = body.environment === 'demo' ? 'demo' : 'live';
       const encrypted = encryptFields(body, userId, exchangeId);
       for (const [k, v] of Object.entries(encrypted)) {
