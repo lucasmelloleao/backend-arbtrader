@@ -296,6 +296,8 @@ router.get('/auth/deriv/meta-model/status', authMiddleware as any, getDerivMetaM
 
 // --- FXPRO CTRADER ENDPOINTS ---
 import {
+  getFxProSettings,
+  updateFxProSettings,
   getFxProStrategies,
   createFxProStrategy,
   updateFxProStrategy,
@@ -309,6 +311,8 @@ import {
   trainFxProMetaModel,
 } from '../controllers/fxproController';
 
+router.get('/fxpro/settings', authMiddleware as any, getFxProSettings as any);
+router.post('/fxpro/settings', authMiddleware as any, updateFxProSettings as any);
 router.get('/fxpro/strategies', authMiddleware as any, getFxProStrategies as any);
 router.post('/fxpro/strategies', authMiddleware as any, createFxProStrategy as any);
 router.put('/fxpro/strategies/:id', authMiddleware as any, updateFxProStrategy as any);
@@ -321,6 +325,8 @@ router.post('/fxpro/bot/stop', authMiddleware as any, stopFxProBot as any);
 router.get('/fxpro/meta-model/status', authMiddleware as any, getFxProMetaModelStatus as any);
 router.post('/fxpro/meta-model/train', authMiddleware as any, trainFxProMetaModel as any);
 
+router.get('/auth/fxpro/settings', authMiddleware as any, getFxProSettings as any);
+router.post('/auth/fxpro/settings', authMiddleware as any, updateFxProSettings as any);
 router.get('/auth/fxpro/strategies', authMiddleware as any, getFxProStrategies as any);
 router.post('/auth/fxpro/strategies', authMiddleware as any, createFxProStrategy as any);
 router.put('/auth/fxpro/strategies/:id', authMiddleware as any, updateFxProStrategy as any);

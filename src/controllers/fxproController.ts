@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import FxProSettings from '../models/FxProSettings';
 import FxProStrategy from '../models/FxProStrategy';
 import FxProTrade from '../models/FxProTrade';
 import { FxProBot } from '../strategy/fxpro/fxpro-bot';
@@ -11,6 +12,51 @@ import { FxProMetaLabeler } from '../strategy/fxpro/helpers/fxpro-meta-labeler';
  *   name: FxPro
  *   description: Endpoints para gerenciamento do Robô FxPro cTrader e IA Meta-Labeling
  */
+
+/**
+ * Obter configurações globais do robô FxPro.
+ */
+export async function getFxProSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    let settings = await FxProSettings.findOne({ userId });
+    if (!settings) {
+      settings = await FxProSettings.create({ userId });
+    }
+    res.json({ ok: true, settings });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+/**
+ * Atualizar configurações globais do robô FxPro.
+ */
+export async function updateFxProSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const body = req.body;
+
+    const settings = await FxProSettings.findOneAndUpdate(
+      { userId },
+      { $set: body },
+      { new: true, upsert: true }
+    );
+
+    // Se o usuário ligou/desligou isScanningEnabled, atualiza o motor
+    if (body.isScanningEnabled !== undefined) {
+      if (body.isScanningEnabled) {
+        await FxProBot.start();
+      } else {
+        await FxProBot.stop();
+      }
+    }
+
+    res.json({ ok: true, settings });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
 
 /**
  * Listar estratégias FxPro do usuário autenticado.
