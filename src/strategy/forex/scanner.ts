@@ -177,7 +177,15 @@ export function computeSimpleReturn(
 
 // Corretoras que usam o adaptador cTrader (Open API protobuf) em vez de CCXT.
 export function isCtraderExchange(exchangeId: string): boolean {
-  return exchangeId === 'ctrader' || exchangeId === 'pepperstone' || exchangeId === 'fxpro' || exchangeId === 'fxpro-ctrader';
+  return (
+    exchangeId === 'ctrader' ||
+    exchangeId === 'pepperstone' ||
+    exchangeId === 'fxpro' ||
+    exchangeId === 'fxpro-ctrader' ||
+    exchangeId === 'icmarkets' ||
+    exchangeId === 'icmarkets-ctrader' ||
+    exchangeId === 'ic'
+  );
 }
 
 // Re-exporta o factory compartilhado (criação a partir de ExchangeKey + cache).

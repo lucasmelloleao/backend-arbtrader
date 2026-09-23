@@ -358,4 +358,60 @@ router.get('/auth/fxpro/logs', authMiddleware as any, getFxProLogs as any);
 router.get('/auth/fxpro/balance', authMiddleware as any, getFxProBalance as any);
 router.post('/auth/fxpro/close', authMiddleware as any, closeFxProPosition as any);
 
+// --- ICMARKETS CTRADER ENDPOINTS ---
+import {
+  getIcMarketsSettings,
+  updateIcMarketsSettings,
+  getIcMarketsStrategies,
+  createIcMarketsStrategy,
+  updateIcMarketsStrategy,
+  deleteIcMarketsStrategy,
+  toggleIcMarketsStrategy,
+  getIcMarketsTrades,
+  getIcMarketsBotStatus,
+  startIcMarketsBot,
+  stopIcMarketsBot,
+  getIcMarketsMetaModelStatus,
+  trainIcMarketsMetaModel,
+  getIcMarketsLogs,
+  getIcMarketsBalance,
+  closeIcMarketsPosition,
+} from '../controllers/icmarketsController';
+
+router.get('/icmarkets/settings', authMiddleware as any, getIcMarketsSettings as any);
+router.post('/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
+router.put('/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
+router.get('/icmarkets/strategies', authMiddleware as any, getIcMarketsStrategies as any);
+router.post('/icmarkets/strategies', authMiddleware as any, createIcMarketsStrategy as any);
+router.put('/icmarkets/strategies/:id', authMiddleware as any, updateIcMarketsStrategy as any);
+router.delete('/icmarkets/strategies/:id', authMiddleware as any, deleteIcMarketsStrategy as any);
+router.post('/icmarkets/strategies/:id/toggle', authMiddleware as any, toggleIcMarketsStrategy as any);
+router.get('/icmarkets/trades', authMiddleware as any, getIcMarketsTrades as any);
+router.get('/icmarkets/bot/status', authMiddleware as any, getIcMarketsBotStatus as any);
+router.post('/icmarkets/bot/start', authMiddleware as any, startIcMarketsBot as any);
+router.post('/icmarkets/bot/stop', authMiddleware as any, stopIcMarketsBot as any);
+router.get('/icmarkets/meta-model/status', authMiddleware as any, getIcMarketsMetaModelStatus as any);
+router.post('/icmarkets/meta-model/train', authMiddleware as any, trainIcMarketsMetaModel as any);
+router.get('/icmarkets/logs', authMiddleware as any, getIcMarketsLogs as any);
+router.get('/icmarkets/balance', authMiddleware as any, getIcMarketsBalance as any);
+router.post('/icmarkets/close', authMiddleware as any, closeIcMarketsPosition as any);
+
+router.get('/auth/icmarkets/settings', authMiddleware as any, getIcMarketsSettings as any);
+router.post('/auth/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
+router.put('/auth/icmarkets/settings', authMiddleware as any, updateIcMarketsSettings as any);
+router.get('/auth/icmarkets/strategies', authMiddleware as any, getIcMarketsStrategies as any);
+router.post('/auth/icmarkets/strategies', authMiddleware as any, createIcMarketsStrategy as any);
+router.put('/auth/icmarkets/strategies/:id', authMiddleware as any, updateIcMarketsStrategy as any);
+router.delete('/auth/icmarkets/strategies/:id', authMiddleware as any, deleteIcMarketsStrategy as any);
+router.post('/auth/icmarkets/strategies/:id/toggle', authMiddleware as any, toggleIcMarketsStrategy as any);
+router.get('/auth/icmarkets/trades', authMiddleware as any, getIcMarketsTrades as any);
+router.get('/auth/icmarkets/bot/status', authMiddleware as any, getIcMarketsBotStatus as any);
+router.post('/auth/icmarkets/bot/start', authMiddleware as any, startIcMarketsBot as any);
+router.post('/auth/icmarkets/bot/stop', authMiddleware as any, stopIcMarketsBot as any);
+router.get('/auth/icmarkets/meta-model/status', authMiddleware as any, getIcMarketsMetaModelStatus as any);
+router.post('/auth/icmarkets/meta-model/train', authMiddleware as any, trainIcMarketsMetaModel as any);
+router.get('/auth/icmarkets/logs', authMiddleware as any, getIcMarketsLogs as any);
+router.get('/auth/icmarkets/balance', authMiddleware as any, getIcMarketsBalance as any);
+router.post('/auth/icmarkets/close', authMiddleware as any, closeIcMarketsPosition as any);
+
 export default router;
