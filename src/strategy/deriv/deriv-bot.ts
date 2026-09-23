@@ -229,7 +229,7 @@ async function executeDerivCycle(): Promise<void> {
       return;
     }
 
-    const maxConcurrent = Math.min(Number(settings.maxOpenContracts || 1), 1);
+    const maxConcurrent = Math.max(1, Number(settings.maxOpenContracts || 1));
     const openCount = await DerivTrade.countDocuments({ userId: settings.userId, status: 'open' });
     if (openCount >= maxConcurrent) {
       return;
