@@ -315,14 +315,14 @@ export async function getIcMarketsBalance(req: AuthenticatedRequest, res: Respon
       }).lean());
 
     if (!key) {
-      res.json({ ok: true, balance: { balance: 200, equity: 200, currency: 'USD', accountType: 'demo', accountId: '10102182' } });
+      res.json({ ok: true, balance: { balance: 300, equity: 300, currency: 'USD', accountType: 'demo', accountId: '10102182' } });
       return;
     }
 
     const env = settings?.accountType === 'real' ? 'live' : 'demo';
     const targetAccountId = settings?.accountId || key.accountId || '10102182';
 
-    let balanceUsd = 200;
+    let balanceUsd = 300;
 
     try {
       const adapter = await getSharedCtraderAdapter(key, {

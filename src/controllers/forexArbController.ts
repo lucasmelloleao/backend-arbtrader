@@ -963,8 +963,8 @@ export async function getForexBalance(req: AuthenticatedRequest, res: Response):
   try {
     const userId = req.userId;
     const settings = await ForexArbSettings.findOne({ userId }).lean();
-    let balanceUsd = 200.0;
-    const targetAccountId = settings?.accountId || '10102182';
+    let balanceUsd = 70.34;
+    let targetAccountId = settings?.accountId || '5329039';
 
     try {
       const key = await ExchangeKey.findOne({
@@ -972,6 +972,10 @@ export async function getForexBalance(req: AuthenticatedRequest, res: Response):
         exchangeId: { $in: ['ctrader', 'pepperstone', 'pepperstone-ctrader'] },
         active: true,
       }).lean();
+
+      if (key?.accountId) {
+        targetAccountId = settings?.accountId || key.accountId;
+      }
 
       if (key) {
         const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
@@ -981,7 +985,7 @@ export async function getForexBalance(req: AuthenticatedRequest, res: Response):
           environment: env,
         });
 
-        const accountIdNum = Number((adapter as any).creds?.accountId || targetAccountId);
+        const accountIdNum = Number((adapter as any).creds?.accountId || (adapter as any).client?.creds?.accountId || targetAccountId);
 
         const traderRes = await (adapter as any).client.sendRequest(
           2121,
