@@ -84,6 +84,10 @@ app.get('/readyz', (req, res) => {
     // Inicializa o motor do Robô FxPro cTrader
     const { FxProBot } = await import('./strategy/fxpro/fxpro-bot');
     await FxProBot.start();
+
+    // Inicializa o motor do Robô IC Markets cTrader
+    const { IcMarketsBot } = await import('./strategy/icmarkets/icmarkets-bot');
+    await IcMarketsBot.start();
   } catch (err: any) {
     console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
     process.exit(1);

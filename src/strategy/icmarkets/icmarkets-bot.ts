@@ -204,9 +204,41 @@ export class IcMarketsBot {
     }
   }
 
+  private static cycleCounter = 0;
+
   private static async processCycle(): Promise<void> {
-    const allSettings = await IcMarketsSettings.find({ isScanningEnabled: true }).lean();
+    let allSettings = await IcMarketsSettings.find({ isScanningEnabled: true }).lean();
+    if (!allSettings || allSettings.length === 0) {
+      const keys = await ExchangeKey.find({
+        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+        active: true,
+      }).lean();
+      for (const k of keys) {
+        await IcMarketsSettings.updateOne(
+          { userId: k.userId },
+          {
+            $setOnInsert: {
+              userId: k.userId,
+              accountId: k.accountId || '10102182',
+              accountType: k.environment || 'demo',
+              isScanningEnabled: true,
+              autoExecute: true,
+              maxOpenPositions: 3,
+              defaultLotSize: 0.01,
+              maxSpreadPips: 2.5,
+              useAiFilter: true,
+              minConfidenceScore: 0.55,
+            },
+          },
+          { upsert: true }
+        );
+      }
+      allSettings = await IcMarketsSettings.find({ isScanningEnabled: true }).lean();
+    }
+
     if (!allSettings || allSettings.length === 0) return;
+
+    this.cycleCounter++;
 
     for (const settings of allSettings) {
       try {
@@ -235,7 +267,9 @@ export class IcMarketsBot {
       }).lean());
 
     if (!exchangeKey) {
-      log.warn(`Nenhuma Chave cTrader encontrada para o usuário ${userId}. Cadastre em Exchanges.`);
+      if (this.cycleCounter % 10 === 0) {
+        log.warn(`Nenhuma chave cTrader encontrada para o usuário. Configure em Exchanges.`);
+      }
       return;
     }
 
@@ -254,11 +288,20 @@ export class IcMarketsBot {
       active: true,
     });
 
-    if (!strategies || strategies.length === 0) return;
+    if (!strategies || strategies.length === 0) {
+      if (this.cycleCounter % 10 === 0) {
+        log.info(`📡 [IC-SCANNER] Robô ativo (Conta ${targetAccountId} ${env.toUpperCase()}). Nenhuma estratégia ativa no momento.`);
+      }
+      return;
+    }
 
     const symbols = Array.from(
       new Set(strategies.map((s) => s.symbol.replace('/', '').toUpperCase()))
     );
+
+    if (this.cycleCounter % 5 === 0) {
+      log.info(`📡 [IC-SCANNER] Monitorando ${strategies.length} estratégia(s) nos pares ${symbols.join(', ')} (Conta ${targetAccountId} ${env.toUpperCase()}).`);
+    }
 
     const tickers = await adapter.fetchTickers(symbols).catch((e: any) => {
       log.error(`Falha ao obter cotações cTrader IC Markets: ${e.message}`);
