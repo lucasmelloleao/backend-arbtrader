@@ -466,6 +466,7 @@ export class FxProBot {
       if (livePos) {
         const currentPnl = Number(livePos.netPnl || livePos.unrealizedPnl || livePos.pnl || 0);
         await FxProStrategy.findByIdAndUpdate(strat._id, { currentPnlUsd: currentPnl });
+        await FxProTrade.findByIdAndUpdate(t._id, { pnlUsd: currentPnl });
       } else {
         log.info(`🏁 [${t.symbol}] Posição #${t.positionId} não encontrada na cTrader (encerrada). Sincronizando resultado.`);
         const exitPrice = t.takeProfitPrice || t.entryPrice;
