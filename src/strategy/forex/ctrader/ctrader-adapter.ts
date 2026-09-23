@@ -327,7 +327,13 @@ export class CtraderAdapter {
    *   volumeProtocol = round(amount / lotSize * VOLUME_DIVISOR)  → nº de 1/100 de lote
    *   (0.01 lote = 1; 1.00 lote = 100)
    */
-  async createMarketOrder(symbol: string, side: 'buy' | 'sell', amount: number, timeoutMs = 15000): Promise<any> {
+  async createMarketOrder(
+    symbol: string,
+    side: 'buy' | 'sell',
+    amount: number,
+    timeoutMs = 15000,
+    options?: { stopLoss?: number; takeProfit?: number }
+  ): Promise<any> {
     await this.connect();
     // Garante que os markets estão carregados (o executor pode chamar
     // createMarketOrder sem passar por loadMarkets antes).
@@ -348,7 +354,7 @@ export class CtraderAdapter {
 
     const clientOrderId = `fa_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} volumeProtocol=${volumeProtocol} | ${amount} unidades | ${(volumeProtocol / (market.lotSize * 100)).toFixed(2)} lote)...`);
+    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOANewOrderReq para ${symbol} (${side.toUpperCase()} volumeProtocol=${volumeProtocol} | ${amount} unidades | ${(volumeProtocol / (market.lotSize * 100)).toFixed(2)} lote | SL=${options?.stopLoss ?? 'none'} | TP=${options?.takeProfit ?? 'none'})...`);
 
     // Registra listener no cTraderClient para capturar ProtoOAExecutionEvent ou ProtoOAOrderErrorEvent
     const fillPromise = new Promise<any>((resolve, reject) => {
@@ -392,19 +398,28 @@ export class CtraderAdapter {
       this.client.onExecution(handler);
     });
 
+    const orderPayload: any = {
+      ctidTraderAccountId: accountId,
+      symbolId: Number(market.id),
+      orderType: ORDER_TYPE.MARKET,
+      tradeSide: side === 'buy' ? TRADE_SIDE.BUY : TRADE_SIDE.SELL,
+      volume: volumeProtocol,
+      label: 'fxpro-bot',
+      clientOrderId,
+      timeInForce: 3, // IMMEDIATE_OR_CANCEL
+    };
+
+    if (options?.stopLoss !== undefined && options?.stopLoss !== null && Number(options.stopLoss) > 0) {
+      orderPayload.stopLoss = Number(options.stopLoss);
+    }
+    if (options?.takeProfit !== undefined && options?.takeProfit !== null && Number(options.takeProfit) > 0) {
+      orderPayload.takeProfit = Number(options.takeProfit);
+    }
+
     await this.client.sendFireAndForget(
       PAYLOAD_TYPE.PROTO_OA_NEW_ORDER_REQ,
       'ProtoOANewOrderReq',
-      {
-        ctidTraderAccountId: accountId,
-        symbolId: Number(market.id),
-        orderType: ORDER_TYPE.MARKET,
-        tradeSide: side === 'buy' ? TRADE_SIDE.BUY : TRADE_SIDE.SELL,
-        volume: volumeProtocol,
-        label: 'forex-arb',
-        clientOrderId,
-        timeInForce: 3, // IMMEDIATE_OR_CANCEL
-      }
+      orderPayload
     );
 
     try {
@@ -692,13 +707,16 @@ export class CtraderAdapter {
     const positionToSymbol = new Map<string, { symbol: string; volume: number; side: string; entryPrice: number }>();
     for (const pos of (rec.position || []) as any[]) {
       const market = this.marketsById.get(String(pos.tradeData?.symbolId));
-      const volume = Number(pos.tradeData?.volume || 0) / VOLUME_DIVISOR;
+      const lotSize = market?.lotSize || 100000;
+      // pos.tradeData.volume é em cents de unidade (10000000 = 100000 unidades = 1 lote; 100000 = 1000 unidades = 0.01 lote)
+      const rawUnits = Number(pos.tradeData?.volume || 0) / VOLUME_DIVISOR;
+      const lots = Number((rawUnits / lotSize).toFixed(2));
       const rawPrice = pos.price != null ? Number(pos.price) : (pos.tradeData?.openPrice != null ? Number(pos.tradeData.openPrice) : 0);
       // cTrader salva preço de entrada em unidades inteiras divididas por 100000 (PRICE_DIVISOR)
       const entryPrice = rawPrice > 1000 ? rawPrice / PRICE_DIVISOR : rawPrice;
       positionToSymbol.set(String(pos.positionId), {
         symbol: market?.symbol || String(pos.tradeData?.symbolId || pos.positionId),
-        volume,
+        volume: lots > 0 ? lots : (rawUnits > 0 ? rawUnits : 0.01),
         side: pos.tradeData?.tradeSide === TRADE_SIDE.BUY ? 'buy' : 'sell',
         entryPrice,
       });
