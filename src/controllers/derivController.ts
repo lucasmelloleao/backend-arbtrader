@@ -160,7 +160,6 @@ export async function deleteDerivTrades(req: AuthenticatedRequest, res: Response
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
     await DerivTrade.deleteMany({ userId });
-    await DerivStrategy.deleteMany({ userId });
 
     const msg = 'Histórico de operações Deriv zerado com sucesso!';
     if (isDashboard(req)) return res.json({ success: true, message: msg });
