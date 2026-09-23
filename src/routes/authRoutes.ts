@@ -294,4 +294,43 @@ router.post('/auth/deriv/ai-analysis', authMiddleware as any, getDerivAiAnalysis
 router.post('/auth/deriv/meta-model/train', authMiddleware as any, trainDerivMetaModel as any);
 router.get('/auth/deriv/meta-model/status', authMiddleware as any, getDerivMetaModelStatus as any);
 
+// --- FXPRO CTRADER ENDPOINTS ---
+import {
+  getFxProStrategies,
+  createFxProStrategy,
+  updateFxProStrategy,
+  deleteFxProStrategy,
+  toggleFxProStrategy,
+  getFxProTrades,
+  getFxProBotStatus,
+  startFxProBot,
+  stopFxProBot,
+  getFxProMetaModelStatus,
+  trainFxProMetaModel,
+} from '../controllers/fxproController';
+
+router.get('/fxpro/strategies', authMiddleware as any, getFxProStrategies as any);
+router.post('/fxpro/strategies', authMiddleware as any, createFxProStrategy as any);
+router.put('/fxpro/strategies/:id', authMiddleware as any, updateFxProStrategy as any);
+router.delete('/fxpro/strategies/:id', authMiddleware as any, deleteFxProStrategy as any);
+router.post('/fxpro/strategies/:id/toggle', authMiddleware as any, toggleFxProStrategy as any);
+router.get('/fxpro/trades', authMiddleware as any, getFxProTrades as any);
+router.get('/fxpro/bot/status', authMiddleware as any, getFxProBotStatus as any);
+router.post('/fxpro/bot/start', authMiddleware as any, startFxProBot as any);
+router.post('/fxpro/bot/stop', authMiddleware as any, stopFxProBot as any);
+router.get('/fxpro/meta-model/status', authMiddleware as any, getFxProMetaModelStatus as any);
+router.post('/fxpro/meta-model/train', authMiddleware as any, trainFxProMetaModel as any);
+
+router.get('/auth/fxpro/strategies', authMiddleware as any, getFxProStrategies as any);
+router.post('/auth/fxpro/strategies', authMiddleware as any, createFxProStrategy as any);
+router.put('/auth/fxpro/strategies/:id', authMiddleware as any, updateFxProStrategy as any);
+router.delete('/auth/fxpro/strategies/:id', authMiddleware as any, deleteFxProStrategy as any);
+router.post('/auth/fxpro/strategies/:id/toggle', authMiddleware as any, toggleFxProStrategy as any);
+router.get('/auth/fxpro/trades', authMiddleware as any, getFxProTrades as any);
+router.get('/auth/fxpro/bot/status', authMiddleware as any, getFxProBotStatus as any);
+router.post('/auth/fxpro/bot/start', authMiddleware as any, startFxProBot as any);
+router.post('/auth/fxpro/bot/stop', authMiddleware as any, stopFxProBot as any);
+router.get('/auth/fxpro/meta-model/status', authMiddleware as any, getFxProMetaModelStatus as any);
+router.post('/auth/fxpro/meta-model/train', authMiddleware as any, trainFxProMetaModel as any);
+
 export default router;

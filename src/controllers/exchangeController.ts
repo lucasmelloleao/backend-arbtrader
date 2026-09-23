@@ -3,7 +3,7 @@ import ExchangeKey from '../models/ExchangeKey';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { encryptSecretKey } from '../utils/encryption';
 
-const CTRADER_IDS = ['ctrader', 'pepperstone'];
+const CTRADER_IDS = ['ctrader', 'pepperstone', 'fxpro', 'fxpro-ctrader'];
 const FIX_IDS = ['fix', 'pepperstone-fix', 'ctrader-fix'];
 const DUKASCOPY_IDS = ['dukascopy'];
 const HYPERLIQUID_IDS = ['hyperliquid'];
