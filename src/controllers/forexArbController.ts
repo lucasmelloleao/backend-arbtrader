@@ -958,3 +958,70 @@ export async function trainPepperstoneMetaModel(req: AuthenticatedRequest, res: 
   }
 }
 
+// --- BALANCE (CTRADER LIVE QUERY) ---
+export async function getForexBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const settings = await ForexArbSettings.findOne({ userId }).lean();
+    let balanceUsd = 200.0;
+    const targetAccountId = settings?.accountId || '10102182';
+
+    try {
+      const key = await ExchangeKey.findOne({
+        userId,
+        exchangeId: { $in: ['ctrader', 'pepperstone', 'pepperstone-ctrader'] },
+        active: true,
+      }).lean();
+
+      if (key) {
+        const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
+        const env = settings?.accountType === 'real' ? 'live' : 'demo';
+        const adapter = await getSharedCtraderAdapter(key, {
+          accountId: targetAccountId,
+          environment: env,
+        });
+
+        const accountIdNum = Number((adapter as any).creds?.accountId || targetAccountId);
+
+        const traderRes = await (adapter as any).client.sendRequest(
+          2121,
+          'ProtoOATraderReq',
+          { ctidTraderAccountId: accountIdNum },
+          8000
+        ).catch(() => null);
+
+        if (traderRes?.trader?.balance != null) {
+          balanceUsd = Number(traderRes.trader.balance) / 100;
+        } else {
+          const rec = await (adapter as any).client.sendRequest(
+            2124,
+            'ProtoOAReconcileReq',
+            { ctidTraderAccountId: accountIdNum },
+            8000
+          ).catch(() => null);
+
+          if (rec?.trader?.balance != null) {
+            balanceUsd = Number(rec.trader.balance) / 100;
+          }
+        }
+      }
+    } catch (adapterErr: any) {
+      console.warn('[PEPPERSTONE-BALANCE] Erro ao consultar saldo na cTrader:', adapterErr.message);
+    }
+
+    res.json({
+      ok: true,
+      balance: {
+        balance: balanceUsd,
+        equity: balanceUsd,
+        currency: 'USD',
+        accountType: settings?.accountType || 'demo',
+        accountId: targetAccountId,
+      },
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+

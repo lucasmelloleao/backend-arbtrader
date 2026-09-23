@@ -305,28 +305,49 @@ export async function getIcMarketsBalance(req: AuthenticatedRequest, res: Respon
       }).lean());
 
     if (!key) {
-      res.json({ ok: true, balance: { balance: 10000, equity: 10000, currency: 'USD', accountType: 'demo', accountId: '10102182' } });
+      res.json({ ok: true, balance: { balance: 200, equity: 200, currency: 'USD', accountType: 'demo', accountId: '10102182' } });
       return;
     }
 
     const env = settings?.accountType === 'real' ? 'live' : 'demo';
     const targetAccountId = settings?.accountId || key.accountId || '10102182';
 
-    const adapter = await getSharedCtraderAdapter(key, {
-      accountId: targetAccountId,
-      environment: env,
-    });
+    let balanceUsd = 200;
 
-    const accountIdNum = Number(targetAccountId);
-    const rec = await (adapter as any).client.sendRequest(
-      2124,
-      'ProtoOAReconcileReq',
-      { ctidTraderAccountId: accountIdNum },
-      8000
-    ).catch(() => null);
+    try {
+      const adapter = await getSharedCtraderAdapter(key, {
+        accountId: targetAccountId,
+        environment: env,
+      });
 
-    const balanceCents = rec?.trader?.balance || 1000000;
-    const balanceUsd = balanceCents / 100;
+      const accountIdNum = Number((adapter as any).creds.accountId || targetAccountId);
+
+      // Consulta dados do Trader via ProtoOATraderReq
+      const traderRes = await (adapter as any).client.sendRequest(
+        2121,
+        'ProtoOATraderReq',
+        { ctidTraderAccountId: accountIdNum },
+        8000
+      ).catch(() => null);
+
+      if (traderRes?.trader?.balance != null) {
+        balanceUsd = Number(traderRes.trader.balance) / 100;
+      } else {
+        // Fallback para Reconcile
+        const rec = await (adapter as any).client.sendRequest(
+          2124,
+          'ProtoOAReconcileReq',
+          { ctidTraderAccountId: accountIdNum },
+          8000
+        ).catch(() => null);
+
+        if (rec?.trader?.balance != null) {
+          balanceUsd = Number(rec.trader.balance) / 100;
+        }
+      }
+    } catch (adapterErr: any) {
+      console.warn('[ICMARKETS-BALANCE] Erro ao consultar saldo na cTrader:', adapterErr.message);
+    }
 
     res.json({
       ok: true,

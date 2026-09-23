@@ -85,7 +85,8 @@ import {
   getForexLogs,
   getForexLivePrices,
   getPepperstoneMetaModelStatus,
-  trainPepperstoneMetaModel
+  trainPepperstoneMetaModel,
+  getForexBalance
 } from '../controllers/forexArbController';
 import {
   getPredictionStrategies,
@@ -159,6 +160,8 @@ router.get('/forex-arb/trades', authMiddleware as any, getForexTrades as any);
 router.delete('/forex-arb/trades', authMiddleware as any, deleteForexTrades as any);
 router.get('/forex-arb/opportunities', authMiddleware as any, getForexOpportunities as any);
 router.get('/forex-arb/settings', authMiddleware as any, getForexSettings as any);
+router.get('/forex-arb/balance', authMiddleware as any, getForexBalance as any);
+router.get('/auth/forex-arb/balance', authMiddleware as any, getForexBalance as any);
 router.post('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.put('/forex-arb/settings', authMiddleware as any, updateForexSettings as any);
 router.get('/auth/forex-arb/settings', authMiddleware as any, getForexSettings as any);
