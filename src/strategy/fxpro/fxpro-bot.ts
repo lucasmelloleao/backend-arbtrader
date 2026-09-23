@@ -396,76 +396,77 @@ export class FxProBot {
       status: 'open',
     });
 
-    // Se o usuário abriu uma ordem manualmente na cTrader e o robô não tem registrada, auto-adota
-    const matchingLivePos = cTraderPositions.find((p) => {
+    // Sincroniza todas as posições ativas da cTrader correspondentes a este par
+    const matchingLivePositions = cTraderPositions.filter((p) => {
       const pSym = (p.symbol || '').replace('/', '').toUpperCase();
       return pSym === sym;
     });
 
-    if (matchingLivePos && openTrades.length === 0) {
-      log.info(`📥 [${sym}] Detectada posição manual #${matchingLivePos.positionId} na cTrader. Adotando para gestão automatizada.`);
-      const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
-      const slDist = (strat.stopLossPips || 15) * pipSize;
-      const tpDist = (strat.takeProfitPips || 20) * pipSize;
-      const entryP = Number(matchingLivePos.entryPrice || 0);
-      const side = matchingLivePos.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+    const existingPosIds = new Set(openTrades.map((t) => String(t.positionId)));
 
-      await FxProTrade.create({
-        userId: strat.userId,
-        strategyId: strat._id,
-        exchangeKeyId: strat.exchangeKeyId,
-        positionId: String(matchingLivePos.positionId),
-        symbol: sym,
-        side,
-        lotSize: Number(matchingLivePos.volume || strat.lotSize || 0.01),
-        entryPrice: entryP,
-        stopLossPrice: side === 'BUY' ? entryP - slDist : entryP + slDist,
-        takeProfitPrice: side === 'BUY' ? entryP + tpDist : entryP - tpDist,
-        pnlUsd: Number(matchingLivePos.netPnl || 0),
-        pips: 0,
-        status: 'open',
-        metrics: {
-          er: 0.5,
-          varianceRatio: 1.15,
-          atrPct: 15.0,
-          spreadPips: 0.2,
-          expectedValue: 0.05,
-          edgePct: 3.0,
-          aiProbWin: 0.60,
-        },
-        openedAt: new Date(),
-      });
+    for (const livePos of matchingLivePositions) {
+      const posIdStr = String(livePos.positionId);
+      if (!existingPosIds.has(posIdStr)) {
+        log.info(`📥 [${sym}] Detectada posição #${posIdStr} na cTrader. Sincronizando para monitoramento.`);
+        const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
+        const slDist = (strat.stopLossPips || 6) * pipSize;
+        const tpDist = (strat.takeProfitPips || 8) * pipSize;
+        const entryP = Number(livePos.entryPrice || 0);
+        const side = livePos.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
 
-      await FxProStrategy.findByIdAndUpdate(strat._id, {
-        currentPositionId: String(matchingLivePos.positionId),
-        currentSide: side,
-        entryPrice: entryP,
-        currentPnlUsd: Number(matchingLivePos.netPnl || 0),
-        lastTradeAt: new Date(),
-      });
-      return;
-    }
-
-    if (!openTrades || openTrades.length === 0) {
-      if (strat.currentPositionId && !matchingLivePos) {
-        await FxProStrategy.findByIdAndUpdate(strat._id, {
-          $unset: { currentPositionId: 1, currentSide: 1 },
-          $set: { currentPnlUsd: 0, entryPrice: 0 },
+        await FxProTrade.create({
+          userId: strat.userId,
+          strategyId: strat._id,
+          exchangeKeyId: strat.exchangeKeyId,
+          positionId: posIdStr,
+          symbol: sym,
+          side,
+          lotSize: Number(livePos.volume || strat.lotSize || 0.01),
+          entryPrice: entryP,
+          stopLossPrice: side === 'BUY' ? entryP - slDist : entryP + slDist,
+          takeProfitPrice: side === 'BUY' ? entryP + tpDist : entryP - tpDist,
+          pnlUsd: Number(livePos.netPnl || 0),
+          pips: 0,
+          status: 'open',
+          metrics: {
+            er: 0.5,
+            varianceRatio: 1.15,
+            atrPct: 15.0,
+            spreadPips: 0.2,
+            expectedValue: 0.05,
+            edgePct: 3.0,
+            aiProbWin: 0.60,
+          },
+          openedAt: new Date(),
         });
       }
-      return;
     }
 
-    const posMap = new Map<string, any>();
+    if (matchingLivePositions.length > 0) {
+      const latestPos = matchingLivePositions[matchingLivePositions.length - 1];
+      await FxProStrategy.findByIdAndUpdate(strat._id, {
+        currentPositionId: String(latestPos.positionId),
+        currentSide: latestPos.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+        entryPrice: Number(latestPos.entryPrice || 0),
+        currentPnlUsd: matchingLivePositions.reduce((acc, p) => acc + Number(p.netPnl || 0), 0),
+        lastTradeAt: new Date(),
+      });
+    } else {
+      await FxProStrategy.findByIdAndUpdate(strat._id, {
+        $unset: { currentPositionId: 1, currentSide: 1 },
+        $set: { currentPnlUsd: 0, entryPrice: 0 },
+      });
+    }
+
+    const livePosMap = new Map<string, any>();
     for (const p of cTraderPositions) {
-      posMap.set(String(p.positionId || p.id), p);
+      livePosMap.set(String(p.positionId || p.id), p);
     }
 
     for (const t of openTrades) {
-      const livePos = posMap.get(t.positionId);
+      const livePos = livePosMap.get(String(t.positionId));
       if (livePos) {
         const currentPnl = Number(livePos.netPnl || livePos.unrealizedPnl || livePos.pnl || 0);
-        await FxProStrategy.findByIdAndUpdate(strat._id, { currentPnlUsd: currentPnl });
         await FxProTrade.findByIdAndUpdate(t._id, { pnlUsd: currentPnl });
       } else {
         log.info(`🏁 [${t.symbol}] Posição #${t.positionId} não encontrada na cTrader (encerrada). Sincronizando resultado.`);

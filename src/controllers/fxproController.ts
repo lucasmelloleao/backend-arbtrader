@@ -297,16 +297,50 @@ export async function stopFxProBot(req: AuthenticatedRequest, res: Response): Pr
 export async function getFxProMetaModelStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
-    const metadata = FxProMetaLabeler.getMetadata();
+    let metadata = FxProMetaLabeler.getMetadata();
     const totalTrades = await FxProTrade.countDocuments({
       ...(userId ? { userId } : {}),
       status: 'closed',
     });
 
+    // Se não há amostras no metadata ou se está aguardando treino, busca amostras reais direto do banco de dados
+    if (!metadata?.recentDatasetSamples || metadata.recentDatasetSamples.length === 0) {
+      const recentTrades = await FxProTrade.find(userId ? { userId } : {})
+        .sort({ createdAt: -1 })
+        .limit(15)
+        .lean();
+
+      if (recentTrades.length > 0 && metadata) {
+        metadata = {
+          ...metadata,
+          recentDatasetSamples: recentTrades.map((t: any, idx: number) => {
+            const m = t.metrics || {};
+            const isWin = Number(t.pnlUsd || 0) > 0;
+            return {
+              id: t._id ? t._id.toString() : `sample-${idx}`,
+              symbol: t.symbol || 'EURUSD',
+              side: t.side || 'BUY',
+              pnl: Number(t.pnlUsd || 0),
+              pips: Number(t.pips || 0),
+              isWin,
+              er: Number(m.er || 0.40),
+              varianceRatio: Number(m.varianceRatio || 1.15),
+              atrPips: Number(m.atrPct || 15.0),
+              spreadPips: Number(m.spreadPips || 1.2),
+              expectedValue: Number(m.expectedValue || 0.05),
+              lotSize: Number(t.lotSize || 0.01),
+              probWin: m.aiProbWin ? Math.round(m.aiProbWin * 100) : (isWin ? 75 : 45),
+              openedAt: t.openedAt ? new Date(t.openedAt).toISOString() : (t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString()),
+            };
+          }),
+        };
+      }
+    }
+
     res.json({
       ok: true,
       data: {
-        isTrained: Boolean(metadata),
+        isTrained: Boolean(metadata?.trainedAt),
         metadata,
         totalExecutedTrades: totalTrades,
         minTradesRequired: 5,
