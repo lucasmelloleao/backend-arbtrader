@@ -7,6 +7,25 @@ import path from 'path';
 import { RandomForestClassifier } from 'ml-random-forest';
 import PredictionArbTrade from '../../../models/PredictionArbTrade';
 
+export interface PolymarketDatasetSampleItem {
+  id: string;
+  question: string;
+  slug?: string;
+  side: string;
+  pnl: number;
+  isWin: boolean;
+  er: number;
+  varianceRatio: number;
+  spotDistancePct: number;
+  atrPct: number;
+  expectedValue: number;
+  edgePct: number;
+  entryPrice: number;
+  segsRestantes: number;
+  probWin: number;
+  openedAt: string;
+}
+
 export interface PolymarketMetaMetadata {
   trainedAt: string;
   samplesCount: number;
@@ -15,6 +34,7 @@ export interface PolymarketMetaMetadata {
   features: string[];
   nEstimators: number;
   featureImportance?: { feature: string; importance: number; description: string }[];
+  recentDatasetSamples?: PolymarketDatasetSampleItem[];
 }
 
 export interface PolymarketMetaInference {
@@ -174,6 +194,46 @@ export class PolymarketMetaLabeler {
         { feature: 'Segundos para Vencimento', importance: 6, description: 'Tempo Restante' },
       ];
 
+      // Extrai até 15 amostras mais recentes para visualização no front
+      const recentDatasetSamples: PolymarketDatasetSampleItem[] = trades.slice(0, 15).map((t: any, idx: number) => {
+        const m = t.metrics || {};
+        const isWin = Number(t.pnl || 0) > 0;
+        const fv = X[idx] || this.extractFeatures(
+          m.er || 0.35,
+          m.varianceRatio || 1.10,
+          m.atrPct || 0.15,
+          m.spotDistancePct || 0.20,
+          m.expectedValue || 0.05,
+          m.edgePct || 3.0,
+          m.entryPrice || t.yesPrice || 0.95,
+          m.segsRestantes || 60
+        );
+        let probWin = 50;
+        try {
+          const probs = classifier.predictProbability([fv], 1);
+          probWin = Math.round((probs[0] !== undefined ? probs[0] : 0.5) * 100);
+        } catch (_) {}
+
+        return {
+          id: t._id ? t._id.toString() : `sample-${idx}`,
+          question: t.question || t.slug || 'BTC > Target',
+          slug: t.slug,
+          side: t.side || 'YES',
+          pnl: Number(t.pnl || 0),
+          isWin,
+          er: Number(m.er || 0),
+          varianceRatio: Number(m.varianceRatio || 1.0),
+          spotDistancePct: Number(m.spotDistancePct || 0),
+          atrPct: Number(m.atrPct || 0),
+          expectedValue: Number(m.expectedValue || 0),
+          edgePct: Number(m.edgePct || 0),
+          entryPrice: Number(m.entryPrice || t.yesPrice || 0),
+          segsRestantes: Number(m.segsRestantes || 0),
+          probWin,
+          openedAt: t.openedAt ? new Date(t.openedAt).toISOString() : (t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString()),
+        };
+      });
+
       const metadata: PolymarketMetaMetadata = {
         trainedAt: new Date().toISOString(),
         samplesCount: X.length,
@@ -182,6 +242,7 @@ export class PolymarketMetaLabeler {
         nEstimators: 100,
         features: featureNames.map((f) => f.feature),
         featureImportance: featureNames,
+        recentDatasetSamples,
       };
 
       fs.writeFileSync(this.modelFilePath, JSON.stringify(classifier.toJSON()));

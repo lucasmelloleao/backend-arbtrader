@@ -13,10 +13,35 @@ import {
 } from './helpers/fxpro-math';
 import { FxProMetaLabeler } from './helpers/fxpro-meta-labeler';
 
+const inMemoryFxProLogs: string[] = [];
+const MAX_BUFFER = 500;
+
+export function addFxProLog(msg: string) {
+  const timestamp = new Date().toISOString();
+  const entry = `[${timestamp}] [FXPRO-BOT] ${msg}`;
+  inMemoryFxProLogs.push(entry);
+  if (inMemoryFxProLogs.length > MAX_BUFFER) {
+    inMemoryFxProLogs.shift();
+  }
+}
+
+export function getFxProLogBuffer(): string[] {
+  return [...inMemoryFxProLogs];
+}
+
 const log = {
-  info: (msg: string, ...args: any[]) => console.log(`[FXPRO-BOT] ${msg}`, ...args),
-  warn: (msg: string, ...args: any[]) => console.warn(`[FXPRO-BOT] ${msg}`, ...args),
-  error: (msg: string, ...args: any[]) => console.error(`[FXPRO-BOT] ${msg}`, ...args),
+  info: (msg: string, ...args: any[]) => {
+    addFxProLog(`💡 ${msg}`);
+    console.log(`[FXPRO-BOT] ${msg}`, ...args);
+  },
+  warn: (msg: string, ...args: any[]) => {
+    addFxProLog(`⚠️ ${msg}`);
+    console.warn(`[FXPRO-BOT] ${msg}`, ...args);
+  },
+  error: (msg: string, ...args: any[]) => {
+    addFxProLog(`❌ ${msg}`);
+    console.error(`[FXPRO-BOT] ${msg}`, ...args);
+  },
 };
 
 export class FxProBot {

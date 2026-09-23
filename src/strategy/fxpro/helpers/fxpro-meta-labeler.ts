@@ -7,6 +7,23 @@ import path from 'path';
 import { RandomForestClassifier } from 'ml-random-forest';
 import FxProTrade from '../../../models/FxProTrade';
 
+export interface FxProDatasetSampleItem {
+  id: string;
+  symbol: string;
+  side: string;
+  pnl: number;
+  pips: number;
+  isWin: boolean;
+  er: number;
+  varianceRatio: number;
+  atrPips: number;
+  spreadPips: number;
+  expectedValue: number;
+  lotSize: number;
+  probWin: number;
+  openedAt: string;
+}
+
 export interface FxProMetaMetadata {
   trainedAt: string;
   samplesCount: number;
@@ -15,6 +32,7 @@ export interface FxProMetaMetadata {
   features: string[];
   nEstimators: number;
   featureImportance?: { feature: string; importance: number; description: string }[];
+  recentDatasetSamples?: FxProDatasetSampleItem[];
 }
 
 export interface FxProMetaInference {
@@ -175,6 +193,45 @@ export class FxProMetaLabeler {
         { feature: 'Lote Operado', importance: 4, description: 'Tamanho da Posição' },
       ];
 
+      // Extrai até 15 amostras mais recentes para visualização no front
+      const recentDatasetSamples: FxProDatasetSampleItem[] = trades.slice(0, 15).map((t: any, idx: number) => {
+        const m = t.metrics || {};
+        const isWin = Number(t.pnlUsd || 0) > 0;
+        const openedHour = t.openedAt ? new Date(t.openedAt).getUTCHours() : 12;
+        const fv = X[idx] || this.extractFeatures(
+          m.er || 0.40,
+          m.varianceRatio || 1.15,
+          m.atrPct || 15.0,
+          m.spreadPips || 1.2,
+          m.expectedValue || 10.0,
+          m.edgePct || 2.5,
+          t.lotSize || 0.01,
+          openedHour
+        );
+        let probWin = 50;
+        try {
+          const probs = classifier.predictProbability([fv], 1);
+          probWin = Math.round((probs[0] !== undefined ? probs[0] : 0.5) * 100);
+        } catch (_) {}
+
+        return {
+          id: t._id ? t._id.toString() : `sample-${idx}`,
+          symbol: t.symbol || 'EURUSD',
+          side: t.side || 'BUY',
+          pnl: Number(t.pnlUsd || 0),
+          pips: Number(t.pips || 0),
+          isWin,
+          er: Number(m.er || 0),
+          varianceRatio: Number(m.varianceRatio || 1.0),
+          atrPips: Number(m.atrPct || 0),
+          spreadPips: Number(m.spreadPips || 0),
+          expectedValue: Number(m.expectedValue || 0),
+          lotSize: Number(t.lotSize || 0.01),
+          probWin,
+          openedAt: t.openedAt ? new Date(t.openedAt).toISOString() : (t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString()),
+        };
+      });
+
       const metadata: FxProMetaMetadata = {
         trainedAt: new Date().toISOString(),
         samplesCount: X.length,
@@ -183,6 +240,7 @@ export class FxProMetaLabeler {
         nEstimators: 100,
         features: featureNames.map((f) => f.feature),
         featureImportance: featureNames,
+        recentDatasetSamples,
       };
 
       fs.writeFileSync(this.modelFilePath, JSON.stringify(classifier.toJSON()));

@@ -309,6 +309,7 @@ import {
   stopFxProBot,
   getFxProMetaModelStatus,
   trainFxProMetaModel,
+  getFxProLogs,
 } from '../controllers/fxproController';
 
 router.get('/fxpro/settings', authMiddleware as any, getFxProSettings as any);
@@ -325,6 +326,7 @@ router.post('/fxpro/bot/start', authMiddleware as any, startFxProBot as any);
 router.post('/fxpro/bot/stop', authMiddleware as any, stopFxProBot as any);
 router.get('/fxpro/meta-model/status', authMiddleware as any, getFxProMetaModelStatus as any);
 router.post('/fxpro/meta-model/train', authMiddleware as any, trainFxProMetaModel as any);
+router.get('/fxpro/logs', authMiddleware as any, getFxProLogs as any);
 
 router.get('/auth/fxpro/settings', authMiddleware as any, getFxProSettings as any);
 router.post('/auth/fxpro/settings', authMiddleware as any, updateFxProSettings as any);
@@ -340,5 +342,6 @@ router.post('/auth/fxpro/bot/start', authMiddleware as any, startFxProBot as any
 router.post('/auth/fxpro/bot/stop', authMiddleware as any, stopFxProBot as any);
 router.get('/auth/fxpro/meta-model/status', authMiddleware as any, getFxProMetaModelStatus as any);
 router.post('/auth/fxpro/meta-model/train', authMiddleware as any, trainFxProMetaModel as any);
+router.get('/auth/fxpro/logs', authMiddleware as any, getFxProLogs as any);
 
 export default router;

@@ -3,7 +3,7 @@ import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import FxProSettings from '../models/FxProSettings';
 import FxProStrategy from '../models/FxProStrategy';
 import FxProTrade from '../models/FxProTrade';
-import { FxProBot } from '../strategy/fxpro/fxpro-bot';
+import { FxProBot, getFxProLogBuffer } from '../strategy/fxpro/fxpro-bot';
 import { FxProMetaLabeler } from '../strategy/fxpro/helpers/fxpro-meta-labeler';
 
 /**
@@ -272,6 +272,39 @@ export async function trainFxProMetaModel(req: AuthenticatedRequest, res: Respon
     } else {
       res.status(400).json({ ok: false, error: result.message });
     }
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+}
+
+/**
+ * Obter logs em tempo real do robô FxPro cTrader.
+ */
+export async function getFxProLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const isDashboardPath = req.path.includes('/auth/');
+    if (!userId) {
+      res.status(401).json(isDashboardPath ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
+      return;
+    }
+
+    const lines = Number(req.query.lines) || 150;
+    const memoryLogs: string[] = getFxProLogBuffer();
+
+    const sliced = memoryLogs.slice(-lines);
+    const responseData = {
+      process: 'fxpro-bot',
+      linesCount: sliced.length,
+      logs: sliced,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (isDashboardPath) {
+      res.json(responseData);
+      return;
+    }
+    res.json({ success: true, message: 'ok', data: responseData });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
