@@ -2,7 +2,8 @@ import DerivSettings from '../../models/DerivSettings';
 import DerivTrade from '../../models/DerivTrade';
 import DerivStrategy from '../../models/DerivStrategy';
 import { DerivWsClient } from './helpers/deriv-ws';
-import { evaluateSignal, MIN_AVG_ABS_RETURN, streakStakeMultiplier } from './helpers/deriv-signal';
+import { evaluateSignal, streakStakeMultiplier } from './helpers/deriv-signal';
+import { DerivBarrierOptimizer } from './helpers/deriv-barrier';
 
 const inMemoryDerivLogs: string[] = [];
 const MAX_BUFFER = 500;
@@ -37,6 +38,10 @@ const log = {
 
 // Pool de conexões WebSocket persistentes indexadas por (userId_accountType)
 export const activeDerivClients = new Map<string, { client: DerivWsClient; token: string; accountInfo: any }>();
+
+// Rastreamento de Slippage e Adaptação de Latência
+let consecutiveSlippageWarnings = 0;
+let dynamicMinEdgeBonus = 0;
 
 export async function getOrCreateDerivClient(settings: any, activeToken: string): Promise<{ client: DerivWsClient; accountInfo: any } | null> {
 
@@ -192,32 +197,37 @@ async function executeDerivCycle(): Promise<void> {
           continue;
         }
 
-        // B. Saída Antecipada (Take Profit ou Emergency Stop específico por ativo)
+        // B. Saída Antecipada / Gestão de Posição
+        // Para contratos curtos (<= 30s), a revenda antecipada é desativada devido ao spread negativo do WebSocket
+        const isShortBinary = (trade.durationSec && trade.durationSec <= 30) || (!trade.contractType?.includes('MULT') && !trade.symbol?.startsWith('cry'));
+        const isValidToSell = Boolean(contractInfo.is_valid_to_sell) && !isShortBinary;
         const profitPct = buyPrice > 0 ? (currentProfit / buyPrice) * 100 : 0;
         
         // Busca estratégia individual do ativo para aplicar seus parâmetros específicos
         const assetStrategy = await DerivStrategy.findOne({ userId: settings.userId, symbol: trade.symbol }).lean();
-        const minTakeProfit = Number(assetStrategy?.minTakeProfitPct ?? settings.minTakeProfitPct ?? 15.0);
+        const minTakeProfit = Number(assetStrategy?.minTakeProfitPct ?? settings.minTakeProfitPct ?? 25.0);
         const emergencyStop = Number(assetStrategy?.emergencyStopPct ?? settings.emergencyStopPct ?? 70.0);
         const tradeAgeSec = trade.openedAt ? (Date.now() - new Date(trade.openedAt).getTime()) / 1000 : 0;
 
-        // 1. Take Profit Antecipado: Se atingiu o lucro configurado para o ativo, vende imediatamente
-        if (profitPct >= minTakeProfit && currentProfit > 0) {
-          const tpReason = `Saída Antecipada (Take Profit: +${profitPct.toFixed(1)}%)`;
-          log.info(`🎯 [${trade.symbol}] ${tpReason} ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)} | Meta: +${minTakeProfit}%). Vendendo contrato antecipadamente...`);
-          await DerivTrade.updateOne({ _id: trade._id }, { reason: tpReason }).catch(() => {});
-          await client.sellContract(trade.contractId, 0).catch((err) => {
-            log.warn(`⚠️ [${trade.symbol}] Falha ao vender contrato antecipadamente: ${err.message}`);
-          });
-        } 
-        // 2. Stop Loss de Emergência: Vende se o prejuízo atingir a trava configurada para o ativo (após pelo menos 5s)
-        else if (tradeAgeSec >= 5 && profitPct <= -emergencyStop) {
-          const stopReason = `Saída Antecipada (Emergency Stop: ${profitPct.toFixed(1)}%)`;
-          log.warn(`🚨 [${trade.symbol}] ${stopReason} (${tradeAgeSec.toFixed(0)}s decorridos | Trava: -${emergencyStop}%). Vendendo contrato...`);
-          await DerivTrade.updateOne({ _id: trade._id }, { reason: stopReason }).catch(() => {});
-          await client.sellContract(trade.contractId, 0).catch((err) => {
-            log.warn(`⚠️ [${trade.symbol}] Falha no emergency stop: ${err.message}`);
-          });
+        if (isValidToSell) {
+          // 1. Take Profit Dinâmico / Breakeven (Aplicado principalmente em Multiplicadores/Cripto após +25%)
+          if (profitPct >= Math.max(25, minTakeProfit) && currentProfit > 0) {
+            const tpReason = `Saída Antecipada (Take Profit: +${profitPct.toFixed(1)}%)`;
+            log.info(`🎯 [${trade.symbol}] ${tpReason} ($${currentProfit.toFixed(2)} sobre $${buyPrice.toFixed(2)} | Meta: +${minTakeProfit}%). Vendendo posição com lucro protegido...`);
+            await DerivTrade.updateOne({ _id: trade._id }, { reason: tpReason }).catch(() => {});
+            await client.sellContract(trade.contractId, 0).catch((err: any) => {
+              log.warn(`⚠️ [${trade.symbol}] Falha ao vender contrato antecipadamente: ${err.message}`);
+            });
+          } 
+          // 2. Stop Loss de Emergência (após pelo menos 10s em posições longas)
+          else if (tradeAgeSec >= 10 && profitPct <= -emergencyStop) {
+            const stopReason = `Saída Antecipada (Emergency Stop: ${profitPct.toFixed(1)}%)`;
+            log.warn(`🚨 [${trade.symbol}] ${stopReason} (${tradeAgeSec.toFixed(0)}s decorridos | Trava: -${emergencyStop}%). Encerrando posição...`);
+            await DerivTrade.updateOne({ _id: trade._id }, { reason: stopReason }).catch(() => {});
+            await client.sellContract(trade.contractId, 0).catch((err: any) => {
+              log.warn(`⚠️ [${trade.symbol}] Falha no emergency stop: ${err.message}`);
+            });
+          }
         }
       } catch (e: any) {
         log.warn(`⚠️ Erro ao monitorar contrato ${trade.contractId}: ${e.message}`);
@@ -260,17 +270,17 @@ async function executeDerivCycle(): Promise<void> {
     }
     const streak = streakStakeMultiplier(consecutiveLosses);
     if (streak.blocked) {
-      const cooldownSec = 600; // 10 minutos de pausa
+      const cooldownSec = 180; // 180 segundos (3 minutos) de pausa após 3 perdas consecutivas
       const elapsedSec = lastLossDate ? (Date.now() - lastLossDate.getTime()) / 1000 : Infinity;
       if (elapsedSec < cooldownSec) {
-        const remainingMin = Math.ceil((cooldownSec - elapsedSec) / 60);
-        log.warn(`🛑 [RISCO] ${consecutiveLosses} perdas consecutivas. Em pausa de proteção (${remainingMin} min restantes).`);
+        const remainingSec = Math.ceil(cooldownSec - elapsedSec);
+        log.warn(`🛑 [RISCO] ${consecutiveLosses} perdas consecutivas. Em pausa de proteção (${remainingSec}s restantes).`);
         return;
       }
       log.info(`🔄 [RISCO] Pausa de proteção concluída. Retomando operações com stake reduzido (25%).`);
     }
-    if (consecutiveLosses >= 2) {
-      log.info(`📉 [RISCO] Sequência de ${consecutiveLosses} perdas. Stake reduzido para ${Math.round((streak.multiplier || 0.25) * 100)}%.`);
+    if (consecutiveLosses === 2) {
+      log.info(`📉 [RISCO] Sequência de 2 perdas. Stake reduzido para 50%.`);
     }
 
     // 2. Buscar estratégias ativas do usuário para operar por ativo
@@ -301,7 +311,7 @@ async function executeDerivCycle(): Promise<void> {
           barrierLower: st.barrierLower || '+1',
           tradeSize: Number(st.tradeSize) || 2,
           durationSec: Number(st.durationSec) || 15,
-          minCertaintyProb: Number(st.minCertaintyProb) || 0.75,
+          minCertaintyProb: Number(st.minCertaintyProb) || 0.72,
           minTakeProfitPct: st.minTakeProfitPct !== undefined ? Number(st.minTakeProfitPct) : undefined,
           emergencyStopPct: st.emergencyStopPct !== undefined ? Number(st.emergencyStopPct) : undefined,
           strategyId: st._id,
@@ -321,7 +331,7 @@ async function executeDerivCycle(): Promise<void> {
           barrierLower: '+1',
           tradeSize: Number(settings.tradeSize || 2),
           durationSec: Number(settings.contractDurationSec || 15),
-          minCertaintyProb: Number(settings.minHighCertaintyProb || 0.75),
+          minCertaintyProb: Number(settings.minHighCertaintyProb || 0.72),
         });
       }
     }
@@ -329,7 +339,7 @@ async function executeDerivCycle(): Promise<void> {
     for (const target of activeTargets) {
       const sym = target.symbol;
       try {
-        // 1. Cooldown Anti-Sequência de Loss (Pausa o ativo por 2.5 min se o último trade fechou em perda)
+        // 1. Cooldown Anti-Sequência de Loss (Pausa o ativo por 180s se o último trade fechou em perda)
         const lastLossTrade = await DerivTrade.findOne({
           userId: settings.userId,
           symbol: sym,
@@ -338,8 +348,8 @@ async function executeDerivCycle(): Promise<void> {
 
         if (lastLossTrade && (lastLossTrade.pnl || 0) < 0 && lastLossTrade.closedAt) {
           const secondsSinceLoss = (Date.now() - new Date(lastLossTrade.closedAt).getTime()) / 1000;
-          if (secondsSinceLoss < 150) {
-            log.info(`⏸️ [${sym} (${target.name})] Em cooldown pós-loss (${Math.round(150 - secondsSinceLoss)}s restantes). Aguardando estabilização do mercado...`);
+          if (secondsSinceLoss < 180) {
+            log.info(`⏸️ [${sym} (${target.name})] Em cooldown pós-loss (${Math.round(180 - secondsSinceLoss)}s restantes). Aguardando estabilização do mercado...`);
             continue;
           }
         }
@@ -350,36 +360,40 @@ async function executeDerivCycle(): Promise<void> {
           return [];
         });
 
-        if (!ticks || ticks.length < 35) {
-          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/35) na Deriv. Aguardando novo fluxo de cotação...`);
+        if (!ticks || ticks.length < 40) {
+          log.info(`⏳ [${sym} (${target.name})] Histórico insuficiente de ticks (${ticks?.length || 0}/40) na Deriv. Aguardando novo fluxo de cotação...`);
           continue;
         }
 
         const signal = evaluateSignal(ticks);
         const { direction: decidedDirection, confidence: calculatedProb, indicators } = signal;
-        const { rsi, stochK, tickMomentumUp, tickMomentumDown, kaufmanER, hurstExponent } = indicators;
+        const { er, r2, slope, imbalance } = indicators;
 
         // Filtro de Probabilidade Mínima da Estratégia
         if (!decidedDirection || calculatedProb < target.minCertaintyProb) {
-          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Sem confluência/Chop)';
-          log.info(`🔍 [${sym} (${target.name})] Certeza: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | ER: ${kaufmanER.toFixed(2)} | Hurst: ${hurstExponent.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Stoch: ${stochK.toFixed(1)}% | Ticks: ↑${(tickMomentumUp * 100).toFixed(0)}% ↓${(tickMomentumDown * 100).toFixed(0)}%.`);
+          const probMsg = calculatedProb > 0 ? `${(calculatedProb * 100).toFixed(1)}%` : '0% (Ruído/Chop)';
+          log.info(`🔍 [${sym} (${target.name})] Confiança: ${probMsg} (Min: ${(target.minCertaintyProb * 100).toFixed(0)}%) | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Slope: ${slope > 0 ? '+' : ''}${slope.toFixed(4)} | Imbalance: ${(imbalance * 100).toFixed(0)}%.`);
           continue;
         }
 
-        log.info(`🎯 [${sym} (${target.name})] CONFLUÊNCIA APROVADA: Direção ${decidedDirection} com ${(calculatedProb * 100).toFixed(1)}% de Certeza (Mínimo exigido: ${(target.minCertaintyProb * 100).toFixed(0)}%). Iniciando cotação...`);
+        log.info(`🎯 [${sym} (${target.name})] GATES QUANTITATIVOS APROVADOS: Direção ${decidedDirection} com ${(calculatedProb * 100).toFixed(1)}% de Confiança (Mín: ${(target.minCertaintyProb * 100).toFixed(0)}% | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Imb: ${(imbalance * 100).toFixed(0)}%).`);
 
         // Determina o tipo de contrato e a barreira a partir das configurações específicas da estratégia
         let contractType = 'HIGHER';
         let rawBarrier: string | undefined = target.barrier;
 
+        // Determina a barreira dinâmica pelo otimizador de volatilidade (se não for Multiplier)
+        const tickVol = DerivBarrierOptimizer.calculateTickVolatility(ticks);
+        const dynamicBarrierOffset = DerivBarrierOptimizer.getTargetOffset(decidedDirection, tickVol);
+
         if (target.contractType === 'HIGHER') {
           if (decidedDirection !== 'CALL') continue;
           contractType = 'HIGHER';
-          rawBarrier = target.barrier;
+          rawBarrier = target.barrier && target.barrier !== '-1' ? target.barrier : dynamicBarrierOffset;
         } else if (target.contractType === 'LOWER') {
           if (decidedDirection !== 'PUT') continue;
           contractType = 'LOWER';
-          rawBarrier = target.barrierLower || target.barrier;
+          rawBarrier = target.barrierLower && target.barrierLower !== '+1' ? target.barrierLower : dynamicBarrierOffset;
         } else if (target.contractType === 'RISE') {
           if (decidedDirection !== 'CALL') continue;
           contractType = 'CALL';
@@ -400,27 +414,26 @@ async function executeDerivCycle(): Promise<void> {
           contractType = 'MULTDOWN';
           rawBarrier = undefined;
         } else if (target.contractType === 'BOTH_MULT' || sym.startsWith('cry')) {
-          // Para ativos de Cripto ou seleção BOTH_MULT, usa Multiplier nativo
           contractType = decidedDirection === 'CALL' ? 'MULTUP' : 'MULTDOWN';
           rawBarrier = undefined;
         } else {
-          // BOTH_HL (Higher/Lower automático)
+          // BOTH_HL (Higher/Lower com Barreira Otimizada Dinamicamente)
           if (decidedDirection === 'CALL') {
             contractType = 'HIGHER';
-            rawBarrier = target.barrier;
+            rawBarrier = target.barrier && target.barrier !== '-1' ? target.barrier : dynamicBarrierOffset;
           } else {
             contractType = 'LOWER';
-            rawBarrier = target.barrierLower || (target.barrier?.startsWith('-') ? `+${target.barrier.slice(1)}` : target.barrier);
+            rawBarrier = target.barrierLower && target.barrierLower !== '+1' ? target.barrierLower : dynamicBarrierOffset;
           }
         }
 
         const isMultiplier = contractType === 'MULTUP' || contractType === 'MULTDOWN';
 
-        // Normalização e sanitização da barreira para evitar erro na Deriv (ex: troca vírgula por ponto)
+        // Normalização e sanitização da barreira
         let barrierValue = rawBarrier ? String(rawBarrier).trim().replace(',', '.') : undefined;
 
         const activeMultiplier = streak.multiplier > 0 ? streak.multiplier : 0.25;
-        const tradeStake = Math.max(1, Math.round(target.tradeSize * activeMultiplier * 100) / 100);
+        let tradeStake = Math.max(1, Math.round(target.tradeSize * activeMultiplier * 100) / 100);
         let tradeDuration = target.durationSec;
         let durationUnit = 's';
 
@@ -440,7 +453,6 @@ async function executeDerivCycle(): Promise<void> {
           proposalParams.multiplier = 100;
           const minTp = Number(target.minTakeProfitPct ?? settings.minTakeProfitPct ?? 15.0);
           const stopLoss = Number(target.emergencyStopPct ?? settings.emergencyStopPct ?? 70.0);
-          // Take profit e stop loss em USD para proteção na Deriv
           proposalParams.take_profit = Math.max(0.1, Math.round((tradeStake * (minTp / 100)) * 100) / 100);
           proposalParams.stop_loss = Math.max(0.35, Math.round((tradeStake * (stopLoss / 100)) * 100) / 100);
         } else {
@@ -496,17 +508,30 @@ async function executeDerivCycle(): Promise<void> {
           continue;
         }
 
-        // Filtro de Payout Mínimo para opções digitais (em Multipliers payout é dinâmico)
+        // Validação Quantitativa de EV e Edge com Otimizador de Barreira (para opções digitais)
+        let evCheckResult: any = null;
         if (!isMultiplier) {
           const payout = Number(proposal.payout || 0);
           const askPrice = Number(proposal.ask_price || tradeStake);
-          const netProfitPct = askPrice > 0 ? ((payout - askPrice) / askPrice) * 100 : 0;
-          const requiredMinPayout = Number(settings.minPayoutPct || 35.0);
+          const currentMinEdge = 0.04 + dynamicMinEdgeBonus;
+          
+          const evCheck = DerivBarrierOptimizer.evaluateProposal(
+            askPrice,
+            payout,
+            calculatedProb,
+            tradeStake,
+            currentMinEdge
+          );
+          evCheckResult = evCheck;
 
-          if (netProfitPct < requiredMinPayout) {
-            log.warn(`⚠️ [${sym}] Payout líquido insuficiente (+${netProfitPct.toFixed(1)}% < Mínimo: ${requiredMinPayout}% | Lucro: $${(payout - askPrice).toFixed(2)} sobre $${askPrice.toFixed(2)}). Entrada ignorada.`);
+          if (!evCheck.isValid) {
+            log.warn(`⚠️ [${sym}] Proposta com EV Negativo ou Edge Insuficiente (EV: ${evCheck.expectedValue} | Edge: +${(evCheck.edge * 100).toFixed(1)}% | MinEdge Exigido: +${(currentMinEdge * 100).toFixed(1)}% | Retorno R: +${(evCheck.payoutRatio * 100).toFixed(1)}% | Prob Deriv: ${(evCheck.brokerProb * 100).toFixed(1)}% vs Modelo: ${(calculatedProb * 100).toFixed(1)}%). Entrada rejeitada.`);
             continue;
           }
+
+          // Ajusta stake ótimo com Kelly fracionário
+          tradeStake = evCheck.stake;
+          log.info(`📊 [${sym}] Proposta com EV Positivo Validada (EV: +${evCheck.expectedValue} | Edge: +${(evCheck.edge * 100).toFixed(1)}% | Retorno R: +${(evCheck.payoutRatio * 100).toFixed(1)}% | Stake Kelly: $${tradeStake}).`);
         }
 
         if (proposal && proposal.id) {
@@ -514,6 +539,26 @@ async function executeDerivCycle(): Promise<void> {
           if (bought && bought.contract_id) {
             const displayType = contractType;
             const displayBarrier = proposal.barrier ? ` [Barreira: ${proposal.barrier}]` : (barrierValue ? ` [Barreira: ${barrierValue}]` : '');
+
+            // 3. Verificação de Slippage Pós-Execução
+            if (bought.buy_price && proposal.ask_price && bought.buy_price > proposal.ask_price) {
+              const slippage = bought.buy_price - proposal.ask_price;
+              const postBuyR = (Number(proposal.payout || 0) - bought.buy_price) / bought.buy_price;
+              const postBuyEv = (calculatedProb * postBuyR) - (1 - calculatedProb);
+
+              if (postBuyEv <= 0) {
+                consecutiveSlippageWarnings++;
+                log.warn(`⚠️ [SLIPPAGE_WARNING] Derrapagem de $${slippage.toFixed(2)} corroeu o EV para ${postBuyEv.toFixed(4)}. Alerta #${consecutiveSlippageWarnings}.`);
+                if (consecutiveSlippageWarnings >= 3) {
+                  dynamicMinEdgeBonus = 0.02; // Aumenta exigência de edge de 4% para 6% para compensar latência
+                  log.warn(`🚨 [LATÊNCIA ALTA] 3 alertas seguidos de slippage. Elevando Edge mínimo exigido para 6.0%.`);
+                }
+              } else {
+                consecutiveSlippageWarnings = Math.max(0, consecutiveSlippageWarnings - 1);
+              }
+            } else {
+              consecutiveSlippageWarnings = Math.max(0, consecutiveSlippageWarnings - 1);
+            }
 
             await DerivTrade.create({
               userId: settings.userId,
@@ -525,7 +570,7 @@ async function executeDerivCycle(): Promise<void> {
               status: 'open',
               buyPrice: Number(bought.buy_price || tradeStake),
               investedUsd: Number(bought.buy_price || tradeStake),
-              reason: `Estratégia "${target.name}" (${(calculatedProb * 100).toFixed(0)}% Certeza | RSI: ${rsi.toFixed(0)} | Stoch: ${stochK.toFixed(0)}%)`,
+              reason: `Estratégia "${target.name}" (${(calculatedProb * 100).toFixed(0)}% Confiança | ER: ${er.toFixed(2)} | R²: ${r2.toFixed(2)} | Imb: ${(imbalance * 100).toFixed(0)}%)`,
               openedAt: new Date(),
             });
 
