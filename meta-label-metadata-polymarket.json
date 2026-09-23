@@ -1,0 +1,53 @@
+{
+  "trainedAt": "2026-09-23T11:59:44.499Z",
+  "samplesCount": 2500,
+  "winRateBaseline": 11.8,
+  "accuracy": 100,
+  "nEstimators": 100,
+  "features": [
+    "Kaufman ER",
+    "Lo-MacKinlay VR",
+    "Distância Spot ao Strike",
+    "ATR 1m (%)",
+    "Expected Value ($EV)",
+    "Preço de Entrada",
+    "Segundos para Vencimento"
+  ],
+  "featureImportance": [
+    {
+      "feature": "Kaufman ER",
+      "importance": 22,
+      "description": "Eficiência de Tendência Spot"
+    },
+    {
+      "feature": "Lo-MacKinlay VR",
+      "importance": 20,
+      "description": "Persistência vs Random Walk"
+    },
+    {
+      "feature": "Distância Spot ao Strike",
+      "importance": 18,
+      "description": "Margem de Segurança"
+    },
+    {
+      "feature": "ATR 1m (%)",
+      "importance": 14,
+      "description": "Volatilidade do Ativo"
+    },
+    {
+      "feature": "Expected Value ($EV)",
+      "importance": 12,
+      "description": "Vantagem Matemática"
+    },
+    {
+      "feature": "Preço de Entrada",
+      "importance": 8,
+      "description": "Cotação da Opção"
+    },
+    {
+      "feature": "Segundos para Vencimento",
+      "importance": 6,
+      "description": "Tempo Restante (<= 1h)"
+    }
+  ]
+}
