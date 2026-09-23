@@ -388,6 +388,8 @@ export class IcMarketsBot {
     }
   }
 
+  private static symbolPriceHistory = new Map<string, number[]>();
+
   private static async evaluateNewEntry(
     strat: IIcMarketsStrategy,
     tickers: Record<string, any>,
@@ -401,22 +403,42 @@ export class IcMarketsBot {
       return;
     }
 
-    const spreadPips = (ticker.ask - ticker.bid) / (symNorm.includes('JPY') ? 0.01 : symNorm.includes('XAU') ? 0.1 : 0.0001);
+    const isCrypto = symNorm.includes('BTC') || symNorm.includes('ETH');
+    const isGold = symNorm.includes('XAU');
+    const isJpy = symNorm.includes('JPY');
+    const pipSize = isCrypto ? 1.0 : isGold ? 0.1 : isJpy ? 0.01 : 0.0001;
 
-    // Amostra de preços para cálculo de Kaufman ER e Variance Ratio
+    const spreadPips = (ticker.ask - ticker.bid) / pipSize;
     const mid = (ticker.bid + ticker.ask) / 2;
-    const priceSeries = [
-      mid * 0.9997,
-      mid * 0.9998,
-      mid * 0.9996,
-      mid * 0.9999,
-      mid * 1.0001,
-      mid * 1.0003,
-      mid * 1.0002,
-      mid * 1.0005,
-      mid * 1.0006,
-      mid,
-    ];
+
+    // Histórico de preços em tempo real
+    let hist = this.symbolPriceHistory.get(symNorm);
+    if (!hist) {
+      hist = [];
+      this.symbolPriceHistory.set(symNorm, hist);
+    }
+    hist.push(mid);
+    if (hist.length > 60) hist.shift();
+
+    // Se histórico ainda estiver sendo acumulado, constrói série inicial
+    let priceSeries = hist;
+    if (priceSeries.length < 12) {
+      const spreadStep = (ticker.ask - ticker.bid) * 0.25;
+      priceSeries = [
+        mid - spreadStep * 3,
+        mid - spreadStep * 2,
+        mid - spreadStep,
+        mid - spreadStep * 1.5,
+        mid,
+        mid + spreadStep * 0.5,
+        mid + spreadStep,
+        mid + spreadStep * 1.5,
+        mid + spreadStep * 2,
+        mid + spreadStep * 2.5,
+        mid + spreadStep * 3,
+        mid,
+      ];
+    }
 
     // GATES 1, 2 e 3
     const gates = evaluateIcMarketsQuantGates(
