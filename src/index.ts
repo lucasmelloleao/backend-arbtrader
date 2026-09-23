@@ -80,6 +80,10 @@ app.get('/readyz', (req, res) => {
     setInterval(() => {
       runDerivCycle().catch((err: any) => console.error('⚠️ [DerivBot Loop] Erro:', err.message));
     }, 600);
+
+    // Inicializa o motor do Robô FxPro cTrader
+    const { FxProBot } = await import('./strategy/fxpro/fxpro-bot');
+    await FxProBot.start();
   } catch (err: any) {
     console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
     process.exit(1);

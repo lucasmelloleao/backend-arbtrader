@@ -82,9 +82,25 @@ export class FxProBot {
     return { running: this.isRunning };
   }
 
+  private static lastCycleLog = 0;
+
   private static async processCycle(): Promise<void> {
     const activeStrategies = await FxProStrategy.find({ active: true, status: 'running' }).lean();
-    if (!activeStrategies || activeStrategies.length === 0) return;
+    const now = Date.now();
+    const shouldLogHeartbeat = now - this.lastCycleLog > 15000; // Log de heartbeat a cada 15 segundos
+
+    if (!activeStrategies || activeStrategies.length === 0) {
+      if (shouldLogHeartbeat) {
+        this.lastCycleLog = now;
+        log.info('⏳ Robô FxPro ativo. Nenhuma estratégia ativa com status "running" encontrada no momento. Cadastre ou ative uma estratégia.');
+      }
+      return;
+    }
+
+    if (shouldLogHeartbeat) {
+      this.lastCycleLog = now;
+      log.info(`🔍 Monitorando ${activeStrategies.length} par(es) Forex FxPro: [${activeStrategies.map(s => s.symbol).join(', ')}]`);
+    }
 
     for (const strat of activeStrategies) {
       try {
@@ -105,11 +121,22 @@ export class FxProBot {
         }).lean();
 
     if (!key) {
+      log.warn(`⚠️ [${strat.symbol}] Chave de API cTrader (FxPro) não vinculada ou inativa para este usuário.`);
       return;
     }
 
-    const adapter = await getSharedCtraderAdapter(key);
-    if (!adapter) return;
+    let adapter: any = null;
+    try {
+      adapter = await getSharedCtraderAdapter(key);
+    } catch (e: any) {
+      log.error(`❌ [${strat.symbol}] Erro ao conectar na cTrader Open API: ${e.message}`);
+      return;
+    }
+
+    if (!adapter) {
+      log.warn(`⚠️ [${strat.symbol}] Adaptador cTrader indisponível.`);
+      return;
+    }
 
     // 1. Reconcilia posições abertas na cTrader
     await this.reconcileOpenPositions(strat, adapter);
@@ -130,11 +157,13 @@ export class FxProBot {
     let ticker: any = null;
     try {
       ticker = await adapter.fetchTicker(sym);
-    } catch {
-      // Fallback
+    } catch (e: any) {
+      log.warn(`⚠️ [${sym}] Falha ao obter cotação Spot cTrader: ${e.message}`);
+      return;
     }
 
     if (!ticker || !ticker.bid || !ticker.ask) {
+      log.warn(`⚠️ [${sym}] Book de ofertas vazio na FxPro.`);
       return;
     }
 
@@ -168,7 +197,9 @@ export class FxProBot {
     );
 
     if (!quantGates.gatesPassed) {
-      // Veto estatístico
+      if (Math.random() < 0.1) {
+        log.info(`🎲 [${sym}] Filtro Quant: ER=${quantGates.er.toFixed(2)}, VR=${quantGates.varianceRatio.toFixed(2)}, Spread=${spreadPips} pips (Aguardando confluência).`);
+      }
       return;
     }
 
