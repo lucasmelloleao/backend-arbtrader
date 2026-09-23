@@ -170,20 +170,23 @@ export class FxProBot {
     const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
     const spreadPips = Number(((ticker.ask - ticker.bid) / pipSize).toFixed(1));
 
-    // 4. Obtém Histórico de Candles recentes (M1 / M5)
-    let candles: any[] = [];
+    // 4. Obtém Histórico de Candles recentes (M1 / M5) via fetchTrendbars da Open API cTrader
+    const periodMinutes = strat.timeframe === '1m' ? 1 : (strat.timeframe === '15m' ? 15 : 5);
+    let trendbars: any[] = [];
     try {
-      candles = await (adapter as any).fetchOHLCV(sym, strat.timeframe || '5m', undefined, 30);
-    } catch {
-      // Caso não tenha suporte a fetchOHLCV direto, simula a partir de ticks recentes
+      if (typeof adapter.fetchTrendbars === 'function') {
+        trendbars = await adapter.fetchTrendbars(sym, periodMinutes, 30);
+      }
+    } catch (e: any) {
+      log.warn(`⚠️ [${sym}] Falha ao obter trendbars: ${e.message}`);
     }
 
-    const closePrices = candles.length >= 10
-      ? candles.map((c: any) => c[4] || c.close)
-      : [ticker.bid * 0.999, ticker.bid * 0.9995, ticker.bid];
+    const closePrices = trendbars.length >= 10
+      ? trendbars.map((c: any) => Number(c.close))
+      : [ticker.bid * 0.9997, ticker.bid * 0.9998, ticker.bid * 0.9999, ticker.bid];
 
-    const atrPips = candles.length >= 14
-      ? calculateFxProATR(candles.map((c: any) => ({ high: c[2], low: c[3], close: c[4] })), 14, pipSize)
+    const atrPips = trendbars.length >= 14
+      ? calculateFxProATR(trendbars.map((c: any) => ({ high: c.high, low: c.low, close: c.close })), 14, pipSize)
       : 15.0;
 
     // 5. Avaliação dos Gates 1, 2 e 3 (Random Walk, Kaufman ER, Spread Guard)
