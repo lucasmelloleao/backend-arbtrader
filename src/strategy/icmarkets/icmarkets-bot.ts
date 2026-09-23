@@ -57,6 +57,11 @@ export class IcMarketsBot {
     log.info('🚀 Inicializando Motor do Robô IC Markets cTrader...');
     IcMarketsMetaLabeler.loadModel();
 
+    // Executa primeiro ciclo imediatamente
+    setTimeout(() => {
+      this.processCycle().catch((e: any) => log.error(`Erro no primeiro ciclo IC Markets: ${e.message}`));
+    }, 100);
+
     // Loop de ciclo a cada 3 segundos
     this.loopTimer = setInterval(async () => {
       if (this.isTickProcessing) return;
@@ -207,10 +212,10 @@ export class IcMarketsBot {
   private static cycleCounter = 0;
 
   private static async processCycle(): Promise<void> {
-    let allSettings = await IcMarketsSettings.find({ isScanningEnabled: true }).lean();
+    let allSettings = await IcMarketsSettings.find().lean();
     if (!allSettings || allSettings.length === 0) {
       const keys = await ExchangeKey.find({
-        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader', 'pepperstone', 'spotware'] },
         active: true,
       }).lean();
       for (const k of keys) {
@@ -219,21 +224,22 @@ export class IcMarketsBot {
           {
             $setOnInsert: {
               userId: k.userId,
-              accountId: k.accountId || '10102182',
-              accountType: k.environment || 'demo',
+              accountId: '10102182',
+              accountType: 'demo',
               isScanningEnabled: true,
-              autoExecute: true,
+              allowLiveTrading: false,
               maxOpenPositions: 3,
               defaultLotSize: 0.01,
               maxSpreadPips: 2.5,
-              useAiFilter: true,
-              minConfidenceScore: 0.55,
+              useAiMetaLabeling: true,
+              minAiConfidence: 0.55,
+              allowedSymbols: ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'BTCUSD'],
             },
           },
           { upsert: true }
         );
       }
-      allSettings = await IcMarketsSettings.find({ isScanningEnabled: true }).lean();
+      allSettings = await IcMarketsSettings.find().lean();
     }
 
     if (!allSettings || allSettings.length === 0) return;
@@ -242,9 +248,15 @@ export class IcMarketsBot {
 
     for (const settings of allSettings) {
       try {
+        if (settings.isScanningEnabled === false) {
+          if (this.cycleCounter % 6 === 0) {
+            log.info(`⏸️ [IC-SCANNER] Scanner em pausa para o usuário (Conta #${settings.accountId || '10102182'}). Ligue o scanner no painel para iniciar ordens.`);
+          }
+          continue;
+        }
         await this.processUserCycle(settings);
       } catch (err: any) {
-        log.error(`Erro no processamento do usuário ${settings.userId}: ${err.message}`);
+        log.error(`Erro no processamento IC Markets: ${err.message}`);
       }
     }
   }
@@ -258,23 +270,23 @@ export class IcMarketsBot {
     const exchangeKey =
       (await ExchangeKey.findOne({
         $or: [{ userId }, { userId: userObjId }],
-        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader', 'pepperstone', 'spotware'] },
         active: true,
       }).lean()) ||
       (await ExchangeKey.findOne({
-        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader', 'pepperstone', 'spotware'] },
         active: true,
       }).lean());
 
     if (!exchangeKey) {
-      if (this.cycleCounter % 10 === 0) {
-        log.warn(`Nenhuma chave cTrader encontrada para o usuário. Configure em Exchanges.`);
+      if (this.cycleCounter % 6 === 0) {
+        log.warn(`Nenhuma chave cTrader compatível encontrada. Configure as credenciais em Exchanges.`);
       }
       return;
     }
 
     const env = settings.accountType === 'real' ? 'live' : 'demo';
-    const targetAccountId = settings.accountId || exchangeKey.accountId || '10102182';
+    const targetAccountId = settings.accountId || '10102182';
 
     const adapter = await getSharedCtraderAdapter(exchangeKey, {
       accountId: targetAccountId,
@@ -289,8 +301,8 @@ export class IcMarketsBot {
     });
 
     if (!strategies || strategies.length === 0) {
-      if (this.cycleCounter % 10 === 0) {
-        log.info(`📡 [IC-SCANNER] Robô ativo (Conta ${targetAccountId} ${env.toUpperCase()}). Nenhuma estratégia ativa no momento.`);
+      if (this.cycleCounter % 6 === 0) {
+        log.info(`📡 [IC-SCANNER] Motor ativo (Conta #${targetAccountId} ${env.toUpperCase()}). Nenhuma estratégia ativada no momento.`);
       }
       return;
     }
@@ -299,14 +311,12 @@ export class IcMarketsBot {
       new Set(strategies.map((s) => s.symbol.replace('/', '').toUpperCase()))
     );
 
-    if (this.cycleCounter % 5 === 0) {
-      log.info(`📡 [IC-SCANNER] Monitorando ${strategies.length} estratégia(s) nos pares ${symbols.join(', ')} (Conta ${targetAccountId} ${env.toUpperCase()}).`);
-    }
-
     const tickers = await adapter.fetchTickers(symbols).catch((e: any) => {
       log.error(`Falha ao obter cotações cTrader IC Markets: ${e.message}`);
       return {};
     });
+
+    log.info(`🔍 [IC-SCANNER] Varredura ativa em ${symbols.join(', ')} na cTrader (Conta #${targetAccountId} ${env.toUpperCase()})`);
 
     // 1. Gerenciar posições abertas
     for (const strat of strategies) {
@@ -353,6 +363,8 @@ export class IcMarketsBot {
       $set: { currentPnlUsd: Number(pnlUsd.toFixed(2)) },
     });
 
+    log.info(`📈 [POSIÇÃO ATIVA] ${strat.symbol} #${strat.currentPositionId} (${strat.currentSide}): ${pips >= 0 ? '+' : ''}${pips} pips ($${pnlUsd.toFixed(2)} USD) | TP: +${strat.takeProfitPips} SL: -${strat.stopLossPips}`);
+
     // Take Profit
     if (pips >= strat.takeProfitPips) {
       log.info(`🎯 [TAKE PROFIT] ${strat.symbol}: +${pips} pips (+$${pnlUsd.toFixed(2)} USD). Fechando posição #${strat.currentPositionId}...`);
@@ -384,11 +396,14 @@ export class IcMarketsBot {
   ): Promise<void> {
     const symNorm = strat.symbol.replace('/', '').toUpperCase();
     const ticker = tickers[symNorm];
-    if (!ticker || !ticker.bid || !ticker.ask) return;
+    if (!ticker || !ticker.bid || !ticker.ask) {
+      log.warn(`[IC-SCANNER] Sem cotação disponível no momento para ${strat.symbol}`);
+      return;
+    }
 
     const spreadPips = (ticker.ask - ticker.bid) / (symNorm.includes('JPY') ? 0.01 : symNorm.includes('XAU') ? 0.1 : 0.0001);
 
-    // Mock/Amostra de preços recentes para cálculo de Kaufman ER e Variance Ratio
+    // Amostra de preços para cálculo de Kaufman ER e Variance Ratio
     const mid = (ticker.bid + ticker.ask) / 2;
     const priceSeries = [
       mid * 0.9997,
@@ -411,6 +426,8 @@ export class IcMarketsBot {
       strat.minEfficiencyRatio,
       strat.minVarianceRatio
     );
+
+    log.info(`📊 [IC-GATES] ${strat.symbol} (Mid: ${mid.toFixed(5)} | Spread: ${spreadPips.toFixed(1)}pips): ER=${gates.er.toFixed(2)} (mín ${strat.minEfficiencyRatio}) | VR=${gates.varianceRatio.toFixed(2)} (mín ${strat.minVarianceRatio}) -> ${gates.gatesPassed ? '✅ Gates 1-3 Aprovados' : '⏸️ Aguardando gatilho'}`);
 
     if (!gates.gatesPassed) {
       return;
