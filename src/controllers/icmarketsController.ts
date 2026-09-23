@@ -296,16 +296,16 @@ export async function getIcMarketsLogs(req: AuthenticatedRequest, res: Response)
   }
 }
 
-/**
- * Saldo da Conta cTrader IC Markets
- */
 export async function getIcMarketsBalance(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
-    const settings = await IcMarketsSettings.findOne({ userId });
+    const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+      ? new mongoose.Types.ObjectId(userId)
+      : userId;
+
     const key =
       (await ExchangeKey.findOne({
-        userId,
+        ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
         exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
         active: true,
       }).lean()) ||
@@ -314,57 +314,38 @@ export async function getIcMarketsBalance(req: AuthenticatedRequest, res: Respon
         active: true,
       }).lean());
 
+    const settings = await IcMarketsSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
+    const env = (settings?.accountType === 'real' || settings?.accountType === 'live') ? 'live' : 'demo';
+    const targetAccountId = settings?.accountId || key?.accountId || '10102182';
+
     if (!key) {
-      res.json({ ok: true, balance: { balance: 300, equity: 300, currency: 'USD', accountType: 'demo', accountId: '10102182' } });
+      res.json({
+        ok: true,
+        balance: {
+          balance: 0,
+          equity: 0,
+          currency: 'USD',
+          accountType: settings?.accountType || 'demo',
+          accountId: targetAccountId,
+        },
+      });
       return;
     }
 
-    const env = settings?.accountType === 'real' ? 'live' : 'demo';
-    const targetAccountId = settings?.accountId || key.accountId || '10102182';
+    const adapter = await getSharedCtraderAdapter(key, {
+      accountId: targetAccountId,
+      environment: env as ('demo' | 'live'),
+    });
 
-    let balanceUsd = 300;
-
-    try {
-      const adapter = await getSharedCtraderAdapter(key, {
-        accountId: targetAccountId,
-        environment: env,
-      });
-
-      const accountIdNum = Number((adapter as any).creds.accountId || targetAccountId);
-
-      // Consulta dados do Trader via ProtoOATraderReq
-      const traderRes = await (adapter as any).client.sendRequest(
-        2121,
-        'ProtoOATraderReq',
-        { ctidTraderAccountId: accountIdNum },
-        8000
-      ).catch(() => null);
-
-      if (traderRes?.trader?.balance != null) {
-        balanceUsd = Number(traderRes.trader.balance) / 100;
-      } else {
-        // Fallback para Reconcile
-        const rec = await (adapter as any).client.sendRequest(
-          2124,
-          'ProtoOAReconcileReq',
-          { ctidTraderAccountId: accountIdNum },
-          8000
-        ).catch(() => null);
-
-        if (rec?.trader?.balance != null) {
-          balanceUsd = Number(rec.trader.balance) / 100;
-        }
-      }
-    } catch (adapterErr: any) {
-      console.warn('[ICMARKETS-BALANCE] Erro ao consultar saldo na cTrader:', adapterErr.message);
-    }
+    const info = await adapter.fetchAccountInfo();
 
     res.json({
       ok: true,
       balance: {
-        balance: balanceUsd,
-        equity: balanceUsd,
-        currency: 'USD',
+        balance: info.balance || 0,
+        equity: info.equity || 0,
+        leverage: info.leverage || 500,
+        currency: info.currency || 'USD',
         accountType: settings?.accountType || 'demo',
         accountId: targetAccountId,
       },

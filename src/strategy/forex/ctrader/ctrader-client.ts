@@ -420,9 +420,16 @@ export class CtraderClient {
         }
         break;
       }
-      case PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT:
-        this.handlers.onOrderError?.(decode('ProtoOAOrderErrorEvent'));
+      case PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT: {
+        const evt = decode('ProtoOAOrderErrorEvent');
+        if (evt) {
+          for (const h of this.executionHandlers) {
+            try { h(evt); } catch (e: any) { log.error('❌ CtraderClient execution handler (order error):', e.message); }
+          }
+          this.handlers.onOrderError?.(evt);
+        }
         break;
+      }
       case PAYLOAD_TYPE.PROTO_OA_ACCOUNTS_TOKEN_INVALIDATED_EVENT:
         this.handlers.onDisconnect?.('Access token invalidado');
         break;

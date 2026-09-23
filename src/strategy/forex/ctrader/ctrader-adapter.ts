@@ -368,13 +368,23 @@ export class CtraderAdapter {
         const pos = evt.position || {};
         const evtClientOrderId = order.clientOrderId || pos.clientOrderId || evt.clientOrderId;
 
-        // Se for a confirmação da ordem enviada
-        if (evtClientOrderId === clientOrderId || (evt.executionType && !evtClientOrderId)) {
+        // Se for a confirmação da ordem enviada ou erro de ordem
+        if (
+          evtClientOrderId === clientOrderId ||
+          (evt.executionType && !evtClientOrderId) ||
+          (evt.errorCode && (!evtClientOrderId || evtClientOrderId === clientOrderId))
+        ) {
           clearTimeout(timer);
           this.client.offExecution(handler);
 
           if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode) {
-            return reject(new Error(`CtraderAdapter: ordem rejeitada (${evt.errorCode || evt.description || 'ORDER_REJECTED'})`));
+            return reject(
+              new Error(
+                `CtraderAdapter: ordem rejeitada (${evt.errorCode || 'ORDER_REJECTED'}${
+                  evt.description ? ': ' + evt.description : ''
+                })`
+              )
+            );
           }
 
           const deal = evt.deal || {};
@@ -404,9 +414,8 @@ export class CtraderAdapter {
       orderType: ORDER_TYPE.MARKET,
       tradeSide: side === 'buy' ? TRADE_SIDE.BUY : TRADE_SIDE.SELL,
       volume: volumeProtocol,
-      label: 'fxpro-bot',
+      label: 'atbtrader',
       clientOrderId,
-      timeInForce: 3, // IMMEDIATE_OR_CANCEL
     };
 
     if (options?.stopLoss !== undefined && options?.stopLoss !== null && Number(options.stopLoss) > 0) {
