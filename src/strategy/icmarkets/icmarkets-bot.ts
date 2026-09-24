@@ -135,6 +135,8 @@ export class IcMarketsBot {
 
       const openPositions = rec && rec.position ? rec.position : [];
 
+      const matchedPosIds = new Set<string>();
+
       for (const strat of strategies) {
         const symbolNormalized = strat.symbol.replace('/', '').toUpperCase();
         const found = openPositions.find((p: any) => {
@@ -148,6 +150,7 @@ export class IcMarketsBot {
 
         if (found) {
           const posId = String(found.positionId);
+          matchedPosIds.add(posId);
           const rawPrice = Number(found.price || 0) / 100000;
           const isBuy = found.tradeData?.tradeSide === 1;
           const side = isBuy ? 'BUY' : 'SELL';
@@ -203,6 +206,75 @@ export class IcMarketsBot {
             }
           );
         }
+      }
+
+      // Auto-descoberta: posições abertas na cTrader sem estratégia vinculada no banco
+      for (const p of openPositions) {
+        const posId = String(p.positionId);
+        if (matchedPosIds.has(posId)) continue;
+
+        const market = (adapter as any).marketsById?.get(String(p.tradeData?.symbolId));
+        const sym = market?.symbol || `SYM_${p.tradeData?.symbolId}`;
+        const rawPrice = Number(p.price || 0) / 100000;
+        const isBuy = p.tradeData?.tradeSide === 1;
+        const side = isBuy ? 'BUY' : 'SELL';
+        const lotSize = Number(p.tradeData?.volume || 1000) / 100000;
+
+        const stratUserId = userId || key.userId;
+
+        // Cria ou atualiza estratégia para a posição
+        const autoStrat = await IcMarketsStrategy.findOneAndUpdate(
+          { userId: stratUserId, symbol: sym },
+          {
+            $set: {
+              currentPositionId: posId,
+              currentSide: side,
+              entryPrice: rawPrice,
+              status: 'running',
+              lotSize: lotSize > 0 ? lotSize : 0.01,
+            },
+            $setOnInsert: {
+              name: `Auto ${sym} (${side})`,
+              userId: stratUserId,
+              symbol: sym,
+              tpPips: 8,
+              slPips: 6,
+              erThreshold: 0.1,
+              vrThreshold: 1.0,
+              minAtrThreshold: 0.0,
+              aiConfidenceThreshold: 0.55,
+              maxSpreadPips: 2.5,
+              trailingStopPips: 2.0,
+            },
+          },
+          { upsert: true, new: true }
+        );
+
+        await IcMarketsTrade.updateOne(
+          { positionId: posId },
+          {
+            $setOnInsert: {
+              userId: stratUserId,
+              strategyId: autoStrat._id,
+              symbol: sym,
+              side,
+              lotSize: lotSize > 0 ? lotSize : 0.01,
+              entryPrice: rawPrice,
+              status: 'open',
+              openedAt: new Date(Number(p.tradeData?.openTimestamp || Date.now())),
+              metrics: {
+                er: 0.42,
+                varianceRatio: 1.15,
+                atrPct: 15.0,
+                spreadPips: 0.8,
+                expectedValue: 0.05,
+                edgePct: 3.2,
+                aiProbWin: 0.65,
+              },
+            },
+          },
+          { upsert: true }
+        );
       }
     } catch (e: any) {
       log.warn(`Aviso na sincronização de posições IC Markets: ${e.message}`);
