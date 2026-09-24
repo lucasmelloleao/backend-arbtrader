@@ -157,44 +157,14 @@ export class IcMarketsBot {
         const livePnlInfo = pnlMap.get(posId);
         const livePnlUsd = livePnlInfo ? Number(livePnlInfo.netPnl || livePnlInfo.grossPnl || 0) : 0;
 
-        // Procura ou cria estratégia correspondente a esta posição
-        let strat = await IcMarketsStrategy.findOne({ currentPositionId: posId });
-        if (!strat) {
-          strat = await IcMarketsStrategy.findOne({
-            name: `Manual ${sym} #${posId}`,
-          });
-        }
-        if (!strat) {
-          strat = await IcMarketsStrategy.findOne({
-            symbol: sym,
-            $and: [
-              { $or: [{ userId: stratUserId }, { userId: { $exists: false } }] },
-              { $or: [{ currentPositionId: { $exists: false } }, { currentPositionId: null }, { currentPositionId: '' }] },
-            ],
-          });
-        }
+        // Vincula à estratégia existente do par, sem criar estratégias artificiais
+        const symNormalized = sym.replace('/', '').toUpperCase();
+        const strat = await IcMarketsStrategy.findOne({
+          $or: [{ symbol: symNormalized }, { symbol: sym }],
+          $and: [{ $or: [{ userId: stratUserId }, { userId: { $exists: false } }] }],
+        });
 
-        if (!strat) {
-          strat = await IcMarketsStrategy.create({
-            name: `Manual ${sym} #${posId}`,
-            userId: stratUserId,
-            symbol: sym,
-            lotSize,
-            entryPrice,
-            currentPositionId: posId,
-            currentSide: side,
-            currentPnlUsd: livePnlUsd,
-            status: 'running',
-            active: true,
-            takeProfitPips: 8,
-            stopLossPips: 6,
-            maxSpreadPips: 2.5,
-            minEfficiencyRatio: 0.1,
-            minVarianceRatio: 1.0,
-            trailingStopPips: 2.0,
-            trailingStepPips: 1.0,
-          });
-        } else {
+        if (strat) {
           strat.currentPositionId = posId;
           strat.currentSide = side;
           strat.entryPrice = entryPrice;
@@ -204,14 +174,14 @@ export class IcMarketsBot {
           await strat.save();
         }
 
-        // Garante que a trade esteja com status 'open' e SEM dados de fechamento
+        // Garante que a operação esteja registrada na tabela de trades com status 'open'
         await IcMarketsTrade.updateOne(
           { positionId: posId },
           {
             $set: {
               userId: stratUserId,
-              strategyId: strat._id,
-              symbol: sym,
+              strategyId: strat?._id,
+              symbol: symNormalized,
               side,
               lotSize,
               entryPrice,
