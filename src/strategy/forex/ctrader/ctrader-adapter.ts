@@ -418,11 +418,12 @@ export class CtraderAdapter {
       clientOrderId,
     };
 
+    const digits = market.digits ?? 5;
     if (options?.stopLoss !== undefined && options?.stopLoss !== null && Number(options.stopLoss) > 0) {
-      orderPayload.stopLoss = Number(options.stopLoss);
+      orderPayload.stopLoss = Number(Number(options.stopLoss).toFixed(digits));
     }
     if (options?.takeProfit !== undefined && options?.takeProfit !== null && Number(options.takeProfit) > 0) {
-      orderPayload.takeProfit = Number(options.takeProfit);
+      orderPayload.takeProfit = Number(Number(options.takeProfit).toFixed(digits));
     }
 
     await this.client.sendFireAndForget(
@@ -615,10 +616,10 @@ export class CtraderAdapter {
       positionId: Number(positionId),
     };
     if (stopLossPrice !== undefined && stopLossPrice !== null && Number(stopLossPrice) > 0) {
-      payload.stopLoss = Number(stopLossPrice);
+      payload.stopLoss = Number(Number(stopLossPrice).toFixed(5));
     }
     if (takeProfitPrice !== undefined && takeProfitPrice !== null && Number(takeProfitPrice) > 0) {
-      payload.takeProfit = Number(takeProfitPrice);
+      payload.takeProfit = Number(Number(takeProfitPrice).toFixed(5));
     }
 
     log.info(`📤 [CTRADER-ADAPTER] Atualizando SL/TP na cTrader posId=${positionId}: SL=${payload.stopLoss ?? 'none'}, TP=${payload.takeProfit ?? 'none'}`);
