@@ -207,9 +207,12 @@ export class IcMarketsBot {
               lotSize,
               entryPrice,
               status: 'open',
-              closedAt: null,
-              closeReason: null,
               pnlUsd: livePnlUsd,
+            },
+            $unset: {
+              closedAt: 1,
+              closeReason: 1,
+              exitPrice: 1,
             },
             $setOnInsert: {
               openedAt: new Date(Number(p.tradeData?.openTimestamp || Date.now())),
