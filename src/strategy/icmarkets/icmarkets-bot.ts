@@ -50,6 +50,8 @@ export class IcMarketsBot {
   private static isRunning = false;
   private static loopTimer: NodeJS.Timeout | null = null;
   private static isTickProcessing = false;
+  private static isSyncingPositions = false;
+  private static lastSyncTimestamp = 0;
 
   public static async start(): Promise<void> {
     if (this.isRunning) return;
@@ -90,6 +92,13 @@ export class IcMarketsBot {
   }
 
   public static async syncAllPositions(userId?: any): Promise<void> {
+    const now = Date.now();
+    if (this.isSyncingPositions || (now - this.lastSyncTimestamp < 3000)) {
+      return;
+    }
+    this.isSyncingPositions = true;
+    this.lastSyncTimestamp = now;
+
     try {
       const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
         ? new mongoose.Types.ObjectId(userId)
@@ -241,6 +250,8 @@ export class IcMarketsBot {
       }
     } catch (e: any) {
       log.warn(`Aviso na sincronização de posições IC Markets: ${e.message}`);
+    } finally {
+      this.isSyncingPositions = false;
     }
   }
 
