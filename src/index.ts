@@ -71,6 +71,19 @@ app.get('/readyz', (req, res) => {
 (async () => {
   try {
     await connectToDatabase();
+
+    // Limpeza única de ruído: remove operações da Polymarket anteriores às últimas 24 horas
+    try {
+      const PredictionArbTrade = (await import('./models/PredictionArbTrade')).default;
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const res = await PredictionArbTrade.deleteMany({ createdAt: { $lt: since24h } });
+      if (res.deletedCount && res.deletedCount > 0) {
+        console.log(`🧹 [STARTUP] Removidas ${res.deletedCount} operações antigas (>24h) da Polymarket.`);
+      }
+    } catch (e: any) {
+      console.warn('⚠️ [STARTUP] Falha ao limpar operações antigas:', e.message);
+    }
+
     app.listen(PORT, () => {
       console.log(`🚀 [auth-backend] Servidor rodando com sucesso na porta ${PORT}`);
     });
