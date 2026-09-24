@@ -244,25 +244,48 @@ export async function getPredictionTrades(req: AuthenticatedRequest, res: Respon
     const userId = req.userId;
     if (!userId) return res.status(401).json(isDashboard(req) ? { error: 'Unauthorized' } : { success: false, message: 'Não autorizado.' });
 
-    const { startDate, endDate, all } = req.query;
+    const { startDate, endDate, all, periodo } = req.query;
     const filter: any = { userId };
 
-    if (all === 'true') {
+    const now = Date.now();
+    if (all === 'true' || periodo === 'all') {
       // Traz histórico sem restrição de data
+    } else if (periodo === '5m') {
+      filter.createdAt = { $gte: new Date(now - 5 * 60 * 1000) };
+    } else if (periodo === '10m') {
+      filter.createdAt = { $gte: new Date(now - 10 * 60 * 1000) };
+    } else if (periodo === '30m') {
+      filter.createdAt = { $gte: new Date(now - 30 * 60 * 1000) };
+    } else if (periodo === '1h') {
+      filter.createdAt = { $gte: new Date(now - 60 * 60 * 1000) };
+    } else if (periodo === '2h') {
+      filter.createdAt = { $gte: new Date(now - 2 * 60 * 60 * 1000) };
+    } else if (periodo === '3h') {
+      filter.createdAt = { $gte: new Date(now - 3 * 60 * 60 * 1000) };
+    } else if (periodo === '5h') {
+      filter.createdAt = { $gte: new Date(now - 5 * 60 * 60 * 1000) };
+    } else if (periodo === '12h') {
+      filter.createdAt = { $gte: new Date(now - 12 * 60 * 60 * 1000) };
+    } else if (periodo === '24h') {
+      filter.createdAt = { $gte: new Date(now - 24 * 60 * 60 * 1000) };
+    } else if (periodo === '7d') {
+      filter.createdAt = { $gte: new Date(now - 7 * 24 * 60 * 60 * 1000) };
+    } else if (periodo === '30d') {
+      filter.createdAt = { $gte: new Date(now - 30 * 24 * 60 * 60 * 1000) };
     } else if (startDate || endDate) {
       filter.createdAt = {};
       if (startDate) filter.createdAt.$gte = new Date(String(startDate));
       if (endDate) filter.createdAt.$lte = new Date(String(endDate));
-    } else {
-      // Default: traz apenas do dia atual (início do dia local/UTC)
+    } else if (periodo === 'today') {
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
       filter.createdAt = { $gte: startOfToday };
     }
 
+    const limitNum = Number(req.query.limit) || 200;
     const trades = await (PredictionArbTrade as any).find(filter)
       .sort({ createdAt: -1 })
-      .limit(100)
+      .limit(limitNum)
       .populate({ path: 'strategyId', model: 'PredictionArbStrategy', select: 'slug question' })
       .lean();
 
