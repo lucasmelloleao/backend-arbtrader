@@ -421,7 +421,7 @@ export async function getPredictionMetaModelStatus(req: AuthenticatedRequest, re
     const executedCount = await (PredictionArbTrade as any).countDocuments({
       userId,
       type: 'close_pair',
-      status: 'executed'
+      status: 'executed',
     });
 
     const isDash = isDashboard(req);
@@ -429,7 +429,7 @@ export async function getPredictionMetaModelStatus(req: AuthenticatedRequest, re
       isTrained: Boolean(metadata && metadata.trainedAt),
       metadata,
       totalExecutedTrades: executedCount,
-      minTradesRequired: 10,
+      minTradesRequired: 5,
     };
 
     if (isDash) return res.json(data);

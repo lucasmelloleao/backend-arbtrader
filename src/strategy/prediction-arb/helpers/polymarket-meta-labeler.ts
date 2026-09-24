@@ -128,15 +128,19 @@ export class PolymarketMetaLabeler {
 
   public static async trainModel(userId?: string): Promise<{ success: boolean; message: string; metadata?: PolymarketMetaMetadata }> {
     try {
-      const query: any = { type: 'close_pair', status: 'executed' };
+      // Pega todas as transações válidas do banco para o treino
+      const query: any = {
+        type: 'close_pair',
+        status: 'executed',
+      };
       if (userId) query.userId = userId;
 
-      const trades = await PredictionArbTrade.find(query).sort({ createdAt: -1 }).limit(3000).lean();
+      const trades = await PredictionArbTrade.find(query).sort({ createdAt: -1 }).limit(5000).lean();
 
-      if (!trades || trades.length < 10) {
+      if (!trades || trades.length < 5) {
         return {
           success: false,
-          message: `Amostragem insuficiente na Polymarket (${trades?.length || 0}/10 operações encerradas).`,
+          message: `Amostragem insuficiente na Polymarket (${trades?.length || 0}/5 operações encerradas).`,
         };
       }
 
