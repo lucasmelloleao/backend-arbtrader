@@ -311,34 +311,42 @@ export class CtraderClient {
   /** Envia um payload protobuf e aguarda a resposta correlacionada por clientMsgId. */
   private request(payloadType: number, type: protobuf.Type, payloadObj: any, timeoutMs = 10000): Promise<any> {
     const clientMsgId = nextClientMsgId();
-    return new Promise<any>((resolve, reject) => {
+    return new Promise<any>(async (resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(clientMsgId);
         reject(new Error(`CtraderClient: timeout aguardando resposta de payloadType=${payloadType}`));
       }, timeoutMs);
       this.pending.set(clientMsgId, { resolve, reject, timer });
       try {
-        this.sendRaw(payloadType, Buffer.from(type.encode(type.fromObject(payloadObj)).finish()), clientMsgId);
+        await this.sendRaw(payloadType, Buffer.from(type.encode(type.fromObject(payloadObj)).finish()), clientMsgId);
       } catch (e: any) {
         clearTimeout(timer);
         this.pending.delete(clientMsgId);
-        reject(new Error(`CtraderClient: erro ao serializar payloadType=${payloadType}: ${e.message}`));
+        reject(new Error(`CtraderClient: erro ao serializar/enviar payloadType=${payloadType}: ${e.message}`));
       }
     });
   }
 
-  private sendRaw(payloadType: number, payload: Buffer, clientMsgId?: string) {
+  private async sendRaw(payloadType: number, payload: Buffer, clientMsgId?: string): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('CtraderClient: WebSocket não está aberto');
     }
-    getRoot().then((root) => {
-      const protoMessage = messageType(root, 'ProtoMessage');
-      const msg: any = { payloadType };
-      if (payload.length > 0) msg.payload = payload;
-      if (clientMsgId) msg.clientMsgId = clientMsgId;
-      const buf = protoMessage.encode(protoMessage.fromObject(msg)).finish();
-      this.ws!.send(buf);
-    }).catch((e) => log.error('❌ CtraderClient sendRaw:', e.message));
+    const root = await getRoot();
+    const protoMessage = messageType(root, 'ProtoMessage');
+    const msg: any = { payloadType };
+    if (payload.length > 0) msg.payload = payload;
+    if (clientMsgId) msg.clientMsgId = clientMsgId;
+    const buf = protoMessage.encode(protoMessage.fromObject(msg)).finish();
+    return new Promise<void>((resolve, reject) => {
+      this.ws!.send(buf, (err) => {
+        if (err) {
+          log.error('❌ CtraderClient sendRaw falhou:', err.message);
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
   }
 
   private handleMessage(data: WebSocket.Data) {
@@ -413,6 +421,8 @@ export class CtraderClient {
       case PAYLOAD_TYPE.PROTO_OA_EXECUTION_EVENT: {
         const evt = decode('ProtoOAExecutionEvent');
         if (evt) {
+          const posId = evt.position?.positionId || evt.deal?.positionId || evt.order?.positionId;
+          log.info(`⚡ [CTRADER-CLIENT] ProtoOAExecutionEvent recebido: execType=${evt.executionType}, posId=${posId}, errorCode=${evt.errorCode || 'none'}`);
           for (const h of this.executionHandlers) {
             try { h(evt); } catch (e: any) { log.error('❌ CtraderClient execution handler:', e.message); }
           }
@@ -423,6 +433,7 @@ export class CtraderClient {
       case PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT: {
         const evt = decode('ProtoOAOrderErrorEvent');
         if (evt) {
+          log.warn(`⚠️ [CTRADER-CLIENT] ProtoOAOrderErrorEvent: code=${evt.errorCode}, posId=${evt.positionId}, orderId=${evt.orderId}, desc=${evt.description}`);
           for (const h of this.executionHandlers) {
             try { h(evt); } catch (e: any) { log.error('❌ CtraderClient execution handler (order error):', e.message); }
           }
@@ -435,13 +446,13 @@ export class CtraderClient {
         break;
       case PAYLOAD_TYPE.PROTO_OA_ERROR_RES: {
         const err = decode('ProtoOAErrorRes');
+        log.warn(`⚠️ [CTRADER-CLIENT] ProtoOAErrorRes: code=${err?.errorCode}, desc=${err?.description}`);
         if (err?.errorCode === 'OA_AUTH_TOKEN_EXPIRED' || err?.errorCode === 'CH_ACCESS_TOKEN_INVALID') {
           this.handlers.onDisconnect?.(`Token expirado (${err.errorCode})`);
         }
         break;
       }
       default:
-        // eventos de heartbeat/outros são ignorados silenciosamente
         break;
     }
   }
@@ -514,7 +525,7 @@ export class CtraderClient {
     const root = await getRoot();
     const type = messageType(root, typeName);
     const buf = Buffer.from(type.encode(type.fromObject(payloadObj)).finish());
-    this.sendRaw(payloadType, buf, nextClientMsgId());
+    await this.sendRaw(payloadType, buf, nextClientMsgId());
   }
 
   async destroy() {
