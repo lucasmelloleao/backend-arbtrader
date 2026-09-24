@@ -121,13 +121,17 @@ export class IcMarketsBot {
       });
 
       await adapter.loadMarkets();
-      const accountIdNum = Number(targetAccountId);
-      if (!accountIdNum) return;
+      const authAccountId = Number(
+        (adapter as any).client?.creds?.accountId ||
+        (adapter as any).creds?.accountId ||
+        targetAccountId
+      );
+      if (!authAccountId) return;
 
       const rec = await (adapter as any).client.sendRequest(
         2124,
         'ProtoOAReconcileReq',
-        { ctidTraderAccountId: accountIdNum },
+        { ctidTraderAccountId: authAccountId },
         10000
       );
 
