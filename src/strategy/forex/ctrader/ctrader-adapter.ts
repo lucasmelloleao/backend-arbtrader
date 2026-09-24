@@ -520,23 +520,42 @@ export class CtraderAdapter {
    * uma posição na cTrader — evita o problema de createMarketOrder forçar o
    * volume mínimo (ex: XAU 1 lote = 100 onças) e abrir posição gigante.
    */
-  async closePosition(positionId: string, volumeProtocol: number, timeoutMs = 15000): Promise<any> {
+  async closePosition(positionId: string, volumeProtocol?: number, timeoutMs = 15000): Promise<any> {
     await this.connect();
     const accountId = Number(this.creds.accountId);
+
+    let finalVolume = volumeProtocol;
+    if (finalVolume == null || finalVolume <= 0) {
+      const pnlMap = await this.getPositionsPnL().catch(() => new Map());
+      const posMeta = pnlMap.get(String(positionId));
+      if (posMeta && posMeta.volume) {
+        const market = this.resolveSymbol(posMeta.symbol);
+        const lotSize = market?.lotSize || 100000;
+        finalVolume = Math.round(posMeta.volume * lotSize * VOLUME_DIVISOR);
+      } else {
+        finalVolume = 100000; // default 0.01 lote standard (100.000 protocol units)
+      }
+    } else if (finalVolume <= 50) {
+      // Se passou em lotes (ex: 0.01 lote), converte para centavos de unidade base
+      finalVolume = Math.round(finalVolume * 100000 * VOLUME_DIVISOR);
+    } else if (finalVolume <= 50000) {
+      // Se passou em unidades base (ex: 1000 unidades), multiplica por VOLUME_DIVISOR
+      finalVolume = Math.round(finalVolume * VOLUME_DIVISOR);
+    }
 
     // O ProtoOAClosePositionReq NÃO carrega clientOrderId — a confirmação
     // chega como ProtoOAExecutionEvent com o positionId da posição fechada.
     // Por isso o waitForFill aqui filtra por positionId (não por clientOrderId).
     const fillPromise = this.waitForCloseFill(positionId, timeoutMs);
 
-    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOAClosePositionReq para positionId=${positionId} (volume ${volumeProtocol} / 100)...`);
+    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOAClosePositionReq para positionId=${positionId} (volumeProtocol=${finalVolume})...`);
     this.client.sendFireAndForget(
       PAYLOAD_TYPE.PROTO_OA_CLOSE_POSITION_REQ,
       'ProtoOAClosePositionReq',
       {
         ctidTraderAccountId: accountId,
         positionId: Number(positionId),
-        volume: Math.round(volumeProtocol),
+        volume: Math.round(finalVolume),
       },
     );
 

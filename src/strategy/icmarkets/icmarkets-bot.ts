@@ -603,9 +603,22 @@ export class IcMarketsBot {
     pnlUsd: number
   ): Promise<void> {
     try {
+      let realizedPnl = pnlUsd;
+      let finalExitPrice = exitPrice;
+
       if (strat.currentPositionId) {
-        const units = Math.round(strat.lotSize * 100);
-        await adapter.closePosition(strat.currentPositionId, units).catch(() => {});
+        try {
+          const closeRes = await adapter.closePosition(strat.currentPositionId, strat.lotSize || 0.01);
+          if (closeRes && closeRes.realizedPnl != null) {
+            realizedPnl = Number(closeRes.realizedPnl);
+          }
+          if (closeRes && closeRes.price) {
+            finalExitPrice = Number(closeRes.price);
+          }
+        } catch (closeErr: any) {
+          log.error(`⚠️ Falha ao fechar posição #${strat.currentPositionId} na cTrader: ${closeErr.message}`);
+          throw closeErr;
+        }
       }
 
       await IcMarketsTrade.updateOne(
@@ -613,23 +626,23 @@ export class IcMarketsBot {
         {
           $set: {
             status: 'closed',
-            exitPrice,
+            exitPrice: finalExitPrice,
             pips,
-            pnlUsd,
+            pnlUsd: realizedPnl,
             closeReason: reason,
             closedAt: new Date(),
           },
         }
       );
 
-      const isWin = pnlUsd > 0;
+      const isWin = realizedPnl > 0;
       await IcMarketsStrategy.findByIdAndUpdate(strat._id, {
         $unset: { currentPositionId: 1, currentSide: 1 },
         $set: { currentPnlUsd: 0, entryPrice: 0 },
         $inc: {
           winningTrades: isWin ? 1 : 0,
           losingTrades: isWin ? 0 : 1,
-          totalProfitUsd: pnlUsd,
+          totalProfitUsd: realizedPnl,
         },
       });
 

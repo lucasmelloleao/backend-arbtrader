@@ -371,20 +371,28 @@ export async function closeIcMarketsPosition(req: AuthenticatedRequest, res: Res
 
     const posToClose = positionId || strategy.currentPositionId;
     if (posToClose) {
-      const key = await ExchangeKey.findOne({
-        userId,
-        exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
-        active: true,
-      }).lean();
+      const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+        ? new mongoose.Types.ObjectId(userId)
+        : userId;
+
+      const key =
+        (await ExchangeKey.findOne({
+          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+          exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+          active: true,
+        }).lean()) ||
+        (await ExchangeKey.findOne({
+          exchangeId: { $in: ['icmarkets', 'icmarkets-ctrader', 'ic', 'ctrader'] },
+          active: true,
+        }).lean());
 
       if (key) {
-        const settings = await IcMarketsSettings.findOne({ userId });
+        const settings = await IcMarketsSettings.findOne(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}).lean();
         const adapter = await getSharedCtraderAdapter(key, {
           accountId: settings?.accountId || key.accountId || '10102182',
-          environment: settings?.accountType === 'real' ? 'live' : 'demo',
+          environment: (settings?.accountType === 'real' || settings?.accountType === 'live') ? 'live' : 'demo',
         });
-        const units = Math.round((strategy.lotSize || 0.01) * 100);
-        await adapter.closePosition(posToClose, units).catch(() => {});
+        await adapter.closePosition(posToClose, strategy.lotSize || 0.01);
       }
     }
 
@@ -398,7 +406,7 @@ export async function closeIcMarketsPosition(req: AuthenticatedRequest, res: Res
       $set: { currentPnlUsd: 0, entryPrice: 0 },
     });
 
-    res.json({ ok: true, message: 'Posição encerrada com sucesso.' });
+    res.json({ ok: true, message: 'Posição encerrada com sucesso na cTrader e no banco.' });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });
   }
