@@ -574,8 +574,35 @@ export class CtraderAdapter {
 
   private waitForCloseFill(positionId: string, timeoutMs: number): Promise<any> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let isSettled = false;
+      const timer = setTimeout(async () => {
+        if (isSettled) return;
         this.client.offExecution(handler);
+        
+        // Fallback: consulta a corretora via ProtoOAReconcileReq para verificar se a posição já fechou
+        try {
+          const accountId = this.client.getCtidTraderAccountId() || Number(this.creds.accountId);
+          const rec = await this.client.sendRequest(
+            PAYLOAD_TYPE.PROTO_OA_RECONCILE_REQ,
+            'ProtoOAReconcileReq',
+            { ctidTraderAccountId: accountId },
+            5000
+          );
+          const openList = (rec?.position || []) as any[];
+          const stillOpen = openList.find((p) => String(p.positionId) === String(positionId));
+          if (!stillOpen) {
+            log.info(`✅ [CTRADER-ADAPTER] Posição #${positionId} não consta mais no Reconcile da cTrader (encerrada com sucesso).`);
+            isSettled = true;
+            return resolve({
+              id: String(positionId),
+              positionId: String(positionId),
+              closedViaReconcile: true,
+            });
+          }
+        } catch (e: any) {
+          log.warn(`⚠️ [CTRADER-ADAPTER] Falha no fallback de reconcile ao fechar #${positionId}: ${e.message}`);
+        }
+
         reject(new Error(`CtraderAdapter: timeout aguardando fill do fechamento da posição ${positionId}`));
       }, timeoutMs);
 
@@ -601,6 +628,7 @@ export class CtraderAdapter {
           evt.executionType === 11 || // ORDER_PARTIAL_FILL
           pos.positionStatus === 2 // POSITION_STATUS_CLOSED
         ) {
+          isSettled = true;
           clearTimeout(timer);
           this.client.offExecution(handler);
           const closePrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
@@ -648,6 +676,7 @@ export class CtraderAdapter {
             swap
           });
         } else if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode || evt.payloadType === PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT) {
+          isSettled = true;
           clearTimeout(timer);
           this.client.offExecution(handler);
           reject(new Error(`CtraderAdapter: fechamento rejeitado (${evt.errorCode || evt.description || 'ORDER_REJECTED'})`));
