@@ -214,14 +214,24 @@ export class IcMarketsMetaLabeler {
       seed: 42,
       maxFeatures: 0.8,
       replacement: true,
-      nEstimators: 30,
+      nEstimators: 100,
       useSampleBagging: true,
+      treeOptions: {
+        maxDepth: 10,
+      },
     };
 
     const classifier = new RandomForestClassifier(rfOptions);
     classifier.train(X, y);
 
     this.model = classifier;
+
+    let correct = 0;
+    const preds = classifier.predict(X);
+    for (let i = 0; i < preds.length; i++) {
+      if (preds[i] === y[i]) correct++;
+    }
+    const accuracy = Number(((correct / X.length) * 100).toFixed(1));
 
     const featureNames = [
       'Kaufman Efficiency Ratio (ER)',
@@ -249,9 +259,9 @@ export class IcMarketsMetaLabeler {
       trainedAt: new Date().toISOString(),
       samplesCount: X.length,
       winRateBaseline: baselineWinRate,
-      accuracy: 0.792,
+      accuracy,
       features: featureNames,
-      nEstimators: 30,
+      nEstimators: 100,
       featureImportance: importanceList,
       recentDatasetSamples,
     };

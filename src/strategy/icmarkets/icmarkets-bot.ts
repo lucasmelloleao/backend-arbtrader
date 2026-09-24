@@ -556,8 +556,7 @@ export class IcMarketsBot {
     log.info(`🚀 [ORDEM DISPARADA] ${strat.symbol} ${side} | Lote: ${strat.lotSize} | Preço: ${mid.toFixed(5)}`);
 
     try {
-      const units = Math.round(strat.lotSize * 100000);
-      const res = await adapter.createMarketOrder(strat.symbol, side.toLowerCase(), units);
+      const res = await adapter.createMarketOrder(strat.symbol, side.toLowerCase(), strat.lotSize);
       const posId = res?.id || String(Date.now());
 
       await IcMarketsStrategy.findByIdAndUpdate(strat._id, {
@@ -632,6 +631,11 @@ export class IcMarketsBot {
           losingTrades: isWin ? 0 : 1,
           totalProfitUsd: pnlUsd,
         },
+      });
+
+      // Retreinamento reativo automático da IA com o novo trade
+      IcMarketsMetaLabeler.trainModel().catch((err: any) => {
+        log.warn(`⚠️ Erro no retreinamento reativo da IA IC Markets: ${err.message}`);
       });
     } catch (e: any) {
       log.error(`Erro ao encerrar posição IC Markets: ${e.message}`);

@@ -8,6 +8,7 @@ import ExchangeKey from '../../models/ExchangeKey';
 import { resolvePolymarketKey } from './prediction-scanner';
 import { withTimeout } from '../perpetuals/helpers/ccxt-factory';
 import { estimateFee, TAKER_FEE_RATE } from './helpers/pricing';
+import { PolymarketMetaLabeler } from './helpers/polymarket-meta-labeler';
 
 const log = {
   info: (msg: string, ...args: any[]) => console.log(`[INFO] ${msg}`, ...args),
@@ -182,5 +183,13 @@ export async function syncPredictionHistory(userId: any): Promise<{ criados: num
   }
 
   log.info(`✅ [SYNC] Concluído: ${criados} criados, ${atualizados} atualizados.`);
+
+  // Retreinamento reativo automático da IA Polymarket
+  if (criados > 0 || atualizados > 0) {
+    PolymarketMetaLabeler.trainModel().catch((err: any) => {
+      log.warn(`⚠️ Erro no retreinamento reativo da IA Polymarket: ${err.message}`);
+    });
+  }
+
   return { criados, atualizados };
 }

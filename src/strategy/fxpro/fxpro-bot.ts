@@ -208,6 +208,11 @@ export class FxProBot {
               },
             });
           }
+
+          // Retreinamento reativo automático da IA FxPro
+          FxProMetaLabeler.trainModel().catch((err: any) => {
+            log.warn(`⚠️ Erro no retreinamento reativo da IA FxPro: ${err.message}`);
+          });
         }
       }
 
@@ -599,6 +604,11 @@ export class FxProBot {
             losingTrades: !isWin ? 1 : 0,
             totalProfitUsd: pnl,
           },
+        });
+
+        // Retreinamento reativo automático da IA FxPro
+        FxProMetaLabeler.trainModel().catch((err: any) => {
+          log.warn(`⚠️ Erro no retreinamento reativo da IA FxPro: ${err.message}`);
         });
       }
     }

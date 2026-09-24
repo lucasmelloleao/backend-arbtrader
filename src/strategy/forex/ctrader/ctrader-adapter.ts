@@ -364,8 +364,14 @@ export class CtraderAdapter {
     if (!market) throw new Error(`CtraderAdapter: símbolo desconhecido: ${symbol}`);
     const accountId = Number(this.creds.accountId);
 
-    // volumeProtocol = quantidade em 1/100 de unidade base (cents de unidade)
-    let volumeProtocol = Math.round(amount * VOLUME_DIVISOR);
+    // volumeProtocol = quantidade em 1/100 de unidade base da cTrader
+    // Na cTrader Open API: 0.01 lote standard (1.000 unidades) = 100.000 cents na API (1.000 * 100)
+    // Se o caller passar `amount` como lote (ex: 0.01), converte para unidades base (0.01 * 100.000 = 1.000 unidades).
+    // Se o caller já passar em unidades base (ex: 1.000), usa direto.
+    const isLotParam = amount > 0 && amount <= 50;
+    const baseUnits = isLotParam ? amount * (market.lotSize || 100000) : amount;
+    let volumeProtocol = Math.round(baseUnits * VOLUME_DIVISOR);
+
     // Respeita limites do símbolo
     const minProto = Math.max(1, Math.round(market.minVolume * VOLUME_DIVISOR));
     const maxProto = Math.round(market.maxVolume * VOLUME_DIVISOR);
