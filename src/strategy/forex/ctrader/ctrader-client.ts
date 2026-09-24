@@ -513,7 +513,8 @@ export class CtraderClient {
   async sendFireAndForget(payloadType: number, typeName: string, payloadObj: any) {
     const root = await getRoot();
     const type = messageType(root, typeName);
-    this.sendRaw(payloadType, Buffer.from(type.encode(type.fromObject(payloadObj)).finish()), nextClientMsgId());
+    const buf = Buffer.from(type.encode(type.fromObject(payloadObj)).finish());
+    this.sendRaw(payloadType, buf, nextClientMsgId());
   }
 
   async destroy() {

@@ -549,7 +549,7 @@ export class CtraderAdapter {
     const fillPromise = this.waitForCloseFill(positionId, timeoutMs);
 
     log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOAClosePositionReq para positionId=${positionId} (volumeProtocol=${finalVolume}, ctidTraderAccountId=${accountId})...`);
-    this.client.sendFireAndForget(
+    await this.client.sendFireAndForget(
       PAYLOAD_TYPE.PROTO_OA_CLOSE_POSITION_REQ,
       'ProtoOAClosePositionReq',
       {
