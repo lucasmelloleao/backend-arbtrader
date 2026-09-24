@@ -522,7 +522,7 @@ export class CtraderAdapter {
    */
   async closePosition(positionId: string, volumeProtocol?: number, timeoutMs = 15000): Promise<any> {
     await this.connect();
-    const accountId = Number(this.creds.accountId);
+    const accountId = this.client.getCtidTraderAccountId() || Number(this.creds.accountId);
 
     let finalVolume = volumeProtocol;
     if (finalVolume == null || finalVolume <= 0) {
@@ -548,7 +548,7 @@ export class CtraderAdapter {
     // Por isso o waitForFill aqui filtra por positionId (não por clientOrderId).
     const fillPromise = this.waitForCloseFill(positionId, timeoutMs);
 
-    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOAClosePositionReq para positionId=${positionId} (volumeProtocol=${finalVolume})...`);
+    log.info(`📤 [CTRADER-ADAPTER] Enviando ProtoOAClosePositionReq para positionId=${positionId} (volumeProtocol=${finalVolume}, ctidTraderAccountId=${accountId})...`);
     this.client.sendFireAndForget(
       PAYLOAD_TYPE.PROTO_OA_CLOSE_POSITION_REQ,
       'ProtoOAClosePositionReq',
@@ -581,15 +581,28 @@ export class CtraderAdapter {
 
       const handler = (evt: any) => {
         const order = evt.order || {};
-        const evtPositionId = evt.position?.positionId != null
-          ? String(evt.position.positionId)
-          : (order.positionId != null ? String(order.positionId) : null);
-        if (evtPositionId !== String(positionId)) return;
-        if (evt.executionType === EXECUTION_TYPE.ORDER_FILLED) {
+        const deal = evt.deal || {};
+        const pos = evt.position || {};
+        
+        const evtPositionId = pos.positionId != null
+          ? String(pos.positionId)
+          : (deal.positionId != null
+            ? String(deal.positionId)
+            : (order.positionId != null ? String(order.positionId) : null));
+
+        if (!evtPositionId || evtPositionId !== String(positionId)) {
+          return;
+        }
+
+        log.info(`📥 [CTRADER-ADAPTER] Recebido evento para positionId=${positionId}: executionType=${evt.executionType}, errorCode=${evt.errorCode || 'none'}`);
+
+        if (
+          evt.executionType === EXECUTION_TYPE.ORDER_FILLED ||
+          evt.executionType === 11 || // ORDER_PARTIAL_FILL
+          pos.positionStatus === 2 // POSITION_STATUS_CLOSED
+        ) {
           clearTimeout(timer);
           this.client.offExecution(handler);
-          const deal = evt.deal || {};
-          const pos = evt.position || {};
           const closePrice = deal.executionPrice != null && Number(deal.executionPrice) > 0
             ? Number(deal.executionPrice)
             : (pos.price != null && Number(pos.price) > 0 ? Number(pos.price) : Number(order.executionPrice || 0));
@@ -599,8 +612,6 @@ export class CtraderAdapter {
             ? Number(dealDetail.moneyDigits)
             : (deal.moneyDigits != null ? Number(deal.moneyDigits) : undefined);
           
-          // Na cTrader Open API, monetary values em ClosePositionDetail podem vir com 2 decimais (centavos) ou com trader.moneyDigits (tipicamente 2 para contas USD)
-          // Se o valor bruto for excessivo (> 50 USD para 6000 unidades de FX onde o ganho é centavos/dólares), ajusta a escala
           let div = rawDigits != null ? Math.pow(10, rawDigits) : 100;
           let rawGross = dealDetail.grossProfit != null
             ? Number(dealDetail.grossProfit)
@@ -608,8 +619,6 @@ export class CtraderAdapter {
 
           let grossPnl = rawGross != null ? rawGross / div : undefined;
 
-          // Se a escala resultou em PnL desproporcional (ex: 177 USD ao invés de 1.77 USD ou 0.77 USD por causa de moneyDigits diferente entre cotas),
-          // normaliza dividindo por 100
           if (grossPnl != null && Math.abs(grossPnl) > 50 && dealDetail.grossProfit != null) {
             grossPnl = grossPnl / 100;
             div = div * 100;
@@ -629,19 +638,19 @@ export class CtraderAdapter {
             : (grossPnl != null ? (grossPnl - totalCommission + swap) : undefined);
 
           resolve({
-            id: String(order.orderId || deal.dealId || ''),
+            id: String(order.orderId || deal.dealId || pos.positionId || ''),
             positionId,
             price: closePrice,
-            amount: Number(deal.filledVolume || 0) / VOLUME_DIVISOR,
+            amount: Number(deal.filledVolume || order.executedVolume || order.volume || 0) / VOLUME_DIVISOR,
             realizedPnl: netPnl,
             grossPnl,
             commission: totalCommission,
             swap
           });
-        } else if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode) {
+        } else if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode || evt.payloadType === PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT) {
           clearTimeout(timer);
           this.client.offExecution(handler);
-          reject(new Error(`CtraderAdapter: fechamento rejeitado (${evt.errorCode || 'ORDER_REJECTED'})`));
+          reject(new Error(`CtraderAdapter: fechamento rejeitado (${evt.errorCode || evt.description || 'ORDER_REJECTED'})`));
         }
       };
       this.client.onExecution(handler);

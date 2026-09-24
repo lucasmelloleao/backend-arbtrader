@@ -494,6 +494,14 @@ export class CtraderClient {
     return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN && this.accountAuthed);
   }
 
+  getCtidTraderAccountId(): number {
+    return Number(this.creds.accountId);
+  }
+
+  getCreds(): CtraderCredentials {
+    return this.creds;
+  }
+
   /** Envia um payload protobuf qualquer (usado pelo adapter para requisições com resposta). */
   async sendRequest(payloadType: number, typeName: string, payloadObj: any, timeoutMs = 10000): Promise<any> {
     const root = await getRoot();
