@@ -881,7 +881,7 @@ async function runExitLoop() {
   }
 }
 
-async function startScalper() {
+export async function startScalper() {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI required');
   await connectToDatabase();
   await syncClosedTradeCooldowns();

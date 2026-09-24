@@ -88,6 +88,10 @@ app.get('/readyz', (req, res) => {
     // Inicializa o motor do Robô IC Markets cTrader
     const { IcMarketsBot } = await import('./strategy/icmarkets/icmarkets-bot');
     await IcMarketsBot.start();
+
+    // Inicializa o motor do Robô Pepperstone Forex Scalper
+    const { startScalper } = await import('./strategy/forex/forex-scalper');
+    startScalper().catch((err: any) => console.error('⚠️ [Pepperstone Scalper] Erro:', err.message));
   } catch (err: any) {
     console.error('❌ Falha crítica ao inicializar o servidor de autenticação:', err.message);
     process.exit(1);
