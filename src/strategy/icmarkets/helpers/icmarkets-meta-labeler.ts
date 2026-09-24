@@ -174,37 +174,9 @@ export class IcMarketsMetaLabeler {
       }
     }
 
-    // Dataset sintético de bootstrap se tiver poucos trades reais gravados
-    if (X.length < 30) {
-      const syntheticBase = [
-        { er: 0.45, vr: 1.18, atr: 12.5, sp: 0.8, ev: 0.08, edge: 4.2, lot: 0.01, tod: 14.5, win: 1 },
-        { er: 0.52, vr: 1.25, atr: 15.0, sp: 0.9, ev: 0.12, edge: 5.5, lot: 0.02, tod: 15.0, win: 1 },
-        { er: 0.22, vr: 1.02, atr: 8.0, sp: 2.8, ev: -0.05, edge: 0.5, lot: 0.01, tod: 22.0, win: 0 },
-        { er: 0.18, vr: 0.98, atr: 6.5, sp: 3.2, ev: -0.09, edge: -0.2, lot: 0.01, tod: 23.5, win: 0 },
-        { er: 0.48, vr: 1.15, atr: 14.2, sp: 1.1, ev: 0.06, edge: 3.8, lot: 0.01, tod: 9.0, win: 1 },
-        { er: 0.28, vr: 1.04, atr: 9.2, sp: 2.2, ev: -0.02, edge: 1.1, lot: 0.01, tod: 12.0, win: 0 },
-        { er: 0.60, vr: 1.32, atr: 18.0, sp: 0.7, ev: 0.15, edge: 6.0, lot: 0.03, tod: 13.5, win: 1 },
-        { er: 0.38, vr: 1.10, atr: 11.0, sp: 1.3, ev: 0.04, edge: 2.9, lot: 0.01, tod: 10.5, win: 1 },
-        { er: 0.20, vr: 0.95, atr: 7.0, sp: 2.9, ev: -0.07, edge: 0.2, lot: 0.01, tod: 21.0, win: 0 },
-        { er: 0.42, vr: 1.14, atr: 13.0, sp: 1.0, ev: 0.05, edge: 3.2, lot: 0.01, tod: 11.0, win: 1 },
-      ];
-
-      for (let rep = 0; rep < 5; rep++) {
-        for (const s of syntheticBase) {
-          const jitter = (Math.random() - 0.5) * 0.05;
-          X.push([
-            Math.max(0.1, s.er + jitter),
-            Math.max(0.8, s.vr + jitter),
-            Math.max(5, s.atr + jitter * 10),
-            Math.max(0.5, s.sp + jitter),
-            s.ev + jitter * 0.1,
-            s.edge + jitter * 2,
-            s.lot,
-            s.tod + jitter * 2,
-          ]);
-          y.push(s.win);
-        }
-      }
+    // Apenas operações reais da cTrader salvas na base de dados
+    if (X.length === 0) {
+      throw new Error('Nenhuma operação real fechada encontrada no banco de dados para treinar o modelo.');
     }
 
     const winsCount = y.filter((v) => v === 1).length;
