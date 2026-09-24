@@ -222,21 +222,23 @@ export class IcMarketsBot {
         }
       );
 
-      // 3. Marcar como 'closed' APENAS as trades no banco que não estão mais na lista de posições abertas da cTrader
-      await IcMarketsTrade.updateMany(
-        {
-          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
-          status: 'open',
-          positionId: { $nin: Array.from(openPosIds) },
-        },
-        {
-          $set: {
-            status: 'closed',
-            closedAt: new Date(),
-            closeReason: 'manual',
+      // 3. Marcar como 'closed' APENAS se o reconcile da cTrader retornou lista válida
+      if (rec && Array.isArray(rec.position)) {
+        await IcMarketsTrade.updateMany(
+          {
+            ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+            status: 'open',
+            positionId: { $nin: Array.from(openPosIds) },
           },
-        }
-      );
+          {
+            $set: {
+              status: 'closed',
+              closedAt: new Date(),
+              closeReason: 'manual',
+            },
+          }
+        );
+      }
     } catch (e: any) {
       log.warn(`Aviso na sincronização de posições IC Markets: ${e.message}`);
     }
