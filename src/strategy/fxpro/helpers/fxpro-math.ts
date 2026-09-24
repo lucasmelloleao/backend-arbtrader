@@ -56,7 +56,50 @@ export function calculateFxProVarianceRatio(prices: number[], k = 4): number {
 }
 
 /**
- * Calcula ATR em Pips para Forex/Metais.
+ * Determina o PipSize e tamanho de tick adequado para cada classe de ativo da FxPro / cTrader.
+ * - Cryptos (BTC, ETH, etc.): 1.0 (ou 0.01 se XRP/DOGE/ADA)
+ * - Índices (US30, NAS100, GER40, etc.): 1.0 ou 0.1
+ * - Metais (XAUUSD / Ouro): 0.1, XAGUSD: 0.01
+ * - Petróleo / Commodities (USOIL, UKOIL): 0.01
+ * - Forex JPY Crosses (USDJPY, EURJPY, GBPJPY, AUDJPY, CADJPY, etc.): 0.01
+ * - Forex Standard Majors / Minors (EURUSD, EURGBP, AUDCAD, etc.): 0.0001
+ */
+export function getFxProSymbolPipSize(symbol: string): number {
+  const sym = (symbol || '').replace('/', '').toUpperCase();
+  if (sym.startsWith('BTC') || sym.startsWith('ETH')) {
+    return 1.0;
+  }
+  if (sym.includes('XRP') || sym.includes('DOGE') || sym.includes('ADA') || sym.includes('SOL') || sym.includes('LTC')) {
+    return 0.01;
+  }
+  if (sym.includes('US30') || sym.includes('NAS100') || sym.includes('US500') || sym.includes('GER40') || sym.includes('UK100') || sym.includes('JP225')) {
+    return 1.0;
+  }
+  if (sym.includes('XAU') || sym.includes('GOLD')) {
+    return 0.1;
+  }
+  if (sym.includes('XAG') || sym.includes('SILVER') || sym.includes('USOIL') || sym.includes('UKOIL')) {
+    return 0.01;
+  }
+  if (sym.includes('JPY')) {
+    return 0.01;
+  }
+  return 0.0001;
+}
+
+/**
+ * Retorna o número de casas decimais para formatação de preços por símbolo.
+ */
+export function getFxProPriceDecimals(symbol: string): number {
+  const pip = getFxProSymbolPipSize(symbol);
+  if (pip >= 1.0) return 2;
+  if (pip >= 0.1) return 2;
+  if (pip >= 0.01) return 3;
+  return 5;
+}
+
+/**
+ * Calcula ATR em Pips para Forex/Metais/Índices/Cryptos.
  */
 export function calculateFxProATR(candles: { high: number; low: number; close: number }[], period = 14, pipSize = 0.0001): number {
   if (!candles || candles.length < period) return 10.0;
@@ -130,6 +173,51 @@ export function evaluateFxProQuantGates(
 }
 
 /**
+/**
+ * Calcula EMA (Exponential Moving Average) para uma série de preços.
+ */
+export function calculateEMA(prices: number[], period: number): number {
+  if (!prices || prices.length === 0) return 0;
+  if (prices.length < period) {
+    return prices.reduce((a, b) => a + b, 0) / prices.length;
+  }
+  const k = 2 / (period + 1);
+  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < prices.length; i++) {
+    ema = prices[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+/**
+ * Determina direção de tendência com confluência de EMA 9 / EMA 21 e Slope de Tendência.
+ */
+export function determineFxProTrendDirection(prices: number[]): { side: 'BUY' | 'SELL'; strength: number; isStrong: boolean } {
+  if (!prices || prices.length < 10) {
+    return { side: 'BUY', strength: 0.5, isStrong: false };
+  }
+  const emaFast = calculateEMA(prices, 9);
+  const emaSlow = calculateEMA(prices, 21);
+  const lastPrice = prices[prices.length - 1];
+  const midPoint = prices[Math.floor(prices.length / 2)];
+
+  const isEmaBullish = emaFast > emaSlow;
+  const isPriceAboveEma = lastPrice > emaFast;
+  const isRecentSlopeUp = lastPrice > midPoint;
+
+  let score = 0;
+  if (isEmaBullish) score += 1;
+  if (isPriceAboveEma) score += 1;
+  if (isRecentSlopeUp) score += 1;
+
+  const side: 'BUY' | 'SELL' = score >= 2 ? 'BUY' : 'SELL';
+  const strength = score === 3 || score === 0 ? 0.9 : 0.6;
+  const isStrong = score === 3 || score === 0;
+
+  return { side, strength, isStrong };
+}
+
+/**
  * Dimensionamento de Lote por Fractional Kelly para Forex / CFD.
  */
 export function calculateFxProKellyLot(
@@ -139,17 +227,19 @@ export function calculateFxProKellyLot(
   riskRewardRatio = 1.5,
   fraction = 0.25,
   minLot = 0.01,
-  maxLot = 5.0
+  maxLot = 0.10
 ): number {
+  const configuredLot = minLot || 0.01;
+  // Limita o lote máximo conservadoramente ao lote configurado na estratégia
+  const lotCeiling = Math.min(maxLot, Math.max(configuredLot, 0.10));
   const b = Math.max(0.5, riskRewardRatio);
   const p = Math.min(0.95, Math.max(0.05, winProb));
   const q = 1 - p;
   const kellyPct = Math.max(0, (b * p - q) / b);
   const adjustedPct = kellyPct * fraction; // Fractional Kelly
 
-  // Cada 0.01 lote padrão Forex (1.000 unidades) requer margem = 1000 / leverage
-  const riskAmount = balanceUsd * Math.max(0.01, Math.min(0.05, adjustedPct));
+  const riskAmount = balanceUsd * Math.max(0.005, Math.min(0.02, adjustedPct));
   const rawLot = (riskAmount * leverage) / 100000;
-  const finalLot = Math.min(maxLot, Math.max(minLot, Number(rawLot.toFixed(2))));
+  const finalLot = Math.min(lotCeiling, Math.max(configuredLot, Number(rawLot.toFixed(2))));
   return finalLot;
 }

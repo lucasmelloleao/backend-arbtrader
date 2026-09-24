@@ -12,6 +12,9 @@ import {
   evaluateFxProQuantGates,
   calculateFxProATR,
   calculateFxProKellyLot,
+  determineFxProTrendDirection,
+  getFxProSymbolPipSize,
+  getFxProPriceDecimals,
 } from './helpers/fxpro-math';
 import { FxProMetaLabeler } from './helpers/fxpro-meta-labeler';
 
@@ -143,7 +146,7 @@ export class FxProBot {
 
         if (!existingPosIds.has(posIdStr)) {
           log.info(`📥 [${sym}] Detectada posição #${posIdStr} na cTrader. Sincronizando para monitoramento.`);
-          const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
+          const pipSize = getFxProSymbolPipSize(sym);
           const slDist = ((strat?.stopLossPips) || 6) * pipSize;
           const tpDist = ((strat?.takeProfitPips) || 8) * pipSize;
           const entryP = Number(livePos.entryPrice || 0);
@@ -331,7 +334,8 @@ export class FxProBot {
       return;
     }
 
-    const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
+    const pipSize = getFxProSymbolPipSize(sym);
+    const decimals = getFxProPriceDecimals(sym);
     const spreadPips = Number(((ticker.ask - ticker.bid) / pipSize).toFixed(1));
 
     // 4. Obtém Histórico de Candles recentes (M1 / M5) via fetchTrendbars da Open API cTrader
@@ -370,10 +374,9 @@ export class FxProBot {
       return;
     }
 
-    // 6. Determinação da Direção (Momentum / Trend Following)
-    const pFirst = closePrices[0];
-    const pLast = closePrices[closePrices.length - 1];
-    const side: 'BUY' | 'SELL' = pLast >= pFirst ? 'BUY' : 'SELL';
+    // 6. Determinação da Direção (EMA 9/21 Confluência + Trend Slope)
+    const trendAnalysis = determineFxProTrendDirection(closePrices);
+    const side: 'BUY' | 'SELL' = trendAnalysis.side;
 
     // 7. Gate 4: IA Meta-Labeling Random Forest
     const now = new Date();
@@ -403,17 +406,9 @@ export class FxProBot {
       log.info(`🤖 [GATE 4 APROVADO] [${sym}] Entrada ${side} aprovada pela IA (${(aiProbWin * 100).toFixed(1)}%).`);
     }
 
-    // 8. Dimensionamento de Lote (Fractional Kelly)
-    const balanceUsd = Number((key as any).spotTotalEquity || (key as any).spotUsd || 10000);
-    const calculatedLot = calculateFxProKellyLot(
-      balanceUsd,
-      strat.leverage || 1000,
-      aiProbWin,
-      1.5,
-      0.25,
-      strat.lotSize || 0.01,
-      5.0
-    );
+    // 8. Dimensionamento de Lote Seguro (Usa o lote configurado pelo usuário na estratégia)
+    const configuredLot = Number(strat.lotSize || 0.01);
+    const calculatedLot = Math.min(configuredLot, 0.10);
 
     // 9. Cálculo de Stop Loss e Take Profit em Preço
     const entryPrice = side === 'BUY' ? ticker.ask : ticker.bid;
@@ -423,7 +418,7 @@ export class FxProBot {
     const takeProfitPrice = side === 'BUY' ? entryPrice + tpDistance : entryPrice - tpDistance;
 
     // 10. Envio da Ordem para a cTrader
-    log.info(`🎯 [${sym}] Enviando ordem a mercado na FxPro: ${side} ${calculatedLot} lotes @ ${entryPrice.toFixed(5)} (SL: ${stopLossPrice.toFixed(5)}, TP: ${takeProfitPrice.toFixed(5)})`);
+    log.info(`🎯 [${sym}] Enviando ordem a mercado na FxPro: ${side} ${calculatedLot} lotes @ ${entryPrice.toFixed(decimals)} (SL: ${stopLossPrice.toFixed(decimals)}, TP: ${takeProfitPrice.toFixed(decimals)})`);
 
     let executionResult: any = null;
     try {
@@ -522,7 +517,7 @@ export class FxProBot {
       const posIdStr = String(livePos.positionId);
       if (!existingPosIds.has(posIdStr)) {
         log.info(`📥 [${sym}] Detectada posição #${posIdStr} na cTrader. Sincronizando para monitoramento.`);
-        const pipSize = sym.includes('JPY') ? 0.01 : (sym.includes('XAU') ? 0.1 : 0.0001);
+        const pipSize = getFxProSymbolPipSize(sym);
         const slDist = (strat.stopLossPips || 6) * pipSize;
         const tpDist = (strat.takeProfitPips || 8) * pipSize;
         const entryP = Number(livePos.entryPrice || 0);
