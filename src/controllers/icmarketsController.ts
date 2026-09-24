@@ -195,11 +195,11 @@ export async function toggleIcMarketsStrategy(req: AuthenticatedRequest, res: Re
 export async function getIcMarketsTrades(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
-    const { limit = '100', symbol, status, periodo } = req.query as Record<string, string>;
+    const { limit = '100', symbol, status = 'closed', periodo } = req.query as Record<string, string>;
 
     const query: any = { userId };
     if (symbol) query.symbol = symbol.toUpperCase();
-    if (status) query.status = status;
+    if (status && status !== 'all') query.status = status;
 
     if (periodo) {
       const now = Date.now();
