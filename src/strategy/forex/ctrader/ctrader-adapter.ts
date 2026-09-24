@@ -168,17 +168,28 @@ export class CtraderAdapter {
 
     for (const s of enabledSymbols) {
       const detail = detailMap.get(Number(s.symbolId));
-      let symbol = s.symbolName as string; // ex: "EURUSD" ou "EUR/USD"
-      if (!symbol.includes('/') && symbol.length >= 6) {
-        const m = symbol.match(/^([A-Za-z]{3})([A-Za-z]{3})(?:\..+)?$/);
-        if (m) symbol = `${m[1]}/${m[2]}`;
+      let rawSymbolName = String(s.symbolName || '').trim();
+      let symbol = rawSymbolName;
+      let base = rawSymbolName;
+      let quote = 'USD';
+
+      if (symbol.includes('/')) {
+        const parts = symbol.split('/');
+        base = parts[0];
+        quote = parts[1] || 'USD';
+      } else if (symbol.length === 6 && /^[A-Za-z]{6}$/.test(symbol)) {
+        const m = symbol.match(/^([A-Za-z]{3})([A-Za-z]{3})$/);
+        if (m) {
+          base = m[1];
+          quote = m[2];
+          symbol = `${m[1]}/${m[2]}`;
+        }
       }
-      if (!symbol.includes('/')) continue;
-      const [base, quote] = symbol.split('/');
+
       const minVolume = detail?.minVolume ? Number(detail.minVolume) / VOLUME_DIVISOR : 0.01;
       const market: CtraderMarket = {
         id: String(s.symbolId),
-        symbol,
+        symbol: symbol.toUpperCase(),
         base: base.toUpperCase(),
         quote: quote.toUpperCase(),
         digits: detail?.digits ?? 5,
@@ -186,11 +197,13 @@ export class CtraderAdapter {
         maxVolume: detail?.maxVolume ? Number(detail.maxVolume) / VOLUME_DIVISOR : Infinity,
         stepVolume: detail?.stepVolume ? Number(detail.stepVolume) / VOLUME_DIVISOR : 0.01,
         lotSize: detail?.lotSize ? Number(detail.lotSize) / VOLUME_DIVISOR : 100000,
-        // Comissão: símbolos FX normalmente usam USD_PER_MILLION_USD ou 0.
-        taker: 0.00004, // estimativa padrão (0.004% / perna) — refinável por símbolo
+        taker: 0.00004,
         enabled: s.enabled !== false,
       };
-      this.marketsBySymbol.set(symbol, market);
+
+      this.marketsBySymbol.set(symbol.toUpperCase(), market);
+      this.marketsBySymbol.set(rawSymbolName.toUpperCase(), market);
+      this.marketsBySymbol.set(rawSymbolName.replace('/', '').toUpperCase(), market);
       this.marketsById.set(String(s.symbolId), market);
     }
 
@@ -205,13 +218,20 @@ export class CtraderAdapter {
   }
 
   resolveSymbol(symbol: string): CtraderMarket | null {
-    // Normaliza "EURUSD" -> "EUR/USD", aceita "EUR/USD" direto
-    let key = symbol;
-    if (!key.includes('/')) {
-      const m = key.match(/^([A-Z]{3})([A-Z]{3})$/);
-      if (m) key = `${m[1]}/${m[2]}`;
+    if (!symbol) return null;
+    const clean = symbol.trim().toUpperCase();
+    if (this.marketsBySymbol.has(clean)) return this.marketsBySymbol.get(clean)!;
+    const compact = clean.replace('/', '');
+    if (this.marketsBySymbol.has(compact)) return this.marketsBySymbol.get(compact)!;
+
+    if (!clean.includes('/') && clean.length === 6) {
+      const m = clean.match(/^([A-Z]{3})([A-Z]{3})$/);
+      if (m) {
+        const slashKey = `${m[1]}/${m[2]}`;
+        if (this.marketsBySymbol.has(slashKey)) return this.marketsBySymbol.get(slashKey)!;
+      }
     }
-    return this.marketsBySymbol.get(key) || null;
+    return null;
   }
 
   // ─── Tickers ──────────────────────────────────────────────────────────────────
