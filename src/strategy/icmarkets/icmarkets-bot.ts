@@ -94,8 +94,6 @@ export class IcMarketsBot {
       const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
         ? new mongoose.Types.ObjectId(userId)
         : userId;
-      const stratQuery = userId ? { $or: [{ userId }, { userId: userObjId }] } : {};
-      const strategies = await IcMarketsStrategy.find(stratQuery);
 
       const key =
         (await ExchangeKey.findOne({
@@ -134,133 +132,86 @@ export class IcMarketsBot {
       );
 
       const openPositions = rec && rec.position ? rec.position : [];
+      const openPosIds = new Set<string>(openPositions.map((p: any) => String(p.positionId)));
+      const stratUserId = userId || key.userId;
 
-      const matchedPosIds = new Set<string>();
+      // Obter PnL em tempo real das posições abertas
+      const pnlMap = await adapter.getPositionsPnL().catch(() => new Map<string, any>());
 
-      for (const strat of strategies) {
-        const symbolNormalized = strat.symbol.replace('/', '').toUpperCase();
-        const found = openPositions.find((p: any) => {
-          const market = (adapter as any).marketsById?.get(String(p.tradeData?.symbolId));
-          const mSym = market?.symbol?.replace('/', '').toUpperCase();
-          return (
-            mSym === symbolNormalized ||
-            String(p.positionId) === String(strat.currentPositionId)
-          );
-        });
-
-        if (found) {
-          const posId = String(found.positionId);
-          matchedPosIds.add(posId);
-          const rawPrice = Number(found.price || 0) / 100000;
-          const isBuy = found.tradeData?.tradeSide === 1;
-          const side = isBuy ? 'BUY' : 'SELL';
-
-          await IcMarketsStrategy.findByIdAndUpdate(strat._id, {
-            $set: {
-              currentPositionId: posId,
-              currentSide: side,
-              entryPrice: rawPrice,
-              status: 'running',
-            },
-          });
-
-          await IcMarketsTrade.updateOne(
-            { positionId: posId },
-            {
-              $setOnInsert: {
-                userId: strat.userId,
-                strategyId: strat._id,
-                symbol: strat.symbol,
-                side,
-                lotSize: strat.lotSize,
-                entryPrice: rawPrice,
-                status: 'open',
-                openedAt: new Date(Number(found.tradeData?.openTimestamp || Date.now())),
-                metrics: {
-                  er: 0.42,
-                  varianceRatio: 1.15,
-                  atrPct: 15.0,
-                  spreadPips: 0.8,
-                  expectedValue: 0.05,
-                  edgePct: 3.2,
-                  aiProbWin: 0.65,
-                },
-              },
-            },
-            { upsert: true }
-          );
-        } else if (strat.currentPositionId) {
-          await IcMarketsStrategy.findByIdAndUpdate(strat._id, {
-            $unset: { currentPositionId: 1, currentSide: 1 },
-            $set: { currentPnlUsd: 0, entryPrice: 0 },
-          });
-
-          await IcMarketsTrade.updateOne(
-            { positionId: strat.currentPositionId, status: 'open' },
-            {
-              $set: {
-                status: 'closed',
-                closedAt: new Date(),
-                closeReason: 'manual',
-              },
-            }
-          );
-        }
-      }
-
-      // Auto-descoberta: posições abertas na cTrader sem estratégia vinculada no banco
+      // 1. Processar cada posição REALMENTE aberta na cTrader
       for (const p of openPositions) {
         const posId = String(p.positionId);
-        if (matchedPosIds.has(posId)) continue;
-
         const market = (adapter as any).marketsById?.get(String(p.tradeData?.symbolId));
         const sym = market?.symbol || `SYM_${p.tradeData?.symbolId}`;
-        const rawPrice = Number(p.price || 0) / 100000;
+        const rawPrice = p.price != null ? Number(p.price) : (p.tradeData?.openPrice != null ? Number(p.tradeData.openPrice) : 0);
+        const entryPrice = rawPrice > 1000 ? rawPrice / 100000 : rawPrice;
         const isBuy = p.tradeData?.tradeSide === 1;
         const side = isBuy ? 'BUY' : 'SELL';
-        const lotSize = Number(p.tradeData?.volume || 1000) / 100000;
+        const rawUnits = Number(p.tradeData?.volume || 0) / 100;
+        const lotSize = Number((rawUnits / (market?.lotSize || 100000)).toFixed(2)) || 0.01;
 
-        const stratUserId = userId || key.userId;
+        const livePnlInfo = pnlMap.get(posId);
+        const livePnlUsd = livePnlInfo ? Number(livePnlInfo.netPnl || livePnlInfo.grossPnl || 0) : 0;
 
-        // Cria ou atualiza estratégia para a posição
-        const autoStrat = await IcMarketsStrategy.findOneAndUpdate(
-          { userId: stratUserId, symbol: sym },
-          {
-            $set: {
-              currentPositionId: posId,
-              currentSide: side,
-              entryPrice: rawPrice,
-              status: 'running',
-              lotSize: lotSize > 0 ? lotSize : 0.01,
-            },
-            $setOnInsert: {
-              name: `Auto ${sym} (${side})`,
-              userId: stratUserId,
-              symbol: sym,
-              tpPips: 8,
-              slPips: 6,
-              erThreshold: 0.1,
-              vrThreshold: 1.0,
-              minAtrThreshold: 0.0,
-              aiConfidenceThreshold: 0.55,
-              maxSpreadPips: 2.5,
-              trailingStopPips: 2.0,
-            },
-          },
-          { upsert: true, new: true }
-        );
+        // Procura ou cria estratégia correspondente a esta posição
+        let strat = await IcMarketsStrategy.findOne({ currentPositionId: posId });
+        if (!strat) {
+          strat = await IcMarketsStrategy.findOne({
+            symbol: sym,
+            $and: [
+              { $or: [{ userId: stratUserId }, { userId: { $exists: false } }] },
+              { $or: [{ currentPositionId: { $exists: false } }, { currentPositionId: null }, { currentPositionId: '' }] },
+            ],
+          });
+        }
 
+        if (!strat) {
+          strat = await IcMarketsStrategy.create({
+            name: `Manual ${sym} #${posId}`,
+            userId: stratUserId,
+            symbol: sym,
+            lotSize,
+            entryPrice,
+            currentPositionId: posId,
+            currentSide: side,
+            currentPnlUsd: livePnlUsd,
+            status: 'running',
+            active: true,
+            takeProfitPips: 8,
+            stopLossPips: 6,
+            maxSpreadPips: 2.5,
+            minEfficiencyRatio: 0.1,
+            minVarianceRatio: 1.0,
+            trailingStopPips: 2.0,
+            trailingStepPips: 1.0,
+          });
+        } else {
+          strat.currentPositionId = posId;
+          strat.currentSide = side;
+          strat.entryPrice = entryPrice;
+          strat.lotSize = lotSize;
+          strat.currentPnlUsd = livePnlUsd;
+          strat.status = 'running';
+          await strat.save();
+        }
+
+        // Garante que a trade esteja com status 'open' e SEM dados de fechamento
         await IcMarketsTrade.updateOne(
           { positionId: posId },
           {
-            $setOnInsert: {
+            $set: {
               userId: stratUserId,
-              strategyId: autoStrat._id,
+              strategyId: strat._id,
               symbol: sym,
               side,
-              lotSize: lotSize > 0 ? lotSize : 0.01,
-              entryPrice: rawPrice,
+              lotSize,
+              entryPrice,
               status: 'open',
+              closedAt: null,
+              closeReason: null,
+              pnlUsd: livePnlUsd,
+            },
+            $setOnInsert: {
               openedAt: new Date(Number(p.tradeData?.openTimestamp || Date.now())),
               metrics: {
                 er: 0.42,
@@ -276,6 +227,34 @@ export class IcMarketsBot {
           { upsert: true }
         );
       }
+
+      // 2. Limpar posições de estratégias que já não existem na cTrader
+      await IcMarketsStrategy.updateMany(
+        {
+          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+          currentPositionId: { $nin: Array.from(openPosIds), $exists: true, $ne: null },
+        },
+        {
+          $unset: { currentPositionId: 1, currentSide: 1 },
+          $set: { currentPnlUsd: 0, entryPrice: 0 },
+        }
+      );
+
+      // 3. Marcar como 'closed' APENAS as trades no banco que não estão mais na lista de posições abertas da cTrader
+      await IcMarketsTrade.updateMany(
+        {
+          ...(userId ? { $or: [{ userId }, { userId: userObjId }] } : {}),
+          status: 'open',
+          positionId: { $nin: Array.from(openPosIds) },
+        },
+        {
+          $set: {
+            status: 'closed',
+            closedAt: new Date(),
+            closeReason: 'manual',
+          },
+        }
+      );
     } catch (e: any) {
       log.warn(`Aviso na sincronização de posições IC Markets: ${e.message}`);
     }

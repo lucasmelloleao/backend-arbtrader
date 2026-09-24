@@ -195,9 +195,15 @@ export async function toggleIcMarketsStrategy(req: AuthenticatedRequest, res: Re
 export async function getIcMarketsTrades(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
+    await IcMarketsBot.syncAllPositions(userId).catch(() => {});
+
+    const userObjId = userId && typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+      ? new mongoose.Types.ObjectId(userId)
+      : userId;
+
     const { limit = '100', symbol, status = 'closed', periodo } = req.query as Record<string, string>;
 
-    const query: any = { userId };
+    const query: any = userId ? { $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }] } : {};
     if (symbol) query.symbol = symbol.toUpperCase();
     if (status && status !== 'all') query.status = status;
 
