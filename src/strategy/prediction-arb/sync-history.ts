@@ -20,8 +20,8 @@ function getDataBase(): string {
   return base;
 }
 
-/** Busca a activity da deposit wallet na Data API (filtra últimas 12h por padrão). */
-async function fetchActivity(address: string, limit = 500, hours = 12): Promise<any[]> {
+/** Busca a activity da deposit wallet na Data API (filtra últimas 48h por padrão para capturar todas as pernas de entrada e saída). */
+async function fetchActivity(address: string, limit = 500, hours = 48): Promise<any[]> {
   const minTs = Math.floor((Date.now() - hours * 3600 * 1000) / 1000);
   const res = await withTimeout(fetch(`${getDataBase()}/activity?user=${address}&limit=${limit}&start_ts=${minTs}`), 20000, null);
   if (!res || !res.ok) {
