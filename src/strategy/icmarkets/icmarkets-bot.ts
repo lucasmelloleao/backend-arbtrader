@@ -161,6 +161,11 @@ export class IcMarketsBot {
         let strat = await IcMarketsStrategy.findOne({ currentPositionId: posId });
         if (!strat) {
           strat = await IcMarketsStrategy.findOne({
+            name: `Manual ${sym} #${posId}`,
+          });
+        }
+        if (!strat) {
+          strat = await IcMarketsStrategy.findOne({
             symbol: sym,
             $and: [
               { $or: [{ userId: stratUserId }, { userId: { $exists: false } }] },
