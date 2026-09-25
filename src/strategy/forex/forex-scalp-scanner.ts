@@ -7,7 +7,7 @@ import ForexArbSettings from '../../models/ForexArbSettings';
 import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
-import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
+import { getSharedCtraderAdapter, isCtraderExchange } from './ctrader/ctrader-factory';
 import {
   calculateFrictionCost,
   calculateMicroPrice,
@@ -355,7 +355,7 @@ async function startScalpScanner() {
         log.info('⚡ [FOREX-SCALP-SCANNER] Escaneando mercado para novas oportunidades...');
         
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
 
         if (ctraderKey) {
           const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';

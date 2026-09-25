@@ -6,7 +6,7 @@ import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import BotStatus from '../../models/BotStatus';
-import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
+import { getSharedCtraderAdapter, isCtraderExchange } from './ctrader/ctrader-factory';
 import logger from '../../utils/logger';
 
 const log = logger.child({ module: 'forex-trend-grid' });
@@ -197,7 +197,7 @@ export async function runTrendGridLoop() {
         ).catch(() => {});
 
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
 
         if (!ctraderKey) {
           if (Math.random() < 0.05) log.warn('⚠️ [TREND GRID] Chave cTrader ativa não encontrada para o usuário.');

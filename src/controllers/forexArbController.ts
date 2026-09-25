@@ -568,10 +568,10 @@ export async function getForexLogs(req: AuthenticatedRequest, res: Response) {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
-    const requestedProcess = (req.query.process as string) || 'forex-scalper';
+    const requestedProcess = (req.query.process as string) || 'all';
     processName = requestedProcess;
     let pm2ProcessName = 'forex-scalper';
-    if (['forex-scalp-executor', 'forex-scalp-scanner', 'forex-arb', 'forex-scanner', 'forex-trend-grid', 'trend-grid'].includes(requestedProcess)) {
+    if (['all', 'forex-scalp-executor', 'forex-scalp-scanner', 'forex-arb', 'forex-scanner', 'forex-trend-grid', 'trend-grid'].includes(requestedProcess)) {
       pm2ProcessName = 'forex-scalper';
     }
     const lines = (req.query.lines as string) || '150';

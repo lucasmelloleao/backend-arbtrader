@@ -8,7 +8,7 @@ import ForexArbStrategy from '../../models/ForexArbStrategy';
 import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import BotStatus from '../../models/BotStatus';
-import { getSharedCtraderAdapter } from './ctrader/ctrader-factory';
+import { getSharedCtraderAdapter, isCtraderExchange } from './ctrader/ctrader-factory';
 import { recordClosedTrade, syncClosedTradeCooldowns } from './forex-scalp-scanner';
 import { calculateFractionalKellyLotSize, checkBinomialLossCircuitBreaker } from './quant-scalp-engine';
 
@@ -709,7 +709,7 @@ async function runExitLoop() {
       const settings = await ForexArbSettings.findOne().lean();
       if (settings && settings.userId) {
         const keys = await ExchangeKey.find({ userId: settings.userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
         if (ctraderKey) {
           const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';
           const targetAccountId = settings.accountId || ctraderKey.accountId;
@@ -939,7 +939,7 @@ export async function startScalper() {
         log.info('⚡ [FOREX-SCALPER] Monitorando mercado para Scalping HFT...');
 
         const keys = await (ExchangeKey as any).find({ userId: settings.userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
 
         if (ctraderKey) {
           const envOverride: 'demo' | 'live' = (settings.accountType === 'live' || settings.accountType === 'real') ? 'live' : 'demo';

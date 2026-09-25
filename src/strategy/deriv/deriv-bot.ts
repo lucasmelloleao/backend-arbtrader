@@ -549,8 +549,14 @@ async function executeDerivCycle(): Promise<void> {
         let durationUnit = 's';
 
         // Validação dinâmica de limites de duração por contrato na Deriv
-        if (!isMultiplier && (contractType === 'HIGHER' || contractType === 'LOWER') && tradeDuration < 15) {
-          tradeDuration = 15;
+        const isForex = sym.startsWith('frx');
+        if (!isMultiplier && (contractType === 'HIGHER' || contractType === 'LOWER')) {
+          if (isForex && tradeDuration < 300) {
+            tradeDuration = 5;
+            durationUnit = 'm'; // Pares forex na Deriv exigem duração mínima em minutos (5m) para Higher/Lower
+          } else if (tradeDuration < 15) {
+            tradeDuration = 15;
+          }
         }
 
         // Requisita proposta para a Deriv
@@ -578,26 +584,28 @@ async function executeDerivCycle(): Promise<void> {
           return { error: err.message };
         });
 
-        // Se a Deriv rejeitar a unidade em segundos ou a duração exata, tenta ajustar dinamicamente
-        if (!isMultiplier && proposal?.error && proposal.error.includes('duration')) {
-          if (tradeDuration < 60) {
-            proposalParams.duration = 60;
-            proposalParams.duration_unit = 's';
-            proposal = await client.getProposal(proposalParams).catch((err: any) => {
-              log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} (ajustado para 60s): ${err.message}`);
-              return null;
-            });
-          } else if (tradeDuration >= 60 && durationUnit === 's') {
-            proposalParams.duration = Math.round(tradeDuration / 60);
-            proposalParams.duration_unit = 'm';
-            proposal = await client.getProposal(proposalParams).catch((err: any) => {
-              log.warn(`⚠️ [${sym}] Erro ao cotar ${contractType}${barrierValue ? ` [${barrierValue}]` : ''} (em minutos): ${err.message}`);
-              return null;
-            });
+        // Se a Deriv rejeitar a duração, tenta negociar durações superiores suportadas (60s -> 5m -> 15m)
+        if (!isMultiplier && proposal?.error && (proposal.error.includes('duration') || proposal.error.includes('Trading is not offered'))) {
+          const durationFallbacks = isForex 
+            ? [{ d: 5, u: 'm' }, { d: 15, u: 'm' }, { d: 1, u: 'h' }]
+            : [{ d: 60, u: 's' }, { d: 2, u: 'm' }, { d: 5, u: 'm' }];
+
+          for (const fb of durationFallbacks) {
+            if (proposalParams.duration === fb.d && proposalParams.duration_unit === fb.u) continue;
+            proposalParams.duration = fb.d;
+            proposalParams.duration_unit = fb.u;
+            proposal = await client.getProposal(proposalParams).catch((err: any) => ({ error: err.message }));
+            if (proposal && !proposal.error && proposal.id) {
+              tradeDuration = fb.d;
+              durationUnit = fb.u;
+              log.info(`🔄 [${sym}] Duração ajustada com sucesso para ${fb.d}${fb.u}.`);
+              break;
+            }
           }
         } 
+        
         // Fallback dinâmico para erro de barreira (ajusta offset mais conservador se rejeitado pela API)
-        else if (!isMultiplier && proposal?.error && (proposal.error.includes('barrier') || proposal.error.includes('Input validation failed'))) {
+        if (!isMultiplier && proposal?.error && (proposal.error.includes('barrier') || proposal.error.includes('Input validation failed'))) {
           const numBarrier = Number(barrierValue);
           if (!isNaN(numBarrier)) {
             const adjustedBarrier = numBarrier < 0 ? Math.min(numBarrier / 2, -1.0) : Math.max(numBarrier / 2, 1.0);
