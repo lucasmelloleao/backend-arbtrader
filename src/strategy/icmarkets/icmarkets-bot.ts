@@ -341,6 +341,15 @@ export class IcMarketsBot {
 
     await adapter.loadMarkets();
 
+    try {
+      const { evaluateAndAllocateIcMarketsAssets } = await import('../common/dynamic-asset-allocator');
+      const regimes = await evaluateAndAllocateIcMarketsAssets(String(userId));
+      const paused = regimes.filter((r) => r.shouldPause);
+      if (paused.length > 0) {
+        log.warn(`🛡️ [DYNAMIC-ALLOCATOR-IC] Circuit breaker pausou ativos em declínio: ${paused.map((p) => `${p.symbol} (${p.reason})`).join(', ')}`);
+      }
+    } catch {}
+
     const strategies: IIcMarketsStrategy[] = await IcMarketsStrategy.find({
       $or: [{ userId }, { userId: userObjId }, { userId: { $exists: false } }],
       active: true,

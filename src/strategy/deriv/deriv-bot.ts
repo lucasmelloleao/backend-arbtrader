@@ -287,6 +287,16 @@ async function executeDerivCycle(): Promise<void> {
       log.info(`📉 [RISCO] Sequência de 2 perdas. Stake reduzido para 50%.`);
     }
 
+    // 4.1 Dynamic Asset Allocator (Proteção de Curva e Regime de Ativos)
+    try {
+      const { evaluateAndAllocateDerivAssets } = await import('../common/dynamic-asset-allocator');
+      const regimes = await evaluateAndAllocateDerivAssets(String(settings.userId));
+      const paused = regimes.filter((r) => r.shouldPause);
+      if (paused.length > 0) {
+        log.warn(`🛡️ [DYNAMIC-ALLOCATOR] Circuit breaker acionado para ativos em declínio: ${paused.map((p) => `${p.symbol} (${p.reason})`).join(', ')}`);
+      }
+    } catch {}
+
     // 2. Buscar estratégias ativas do usuário para operar por ativo
     const userStrategies = await DerivStrategy.find({ userId: settings.userId, active: true }).lean();
 

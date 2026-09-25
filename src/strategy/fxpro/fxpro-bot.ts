@@ -251,6 +251,20 @@ export class FxProBot {
     const now = Date.now();
     const shouldLogHeartbeat = now - this.lastCycleLog > 15000; // Log de heartbeat a cada 15 segundos
 
+    if (activeStrategies.length > 0) {
+      try {
+        const { evaluateAndAllocateFxProAssets } = await import('../common/dynamic-asset-allocator');
+        const userIds = Array.from(new Set(activeStrategies.map((s) => String(s.userId)).filter(Boolean)));
+        for (const uid of userIds) {
+          const regimes = await evaluateAndAllocateFxProAssets(uid);
+          const paused = regimes.filter((r) => r.shouldPause);
+          if (paused.length > 0) {
+            log.warn(`🛡️ [DYNAMIC-ALLOCATOR-FXPRO] Circuit breaker pausou ativos em declínio: ${paused.map((p) => `${p.symbol} (${p.reason})`).join(', ')}`);
+          }
+        }
+      } catch {}
+    }
+
     if (!activeStrategies || activeStrategies.length === 0) {
       if (shouldLogHeartbeat) {
         this.lastCycleLog = now;
