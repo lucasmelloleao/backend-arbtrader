@@ -7,6 +7,7 @@ import ForexArbTrade from '../../models/ForexArbTrade';
 import ExchangeKey from '../../models/ExchangeKey';
 import BotStatus from '../../models/BotStatus';
 import { getSharedCtraderAdapter, isCtraderExchange } from './ctrader/ctrader-factory';
+import { PepperstoneMetaLabeler } from './helpers/pepperstone-meta-labeler';
 import logger from '../../utils/logger';
 
 const log = logger.child({ module: 'forex-trend-grid' });
@@ -385,10 +386,33 @@ export async function runTrendGridLoop() {
                 // Variação micro-tendência: 0.8 pips nos últimos ticks para acionar abertura de grade
                 if (Math.abs(deltaPips) >= 0.8) {
                   const autoSide: 'BUY' | 'SELL' = deltaPips > 0 ? 'BUY' : 'SELL';
+
+                  // GATE 4: IA META-LABELING ESPECÍFICA DO TREND GRID
+                  const now = new Date();
+                  const timeOfDay = now.getHours() + now.getMinutes() / 60;
+                  const spreadPips = Math.abs(ticker.ask - ticker.bid) / pipSize;
+                  const lotSize = settings.lotSize || 0.01;
+                  const featureVector = PepperstoneMetaLabeler.extractFeatures(
+                    0.50, // Kaufman ER estimado da grade
+                    1.20, // Variance Ratio
+                    15.0, // ATR
+                    spreadPips,
+                    0.08, // Expected Value
+                    4.0,  // Edge %
+                    lotSize,
+                    timeOfDay
+                  );
+
+                  const aiInference = PepperstoneMetaLabeler.evaluateOpportunity(featureVector, 0.55, 'trend_grid');
+                  if (aiInference.isVetoed) {
+                    log.warn(`🤖 [AI GATE 4 VETO TREND-GRID] [${sym}] Grade ${autoSide} vetada pela IA: ${aiInference.reason}`);
+                    continue;
+                  }
+                  log.info(`🤖 [AI GATE 4 APROVADO TREND-GRID] [${sym}] Grade ${autoSide} aprovada (${(aiInference.probWin * 100).toFixed(1)}%).`);
+
                   log.info(`🎯 [TREND GRID AUTO-DETECT] Oportunidade em ${sym}! Tendência de ${autoSide} (${deltaPips.toFixed(1)} pips). Abrindo grade...`);
 
                   try {
-                    const lotSize = settings.lotSize || 0.01;
                     const volUnits = lotSize * 100000;
                     const orderRes = await adapter.createMarketOrder(sym, autoSide.toLowerCase() as 'buy' | 'sell', volUnits);
                     const posId = orderRes?.positionId || orderRes?.id || Date.now().toString();

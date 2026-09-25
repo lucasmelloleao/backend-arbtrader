@@ -968,15 +968,24 @@ export async function getForexLivePrices(req: AuthenticatedRequest, res: Respons
 export async function getPepperstoneMetaModelStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { PepperstoneMetaLabeler } = require('../strategy/forex/helpers/pepperstone-meta-labeler');
-    const metadata = PepperstoneMetaLabeler.getMetadata();
+    const botType = (req.query.botType === 'trend_grid' ? 'trend_grid' : 'scalping') as 'scalping' | 'trend_grid';
+    const metadata = PepperstoneMetaLabeler.getMetadata(botType);
     const userId = req.userId;
-    const totalTrades = await ForexArbTrade.countDocuments(
-      userId ? { userId, type: { $ne: 'opportunity_found' } } : { type: { $ne: 'opportunity_found' } }
-    );
+
+    const query: any = {
+      type: { $ne: 'opportunity_found' },
+      strategyName: botType === 'trend_grid' ? { $regex: /grid/i } : { $regex: /scalp/i }
+    };
+    if (userId) {
+      query.userId = userId;
+    }
+
+    const totalTrades = await ForexArbTrade.countDocuments(query);
 
     res.json({
       ok: true,
       data: {
+        botType,
         isTrained: Boolean(metadata?.trainedAt),
         metadata,
         totalExecutedTrades: totalTrades,
@@ -991,8 +1000,9 @@ export async function getPepperstoneMetaModelStatus(req: AuthenticatedRequest, r
 export async function trainPepperstoneMetaModel(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
+    const botType = (req.body?.botType === 'trend_grid' || req.query?.botType === 'trend_grid' ? 'trend_grid' : 'scalping') as 'scalping' | 'trend_grid';
     const { PepperstoneMetaLabeler } = require('../strategy/forex/helpers/pepperstone-meta-labeler');
-    const result = await PepperstoneMetaLabeler.trainModel(userId);
+    const result = await PepperstoneMetaLabeler.trainModel(userId, botType);
     if (result.success) {
       res.json({ ok: true, message: result.message, metadata: result.metadata });
     } else {
