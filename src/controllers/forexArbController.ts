@@ -939,9 +939,9 @@ export async function getForexLivePrices(req: AuthenticatedRequest, res: Respons
     if (!userId) return res.status(401).json({ success: false, message: 'Não autorizado.' });
 
     const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP'];
-    const { isCtraderExchange } = require('../strategy/forex/ctrader/ctrader-config');
+    const { isCtraderExchange } = require('../strategy/forex/scanner');
     const keys = await ExchangeKey.find({ userId, active: true }).lean();
-    const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
+    const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange?.(k.exchangeId));
     if (!ctraderKey) {
       return res.json({ success: true, message: 'ok', data: {} });
     }
@@ -1030,7 +1030,7 @@ export async function getForexBalance(req: AuthenticatedRequest, res: Response):
           environment: env,
         });
 
-        const accountIdNum = Number((adapter as any).creds?.accountId || (adapter as any).client?.creds?.accountId || targetAccountId);
+        const accountIdNum = Number((adapter as any).client?.getCtidTraderAccountId() || (adapter as any).creds?.accountId || targetAccountId);
 
         const traderRes = await (adapter as any).client.sendRequest(
           2121,
