@@ -392,11 +392,32 @@ async function startScalpScanner() {
                     }
                   }
 
+                  // 1. Verifica se já existe qualquer posição aberta na Pepperstone/cTrader para este ativo
+                  let temPosicaoNaCtrader = false;
+                  try {
+                    const livePositionsMap = await (adapter as any).getPositionsPnL().catch(() => new Map());
+                    for (const [, pInfo] of livePositionsMap.entries()) {
+                      if ((pInfo as any)?.symbol === sym || (pInfo as any)?.symbol === sym.replace('/', '')) {
+                        temPosicaoNaCtrader = true;
+                        break;
+                      }
+                    }
+                  } catch {}
+
+                  // 2. Verifica no MongoDB se existe QUALQUER estratégia com posição aberta contendo esse ativo
                   const temPosicaoAbertaNoBanco = await ForexArbStrategy.exists({
                     userId: settings.userId,
-                    name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
-                    positionOpen: true
+                    positionOpen: true,
+                    $or: [
+                      { 'legs.symbol': sym },
+                      { name: new RegExp(sym.replace('/', '[/\\-_]?'), 'i') }
+                    ]
                   });
+
+                  if (temPosicaoNaCtrader || temPosicaoAbertaNoBanco) {
+                    log.info(`🔒 [ATIVO JÁ POSSUI POSIÇÃO ABERTA] ${sym}: Bloqueada nova abertura até o encerramento da posição atual.`);
+                    continue;
+                  }
 
                   // Expira oportunidades pendentes antigas (> 60 segundos) para não travar novos sinais
                   await ForexArbTrade.updateMany(

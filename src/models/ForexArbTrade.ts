@@ -33,5 +33,9 @@ const ForexArbTradeSchema = new mongoose.Schema({
 });
 
 ForexArbTradeSchema.index({ strategyId: 1, createdAt: -1 });
+ForexArbTradeSchema.index(
+  { createdAt: 1 },
+  { name: 'ttl_opportunity_found', expireAfterSeconds: 300, partialFilterExpression: { type: 'opportunity_found' } }
+);
 
 export default mongoose.models.ForexArbTrade || mongoose.model('ForexArbTrade', ForexArbTradeSchema);

@@ -352,7 +352,16 @@ export async function runTrendGridLoop() {
             const lastFailTime = lastFailedAttempts.get(sym) || 0;
             const isCoolingDown = Date.now() - lastFailTime < 60000;
 
-            if (!activeGridEngines.has(sym) && !isCoolingDown && settings.gridEnabled !== false) {
+            const jaPossuiPosicaoAberta = await ForexArbStrategy.exists({
+              userId: settings.userId,
+              positionOpen: true,
+              $or: [
+                { 'legs.symbol': sym },
+                { name: new RegExp(sym.replace('/', '[/\\-_]?'), 'i') }
+              ]
+            });
+
+            if (!activeGridEngines.has(sym) && !jaPossuiPosicaoAberta && !isCoolingDown && settings.gridEnabled !== false) {
               const priceHistory = priceHistories.get(sym) || [];
               const midPrice = (ticker.bid + ticker.ask) / 2;
               priceHistory.push(midPrice);

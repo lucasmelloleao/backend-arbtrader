@@ -121,8 +121,11 @@ async function startScalpExecutor() {
               // Garante que não existe posição ativa para este par (verificando memória + banco) antes de abrir
               const temPosicaoNoBanco = await ForexArbStrategy.exists({
                 userId: settings.userId,
-                name: new RegExp(`Scalping ${sym.replace('/', '\\/')}`),
-                positionOpen: true
+                positionOpen: true,
+                $or: [
+                  { 'legs.symbol': sym },
+                  { name: new RegExp(sym.replace('/', '[/\\-_]?'), 'i') }
+                ]
               });
 
               if (!activePositions.has(sym) && !temPosicaoNoBanco) {
