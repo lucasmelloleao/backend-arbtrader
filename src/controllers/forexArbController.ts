@@ -736,7 +736,7 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
           const adapter = await getSharedCtraderAdapter(ctraderKey as any);
           await adapter.connect();
           await adapter.loadMarkets();
-          const accountId = Number((ctraderKey as any).accountId);
+          const accountId = (adapter as any).client.getCtidTraderAccountId() || Number((ctraderKey as any).accountId);
           const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
           if (rec && rec.position) {
             // Coleta todos os IDs da estratégia (pernas e gridPositions)
@@ -754,6 +754,9 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
               }
             }
 
+            let closedAtLeastOne = false;
+            let lastCloseError: string | null = null;
+
             for (const p of rec.position) {
               const realPosId = String(p.positionId);
               const m = adapter.marketsById.get(String(p.tradeData?.symbolId));
@@ -761,15 +764,33 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
               if (targetIds.has(realPosId) || matchSymbol) {
                 const volProto = Number(p.tradeData?.volume || 100);
                 console.log(`📤 [MANUAL CLOSE FRONTEND] Encerrando posição #${realPosId} na cTrader (volume: ${volProto})...`);
-                await adapter.closePosition(realPosId, volProto).catch((err: any) => {
+                try {
+                  const fill = await adapter.closePosition(realPosId, volProto);
+                  closedAtLeastOne = true;
+                  if (fill && fill.price) {
+                    strategy.pnl = fill.realizedPnl ?? strategy.pnl;
+                  }
+                } catch (err: any) {
+                  lastCloseError = err.message;
                   console.error(`Erro ao fechar posição #${realPosId} na cTrader:`, err.message);
-                });
+                }
               }
+            }
+
+            if (!closedAtLeastOne && lastCloseError) {
+              return res.status(500).json({
+                success: false,
+                message: `Falha ao encerrar na corretora cTrader: ${lastCloseError}`
+              });
             }
           }
         }
       } catch (ctraderErr: any) {
         console.warn(`⚠️ Erro ao fechar posição na cTrader via API:`, ctraderErr.message);
+        return res.status(500).json({
+          success: false,
+          message: `Erro na comunicação com a cTrader: ${ctraderErr.message}`
+        });
       }
     }
 
@@ -784,7 +805,7 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
 
     await persistManualCloseTrade(strategy, 'Fechamento manual via dashboard');
 
-    return res.json({ success: true, message: 'Fechamento de posição encerrado com sucesso.' });
+    return res.json({ success: true, message: 'Fechamento de posição encerrado com sucesso na cTrader.' });
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
   }
@@ -850,7 +871,7 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
         const adapter = await getSharedCtraderAdapter(ctraderKey as any);
         await adapter.connect();
         await adapter.loadMarkets();
-        const accountId = Number((ctraderKey as any).accountId);
+        const accountId = (adapter as any).client.getCtidTraderAccountId() || Number((ctraderKey as any).accountId);
         const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
 
         if (rec && rec.position && rec.position.length > 0) {
