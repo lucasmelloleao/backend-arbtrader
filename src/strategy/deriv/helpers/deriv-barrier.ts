@@ -34,13 +34,14 @@ export class DerivBarrierOptimizer {
    * Gera o offset de barreira ótimo em função da volatilidade recente (em 15 ticks)
    * @param direction 'HIGHER' | 'LOWER' | 'CALL' | 'PUT'
    * @param tickVol Desvio padrão dos ticks
+   * @param offsetFactor Multiplicador de desvio (padrão 0.30 sigmas; reduzido para ativos que exigem payoff mais alto)
    */
-  public static getTargetOffset(direction: 'HIGHER' | 'LOWER' | 'CALL' | 'PUT', tickVol: number): string {
+  public static getTargetOffset(direction: 'HIGHER' | 'LOWER' | 'CALL' | 'PUT', tickVol: number, offsetFactor = 0.30): string {
     // Projeção para 15 ticks: sigma_15 = tickVol * sqrt(15)
     const sigma15 = tickVol * Math.sqrt(15);
 
-    // Offset alvo fixado em ~0.30 sigmas a favor da probabilidade
-    const targetDistance = Math.max(0.10, Number((sigma15 * 0.30).toFixed(2)));
+    // Offset alvo fixado em sigmas a favor da probabilidade
+    const targetDistance = Math.max(0.10, Number((sigma15 * offsetFactor).toFixed(2)));
 
     // Para HIGHER/CALL: barreira abaixo do spot (-offset)
     // Para LOWER/PUT: barreira acima do spot (+offset)
@@ -59,9 +60,11 @@ export class DerivBarrierOptimizer {
     payout: number,
     modelConfidence: number,
     baseStake: number,
-    customMinEdge?: number
+    customMinEdge?: number,
+    customMinPayoutRatio?: number
   ): BarrierProposalCheck {
     const requiredMinEdge = customMinEdge !== undefined ? customMinEdge : this.MIN_EDGE;
+    const requiredMinPayout = customMinPayoutRatio !== undefined ? customMinPayoutRatio : this.MIN_PAYOUT_RATIO;
 
     if (!askPrice || askPrice <= 0 || !payout || payout <= askPrice) {
       return {
@@ -78,8 +81,8 @@ export class DerivBarrierOptimizer {
     const netReturn = payout - askPrice;
     const R = netReturn / askPrice; // Retorno percentual líquido (ex: 0.55 = 55%)
 
-    // 1. Filtro de Faixa de Retorno (Sweet Spot 40% a 85%)
-    if (R < this.MIN_PAYOUT_RATIO || R > this.MAX_PAYOUT_RATIO) {
+    // 1. Filtro de Faixa de Retorno (Exige prêmio mínimo configurado, ex: 75% no 1HZ75V)
+    if (R < requiredMinPayout || R > this.MAX_PAYOUT_RATIO) {
       return {
         barrierOffset: '0',
         expectedValue: Number(((modelConfidence * R) - (1 - modelConfidence)).toFixed(4)),

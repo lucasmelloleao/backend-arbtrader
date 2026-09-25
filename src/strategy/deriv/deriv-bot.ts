@@ -370,13 +370,53 @@ async function executeDerivCycle(): Promise<void> {
           continue;
         }
 
-        // 2. Cooldown Pós-Loss (180s)
-        const lastLossTrade = await DerivTrade.findOne({
+        // 2. Veto Dinâmico por Regime (Kill-Switch por Ativo):
+        // 2.1 - Trava de 3 Losses Consecutivos no Ativo (Pausa de 30 min)
+        const recentTradesAsset = await DerivTrade.find({
           userId: settings.userId,
           symbol: sym,
           status: 'executed',
-        }).sort({ closedAt: -1 }).lean();
+        }).sort({ closedAt: -1 }).limit(10).lean();
 
+        let consecutiveLosses = 0;
+        for (const t of recentTradesAsset) {
+          if ((t.pnl || 0) < 0) {
+            consecutiveLosses++;
+          } else {
+            break;
+          }
+        }
+
+        if (consecutiveLosses >= 3) {
+          const lastLossTime = recentTradesAsset[0]?.closedAt ? new Date(recentTradesAsset[0].closedAt).getTime() : 0;
+          const pauseMs = 30 * 60 * 1000; // 30 minutos de pausa
+          if (Date.now() - lastLossTime < pauseMs) {
+            const minRest = Math.ceil((pauseMs - (Date.now() - lastLossTime)) / 60000);
+            log.warn(`🛑 [KILL-SWITCH ATIVO: ${sym}] 3 losses consecutivos detectados. Ativo suspenso por mais ${minRest}m.`);
+            continue;
+          }
+        }
+
+        // 2.2 - Trava de Win Rate < 55% nas últimas 2 horas (mínimo 5 trades)
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        const tradesLast2h = await DerivTrade.find({
+          userId: settings.userId,
+          symbol: sym,
+          status: 'executed',
+          closedAt: { $gte: twoHoursAgo },
+        }).select('pnl').lean();
+
+        if (tradesLast2h.length >= 5) {
+          const wins2h = tradesLast2h.filter((t: any) => (t.pnl || 0) > 0).length;
+          const wr2h = (wins2h / tradesLast2h.length) * 100;
+          if (wr2h < 55.0) {
+            log.warn(`🛑 [KILL-SWITCH ATIVO: ${sym}] Win Rate de ${wr2h.toFixed(1)}% nas últimas 2h (< 55% em ${tradesLast2h.length} trades). Ativo vetado temporariamente.`);
+            continue;
+          }
+        }
+
+        // 2.3 - Cooldown Pós-Loss individual (180s)
+        const lastLossTrade = recentTradesAsset[0];
         if (lastLossTrade && (lastLossTrade.pnl || 0) < 0 && lastLossTrade.closedAt) {
           const secondsSinceLoss = (Date.now() - new Date(lastLossTrade.closedAt).getTime()) / 1000;
           if (secondsSinceLoss < 180) {
@@ -453,7 +493,9 @@ async function executeDerivCycle(): Promise<void> {
 
         // Determina a barreira dinâmica pelo otimizador de volatilidade (se não for Multiplier)
         const tickVol = DerivBarrierOptimizer.calculateTickVolatility(ticks);
-        const dynamicBarrierOffset = DerivBarrierOptimizer.getTargetOffset(decidedDirection, tickVol);
+        // Para 1HZ75V, usa offsetFactor mais agressivo (0.15 sigmas em vez de 0.30) para aproximar a barreira e gerar payout de 75-80%
+        const offsetFactor = sym === '1HZ75V' ? 0.15 : 0.30;
+        const dynamicBarrierOffset = DerivBarrierOptimizer.getTargetOffset(decidedDirection, tickVol, offsetFactor);
 
         if (target.contractType === 'HIGHER') {
           if (decidedDirection !== 'CALL') continue;
@@ -584,17 +626,19 @@ async function executeDerivCycle(): Promise<void> {
           const askPrice = Number(proposal.ask_price || tradeStake);
           const currentMinEdge = 0.04 + dynamicMinEdgeBonus;
           
+          const minPayoutRatioRequired = sym === '1HZ75V' ? 0.75 : 0.40;
           const evCheck = DerivBarrierOptimizer.evaluateProposal(
             askPrice,
             payout,
             calculatedProb,
             tradeStake,
-            currentMinEdge
+            currentMinEdge,
+            minPayoutRatioRequired
           );
           evCheckResult = evCheck;
 
           if (!evCheck.isValid) {
-            log.warn(`⚠️ [${sym}] Proposta com EV Negativo ou Edge Insuficiente (EV: ${evCheck.expectedValue} | Edge: +${(evCheck.edge * 100).toFixed(1)}% | MinEdge Exigido: +${(currentMinEdge * 100).toFixed(1)}% | Retorno R: +${(evCheck.payoutRatio * 100).toFixed(1)}% | Prob Deriv: ${(evCheck.brokerProb * 100).toFixed(1)}% vs Modelo: ${(calculatedProb * 100).toFixed(1)}%). Entrada rejeitada.`);
+            log.warn(`⚠️ [${sym}] Proposta com EV Negativo, Edge Insuficiente ou Payout Abaixo do Mínimo (${(minPayoutRatioRequired * 100).toFixed(0)}%) (EV: ${evCheck.expectedValue} | Edge: +${(evCheck.edge * 100).toFixed(1)}% | MinEdge: +${(currentMinEdge * 100).toFixed(1)}% | Retorno R: +${(evCheck.payoutRatio * 100).toFixed(1)}% | Prob Deriv: ${(evCheck.brokerProb * 100).toFixed(1)}% vs Modelo: ${(calculatedProb * 100).toFixed(1)}%). Entrada rejeitada.`);
             continue;
           }
 
