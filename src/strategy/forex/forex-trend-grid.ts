@@ -560,13 +560,27 @@ export async function runTrendGridLoop() {
 
               if (engine.positions.length > 0) {
                 const mid = (ticker.bid + ticker.ask) / 2;
+                const avgPrice = engine.getWeightedAveragePrice();
+                const totalVol = engine.positions.reduce((acc, p) => acc + p.volume, 0);
+                const totalUnits = totalVol * 100000;
+                const diff = engine.side === 'BUY' ? (mid - avgPrice) : (avgPrice - mid);
+                let currentPnl = diff * totalUnits;
+                if (sym.includes('JPY') && mid > 0) {
+                  currentPnl = (diff * totalUnits) / mid;
+                }
+                const currentPct = avgPrice > 0 ? (diff / avgPrice) * 100 : 0;
+
                 await ForexArbStrategy.findByIdAndUpdate(strategyId, {
                   currentPrice: mid,
+                  pnl: Number(currentPnl.toFixed(2)),
+                  pnlPct: Number(currentPct.toFixed(3)),
                   globalTrailingStopPrice: engine.globalTrailingStop,
-                  weightedAvgPrice: engine.getWeightedAveragePrice(),
+                  trailingActive: Boolean(engine.globalTrailingStop && engine.globalTrailingStop > 0),
+                  trailingFloorPrice: engine.globalTrailingStop,
+                  weightedAvgPrice: avgPrice,
                   currentAction: engine.globalTrailingStop
                     ? `🔒 Trailing Stop Global (Nível ${engine.positions.length}/${engine.maxGridLevels} | Piso: ${engine.globalTrailingStop.toFixed(5)})`
-                    : `📈 Grade Expandindo (Nível ${engine.positions.length}/${engine.maxGridLevels} | Méd: ${engine.getWeightedAveragePrice().toFixed(5)})`,
+                    : `📈 Grade Monitorando (Nível ${engine.positions.length}/${engine.maxGridLevels} | Méd: ${avgPrice.toFixed(5)})`,
                 }).catch(() => {});
               }
             }
