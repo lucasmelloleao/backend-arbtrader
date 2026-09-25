@@ -281,13 +281,14 @@ export async function getForexTrades(req: AuthenticatedRequest, res: Response) {
 
       let computedNetPnl = t.realizedPnl;
       if (entryP > 0 && closeP > 0 && entryP !== closeP) {
+        const baseUnits = lotesReais * (isGold ? 100 : 100000);
         const priceDiff = side === 'BUY' ? (closeP - entryP) : (entryP - closeP);
         const grossPnl = isGold
-          ? priceDiff * vol
+          ? priceDiff * (lotesReais * 100)
           : isJpy && closeP > 0
-            ? (priceDiff * vol) / closeP
-            : priceDiff * vol;
-        computedNetPnl = grossPnl - calcComm;
+            ? (priceDiff * baseUnits) / closeP
+            : priceDiff * baseUnits;
+        computedNetPnl = Number((grossPnl - calcComm).toFixed(2));
       }
 
       // Normaliza todas as legs para garantirem entryPrice (1.35442) e closePrice (1.35421)
