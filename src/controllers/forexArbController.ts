@@ -729,9 +729,9 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
 
     if (posId || symStrategy || (strategy.gridPositions && strategy.gridPositions.length > 0)) {
       try {
-        const { isCtraderExchange } = require('../strategy/forex/ctrader/ctrader-config');
+        const { isCtraderExchange } = require('../strategy/forex/scanner');
         const keys = await ExchangeKey.find({ userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange?.(k.exchangeId));
         if (ctraderKey) {
           const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
           const adapter = await getSharedCtraderAdapter(ctraderKey as any);
@@ -864,9 +864,9 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
 
     let closedCount = 0;
     try {
-      const { isCtraderExchange } = require('../strategy/forex/ctrader/ctrader-config');
+      const { isCtraderExchange } = require('../strategy/forex/scanner');
       const keys = await ExchangeKey.find({ userId, active: true }).lean();
-      const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
+      const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange?.(k.exchangeId));
       if (ctraderKey) {
         const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
         const adapter = await getSharedCtraderAdapter(ctraderKey as any);
