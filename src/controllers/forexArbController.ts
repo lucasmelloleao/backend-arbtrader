@@ -726,10 +726,11 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
     const posId = strategy.legs && strategy.legs[0]?.orderId;
     const symStrategy = strategy.legs && strategy.legs[0]?.symbol;
 
-    if (posId || symStrategy) {
+    if (posId || symStrategy || (strategy.gridPositions && strategy.gridPositions.length > 0)) {
       try {
+        const { isCtraderExchange } = require('../strategy/forex/ctrader/ctrader-config');
         const keys = await ExchangeKey.find({ userId, active: true }).lean();
-        const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+        const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
         if (ctraderKey) {
           const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
           const adapter = await getSharedCtraderAdapter(ctraderKey as any);
@@ -738,16 +739,32 @@ export async function closeForexStrategy(req: AuthenticatedRequest, res: Respons
           const accountId = Number((ctraderKey as any).accountId);
           const rec = await (adapter as any).client.sendRequest(2124, 'ProtoOAReconcileReq', { ctidTraderAccountId: accountId }, 10000);
           if (rec && rec.position) {
-            // Busca a posição pelo positionId exato OU pelo símbolo correspondente se a ordem foi aberta anteriormente
-            const p = rec.position.find((x: any) => {
-              const m = adapter.marketsById.get(String(x.tradeData?.symbolId));
-              return String(x.positionId) === String(posId) || (symStrategy && m?.symbol === symStrategy);
-            });
-            if (p) {
+            // Coleta todos os IDs da estratégia (pernas e gridPositions)
+            const targetIds = new Set<string>();
+            if (posId) {
+              const matched = String(posId).match(/\d+/g);
+              if (matched) matched.forEach(id => targetIds.add(id));
+            }
+            if (strategy.gridPositions) {
+              for (const gp of strategy.gridPositions) {
+                if (gp.positionId || gp.id || gp.orderId) {
+                  const m = String(gp.positionId || gp.id || gp.orderId).match(/\d+/g);
+                  if (m) m.forEach(id => targetIds.add(id));
+                }
+              }
+            }
+
+            for (const p of rec.position) {
               const realPosId = String(p.positionId);
-              const volProto = Number(p.tradeData?.volume || 100);
-              console.log(`📤 [MANUAL CLOSE FRONTEND] Encerrando posição #${realPosId} na cTrader (volume: ${volProto})...`);
-              await adapter.closePosition(realPosId, volProto);
+              const m = adapter.marketsById.get(String(p.tradeData?.symbolId));
+              const matchSymbol = symStrategy && (m?.symbol === symStrategy || m?.symbol === symStrategy.replace('/', ''));
+              if (targetIds.has(realPosId) || matchSymbol) {
+                const volProto = Number(p.tradeData?.volume || 100);
+                console.log(`📤 [MANUAL CLOSE FRONTEND] Encerrando posição #${realPosId} na cTrader (volume: ${volProto})...`);
+                await adapter.closePosition(realPosId, volProto).catch((err: any) => {
+                  console.error(`Erro ao fechar posição #${realPosId} na cTrader:`, err.message);
+                });
+              }
             }
           }
         }
@@ -825,8 +842,9 @@ export async function closeAllForexStrategies(req: AuthenticatedRequest, res: Re
 
     let closedCount = 0;
     try {
+      const { isCtraderExchange } = require('../strategy/forex/ctrader/ctrader-config');
       const keys = await ExchangeKey.find({ userId, active: true }).lean();
-      const ctraderKey = keys.find((k: any) => k.exchangeId === 'ctrader');
+      const ctraderKey = keys.find((k: any) => ['pepperstone', 'pepperstone-ctrader', 'ctrader'].includes(k.exchangeId)) || keys.find((k: any) => isCtraderExchange(k.exchangeId));
       if (ctraderKey) {
         const { getSharedCtraderAdapter } = require('../strategy/forex/ctrader/ctrader-factory');
         const adapter = await getSharedCtraderAdapter(ctraderKey as any);
