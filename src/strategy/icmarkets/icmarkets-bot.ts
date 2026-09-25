@@ -600,7 +600,18 @@ export class IcMarketsBot {
           }
         } catch (closeErr: any) {
           log.error(`⚠️ Falha ao fechar posição #${strat.currentPositionId} na cTrader: ${closeErr.message}`);
-          throw closeErr;
+          
+          // Se falhou por timeout ou erro, verifica se a posição ainda existe aberta
+          let stillExists = true;
+          try {
+            const pnlMap = await adapter.getPositionsPnL();
+            stillExists = pnlMap.has(String(strat.currentPositionId));
+          } catch { /* ignore */ }
+
+          if (stillExists && !closeErr.message?.includes('POSITION_NOT_FOUND')) {
+            throw closeErr;
+          }
+          log.info(`ℹ️ [ICMARKETS-BOT] Posição #${strat.currentPositionId} não existe mais na cTrader. Prosseguindo com encerramento local.`);
         }
       }
 

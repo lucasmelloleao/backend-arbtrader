@@ -615,7 +615,9 @@ export class CtraderAdapter {
           ? String(pos.positionId)
           : (deal.positionId != null
             ? String(deal.positionId)
-            : (order.positionId != null ? String(order.positionId) : null));
+            : (order.positionId != null
+              ? String(order.positionId)
+              : (evt.positionId != null ? String(evt.positionId) : null)));
 
         if (!evtPositionId || evtPositionId !== String(positionId)) {
           return;
@@ -674,6 +676,21 @@ export class CtraderAdapter {
             grossPnl,
             commission: totalCommission,
             swap
+          });
+        } else if (
+          evt.errorCode === 'POSITION_NOT_FOUND' ||
+          evt.errorCode === 'RECORD_DOES_NOT_EXIST' ||
+          evt.description?.includes('Position not found')
+        ) {
+          // Posição já foi fechada pelo broker (ex: SL atingido na própria cTrader)
+          isSettled = true;
+          clearTimeout(timer);
+          this.client.offExecution(handler);
+          log.info(`✅ [CTRADER-ADAPTER] Posição #${positionId} já encerrada na cTrader (${evt.errorCode || evt.description}).`);
+          resolve({
+            id: String(positionId),
+            positionId,
+            closedViaReconcile: true,
           });
         } else if (evt.executionType === EXECUTION_TYPE.ORDER_REJECTED || evt.errorCode || evt.payloadType === PAYLOAD_TYPE.PROTO_OA_ORDER_ERROR_EVENT) {
           isSettled = true;
