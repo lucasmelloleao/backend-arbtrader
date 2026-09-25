@@ -56,9 +56,14 @@ export class PepperstoneMetaLabeler {
         this.metadata = JSON.parse(fs.readFileSync(this.metadataFilePath, 'utf8'));
         this.model = RandomForestClassifier.load(rawModel);
         return true;
+      } else {
+        this.model = null;
+        this.metadata = null;
       }
     } catch (e: any) {
       console.warn('[PEPPERSTONE-META-LABELER] Erro ao carregar modelo salvo:', e.message);
+      this.model = null;
+      this.metadata = null;
     }
     return false;
   }
@@ -143,19 +148,6 @@ export class PepperstoneMetaLabeler {
         .sort({ createdAt: -1 })
         .limit(500)
         .lean();
-
-      if (!closedTrades || closedTrades.length < 5) {
-        // Fallback: consulta histórico do cTrader (IcMarketsTrade) se a coleção ForexArbTrade estiver sem trades
-        const icQuery: any = { status: 'closed' };
-        if (userId) icQuery.userId = userId;
-        const icTrades = await IcMarketsTrade.find(icQuery)
-          .sort({ createdAt: -1 })
-          .limit(500)
-          .lean();
-        if (icTrades && icTrades.length >= 5) {
-          closedTrades = icTrades as any;
-        }
-      }
 
       if (!closedTrades || closedTrades.length < 5) {
         return {
