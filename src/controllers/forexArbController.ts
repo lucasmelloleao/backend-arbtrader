@@ -1014,15 +1014,20 @@ export async function getForexBalance(req: AuthenticatedRequest, res: Response):
       console.warn('[PEPPERSTONE-BALANCE] Erro ao consultar saldo na cTrader:', adapterErr.message);
     }
 
+    const balanceData = {
+      balance: balanceUsd,
+      equity: balanceUsd,
+      currency: 'USD',
+      accountType: settings?.accountType || 'demo',
+      accountId: targetAccountId,
+    };
+
     res.json({
+      success: true,
+      message: 'ok',
       ok: true,
-      balance: {
-        balance: balanceUsd,
-        equity: balanceUsd,
-        currency: 'USD',
-        accountType: settings?.accountType || 'demo',
-        accountId: targetAccountId,
-      },
+      balance: balanceData,
+      data: balanceData,
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e.message });

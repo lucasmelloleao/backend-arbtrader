@@ -205,142 +205,147 @@ export async function runTrendGridLoop() {
           const adapter = await getSharedCtraderAdapter(ctraderKey);
           const tickers = await adapter.fetchTickers(symbols);
 
+          // RECONCILE AUTOMÁTICO: Sincroniza posições abertas e fechadas na cTrader com o MongoDB (executa 1 vez por ciclo)
+          try {
+            const livePositions = await adapter.getPositionsPnL();
+            const livePosIds = new Set<string>();
+
+            for (const [key, pos] of livePositions.entries()) {
+              if (pos.positionId) {
+                livePosIds.add(String(pos.positionId));
+              }
+
+              // Iterar apenas sobre chaves por positionId (numéricas) para não duplicar por símbolo
+              if (!/^\d+$/.test(key) || !pos.positionId) continue;
+
+              const existing = await ForexArbStrategy.findOne({
+                positionOpen: true,
+                $or: [
+                  { 'legs.orderId': String(pos.positionId) },
+                  { 'gridPositions.id': pos.positionId },
+                  { 'gridPositions.positionId': pos.positionId },
+                  { 'gridPositions.orderId': String(pos.positionId) }
+                ]
+              });
+
+              const symbolKey = Array.from(livePositions.entries()).find(([k, v]) => v.positionId === pos.positionId && k.includes('/'))?.[0] || (pos as any).symbol || 'USD/JPY';
+              const symTicker = tickers[symbolKey] || tickers[(pos as any).symbol] || null;
+              const midPrice = symTicker ? (symTicker.bid + symTicker.ask) / 2 : (pos as any).entryPrice || 0;
+
+              if (!existing) {
+                const sideUpper = pos.side.toUpperCase() as 'BUY' | 'SELL';
+                const lotSize = pos.volume || 0.01;
+                const volUnits = lotSize * 100000;
+                const entryPrice = (pos as any).entryPrice || (symTicker ? symTicker.bid : 0);
+
+                await ForexArbStrategy.create({
+                  userId: settings.userId,
+                  name: `TrendGrid ${symbolKey} (${sideUpper})`,
+                  type: 'trend_grid',
+                  isGrid: true,
+                  tradeSize: lotSize,
+                  gridStepPips: 15,
+                  gridTrailingPips: 10,
+                  maxGridLevels: 5,
+                  positionOpen: true,
+                  active: true,
+                  legs: [{ symbol: symbolKey, side: sideUpper, exchangeId: 'ctrader', orderId: String(pos.positionId), price: entryPrice, volume: lotSize, amount: volUnits }],
+                  positionSize: volUnits,
+                  positionVolume: lotSize,
+                  gridPositions: [{ id: pos.positionId, positionId: pos.positionId, orderId: String(pos.positionId), entryPrice, volume: lotSize, side: sideUpper, createdAt: Date.now() }],
+                  weightedAvgPrice: entryPrice,
+                  gridLevelsCount: 1,
+                  currentPrice: midPrice,
+                  pnl: Number(pos.netPnl || 0),
+                  currentAction: `🚀 Sincronizado da cTrader (ID: ${pos.positionId})`,
+                });
+                log.info(`🔄 [RECONCILE] Posição aberta na cTrader ${symbolKey} (#${pos.positionId}) sincronizada no MongoDB!`);
+              } else if (pos.netPnl !== undefined) {
+                // Atualiza o PnL real e preço atual da cTrader no MongoDB
+                await ForexArbStrategy.findByIdAndUpdate(existing._id, {
+                  $set: {
+                    pnl: Number(pos.netPnl.toFixed(2)),
+                    currentPrice: midPrice,
+                    weightedAvgPrice: existing.weightedAvgPrice || (pos as any).entryPrice || existing.legs?.[0]?.price,
+                  }
+                }).catch(() => {});
+              }
+            }
+
+            // Sincroniza posições encerradas na cTrader que ainda constam como abertas no MongoDB
+            const openDbStrats = await ForexArbStrategy.find({
+              userId: settings.userId,
+              type: 'trend_grid',
+              positionOpen: true
+            }).lean();
+
+            for (const strat of openDbStrats) {
+              const stratPosIds = [
+                ...(strat.legs || []).map((l: any) => String(l.orderId)),
+                ...(strat.gridPositions || []).map((gp: any) => String(gp.positionId || gp.orderId || gp.id))
+              ].filter(Boolean);
+
+              // Se nenhuma das ordens da estratégia está ativa na cTrader, encerra no DB
+              const isStillLive = stratPosIds.some(id => livePosIds.has(id));
+              if (!isStillLive && stratPosIds.length > 0) {
+                await ForexArbStrategy.findByIdAndUpdate(strat._id, {
+                  positionOpen: false,
+                  status: 'closed',
+                  closedReason: 'closed_on_ctrader',
+                  active: false,
+                  closedAt: new Date(),
+                  currentAction: '🏁 Encerrada na cTrader'
+                });
+                const symName = strat.legs?.[0]?.symbol;
+                if (symName) activeGridEngines.delete(symName);
+                log.info(`🔄 [RECONCILE] Posição/Grade ${strat.name} encerrada na cTrader foi atualizada para FECHADA no MongoDB.`);
+              }
+            }
+          } catch (e: any) {
+            // Silencioso se der erro temporário no reconcile
+          }
+
+          // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
+          const dbGridStrategies = await ForexArbStrategy.find({
+            userId: settings.userId,
+            type: 'trend_grid',
+            positionOpen: true,
+            active: true
+          }).lean();
+
+          for (const strat of dbGridStrategies) {
+            const symName = strat.legs?.[0]?.symbol;
+            if (symName && !activeGridEngines.has(symName)) {
+              const side = (strat.legs?.[0]?.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+              const engine = new TrendGridEngine({
+                symbol: symName,
+                side,
+                lotSize: strat.tradeSize || 0.01,
+                stepPips: strat.gridStepPips || 15,
+                trailingPips: strat.gridTrailingPips || 10,
+                maxGridLevels: strat.maxGridLevels || 5,
+              });
+
+              if (strat.gridPositions && strat.gridPositions.length > 0) {
+                engine.positions = strat.gridPositions;
+                if (side === 'BUY') {
+                  engine.highestPrice = Math.max(...strat.gridPositions.map((p: any) => p.entryPrice));
+                } else {
+                  engine.lowestPrice = Math.min(...strat.gridPositions.map((p: any) => p.entryPrice));
+                }
+              }
+              if (strat.globalTrailingStopPrice) {
+                engine.globalTrailingStop = strat.globalTrailingStopPrice;
+              }
+
+              activeGridEngines.set(symName, { engine, strategyId: (strat as any)._id.toString() });
+              log.info(`🔄 [GRID RESTAURADO] Estratégia de grade ativa restaurada do banco para ${symName} (${side}) com ${engine.positions.length} posições.`);
+            }
+          }
+
           for (const sym of symbols) {
             const ticker = tickers[sym];
             if (!ticker || !ticker.bid || !ticker.ask) continue;
-
-            if (Date.now() % 10000 < 500 && sym === 'EUR/USD') {
-              const totalGrids = activeGridEngines.size;
-              if (totalGrids > 0) {
-                log.info(`⚡ [TREND GRID OPERANDO] ${totalGrids} grade(s) ativa(s) sendo monitorada(s) | Tick ${sym}: ${ticker.bid}/${ticker.ask}`);
-              } else {
-                log.info(`⏳ [TREND GRID AGUARDANDO] Motor ativo | Cotações fluindo (${sym}: ${ticker.bid}/${ticker.ask}) | Aguardando iniciar nova grade no painel...`);
-              }
-            }
-
-            // RECONCILE AUTOMÁTICO: Sincroniza posições abertas e fechadas na cTrader com o MongoDB
-            try {
-              const livePositions = await adapter.getPositionsPnL();
-              const livePosIds = new Set<string>();
-
-              for (const [key, pos] of livePositions.entries()) {
-                if (pos.positionId) {
-                  livePosIds.add(String(pos.positionId));
-                }
-
-                // Iterar apenas sobre chaves por positionId (numéricas) para não duplicar por símbolo
-                if (!/^\d+$/.test(key) || !pos.positionId) continue;
-
-                const existing = await ForexArbStrategy.findOne({
-                  positionOpen: true,
-                  $or: [
-                    { 'legs.orderId': String(pos.positionId) },
-                    { 'gridPositions.id': pos.positionId },
-                    { 'gridPositions.positionId': pos.positionId },
-                    { 'gridPositions.orderId': String(pos.positionId) }
-                  ]
-                });
-                if (!existing) {
-                  const sideUpper = pos.side.toUpperCase() as 'BUY' | 'SELL';
-                  const lotSize = pos.volume || 0.01;
-                  const volUnits = lotSize * 100000;
-                  const entryPrice = (pos as any).entryPrice || ticker.bid;
-                  const symbolKey = Array.from(livePositions.entries()).find(([k, v]) => v.positionId === pos.positionId && k.includes('/'))?.[0] || sym;
-
-                  await ForexArbStrategy.create({
-                    userId: settings.userId,
-                    name: `TrendGrid ${symbolKey} (${sideUpper})`,
-                    type: 'trend_grid',
-                    isGrid: true,
-                    tradeSize: lotSize,
-                    gridStepPips: 15,
-                    gridTrailingPips: 10,
-                    maxGridLevels: 5,
-                    positionOpen: true,
-                    active: true,
-                    legs: [{ symbol: symbolKey, side: sideUpper, exchangeId: 'ctrader', orderId: String(pos.positionId), price: entryPrice, volume: lotSize, amount: volUnits }],
-                    positionSize: volUnits,
-                    positionVolume: lotSize,
-                    gridPositions: [{ id: pos.positionId, positionId: pos.positionId, orderId: String(pos.positionId), entryPrice, volume: lotSize, side: sideUpper, createdAt: Date.now() }],
-                    weightedAvgPrice: entryPrice,
-                    gridLevelsCount: 1,
-                    currentPrice: (ticker.bid + ticker.ask) / 2,
-                    currentAction: `🚀 Sincronizado da cTrader (ID: ${pos.positionId})`,
-                  });
-                  log.info(`🔄 [RECONCILE] Posição aberta na cTrader ${symbolKey} (#${pos.positionId}) sincronizada no MongoDB!`);
-                }
-              }
-
-              // Sincroniza posições encerradas na cTrader que ainda constam como abertas no MongoDB
-              const openDbStrats = await ForexArbStrategy.find({
-                userId: settings.userId,
-                type: 'trend_grid',
-                positionOpen: true
-              }).lean();
-
-              for (const strat of openDbStrats) {
-                const stratPosIds = [
-                  ...(strat.legs || []).map((l: any) => String(l.orderId)),
-                  ...(strat.gridPositions || []).map((gp: any) => String(gp.positionId || gp.orderId || gp.id))
-                ].filter(Boolean);
-
-                // Se nenhuma das ordens da estratégia está ativa na cTrader, encerra no DB
-                const isStillLive = stratPosIds.some(id => livePosIds.has(id));
-                if (!isStillLive && stratPosIds.length > 0) {
-                  await ForexArbStrategy.findByIdAndUpdate(strat._id, {
-                    positionOpen: false,
-                    status: 'closed',
-                    closedReason: 'closed_on_ctrader',
-                    active: false,
-                    closedAt: new Date(),
-                    currentAction: '🏁 Encerrada na cTrader'
-                  });
-                  const symName = strat.legs?.[0]?.symbol;
-                  if (symName) activeGridEngines.delete(symName);
-                  log.info(`🔄 [RECONCILE] Posição/Grade ${strat.name} encerrada na cTrader foi atualizada para FECHADA no MongoDB.`);
-                }
-              }
-            } catch (e: any) {
-              // Silencioso se der erro temporário no reconcile
-            }
-
-            // Sincroniza/Restaura estratégias de grade ativas no MongoDB para a memória
-            const dbGridStrategies = await ForexArbStrategy.find({
-              userId: settings.userId,
-              type: 'trend_grid',
-              positionOpen: true,
-              active: true
-            }).lean();
-
-            for (const strat of dbGridStrategies) {
-              const symName = strat.legs?.[0]?.symbol;
-              if (symName && !activeGridEngines.has(symName)) {
-                const side = (strat.legs?.[0]?.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
-                const engine = new TrendGridEngine({
-                  symbol: symName,
-                  side,
-                  lotSize: strat.tradeSize || 0.01,
-                  stepPips: strat.gridStepPips || 15,
-                  trailingPips: strat.gridTrailingPips || 10,
-                  maxGridLevels: strat.maxGridLevels || 5,
-                });
-
-                if (strat.gridPositions && strat.gridPositions.length > 0) {
-                  engine.positions = strat.gridPositions;
-                  if (side === 'BUY') {
-                    engine.highestPrice = Math.max(...strat.gridPositions.map((p: any) => p.entryPrice));
-                  } else {
-                    engine.lowestPrice = Math.min(...strat.gridPositions.map((p: any) => p.entryPrice));
-                  }
-                }
-                if (strat.globalTrailingStopPrice) {
-                  engine.globalTrailingStop = strat.globalTrailingStopPrice;
-                }
-
-                activeGridEngines.set(symName, { engine, strategyId: (strat as any)._id.toString() });
-                log.info(`🔄 [GRID RESTAURADO] Estratégia de grade ativa restaurada do banco para ${symName} (${side}) com ${engine.positions.length} posições.`);
-              }
-            }
 
             // AUTO-DETECÇÃO DE OPORTUNIDADES (ENTRADA AUTOMÁTICA REATIVADA):
             // Se o ativo não possui grade ativa, não falhou nos últimos 60s e o robô está habilitado, analisa a micro-tendência
