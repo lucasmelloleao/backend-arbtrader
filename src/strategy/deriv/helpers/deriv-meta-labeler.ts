@@ -117,6 +117,25 @@ export class DerivMetaLabeler {
       };
     }
 
+    // Proteção Anti-Loteria no Gate 4: payoutRatio > 0.95 (R > 95%) ou < 0.40
+    const payoutRatioFeature = features[6];
+    if (payoutRatioFeature > 0.95) {
+      return {
+        probWin: 0.1,
+        isVetoed: true,
+        minWinProbRequired: minProbThreshold,
+        reason: `IA Veto Anti-Loteria: Retorno cotado de ${(payoutRatioFeature * 100).toFixed(0)}% indica barreira extremamente distante (probabilidade real implícita irrisória).`
+      };
+    }
+    if (payoutRatioFeature < 0.40) {
+      return {
+        probWin: 0.2,
+        isVetoed: true,
+        minWinProbRequired: minProbThreshold,
+        reason: `IA Veto Assimetria Negativa: Retorno de ${(payoutRatioFeature * 100).toFixed(0)}% exige taxa de acerto inviável para cobrir o risco.`
+      };
+    }
+
     try {
       // Previsão de probabilidades para as classes [0 (Loss), 1 (Win)]
       const probabilities = this.model.predictProbability([features], 1);
