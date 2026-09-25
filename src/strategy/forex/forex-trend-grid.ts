@@ -64,18 +64,47 @@ export class TrendGridEngine {
     return totalVolume > 0 ? totalCost / totalVolume : 0;
   }
 
-  // Processa o tick em tempo real para expansão da grade ou encerramento pelo Trailing Stop Global
+  // Processa o tick em tempo real para expansão da grade, encerramento pelo Trailing Stop Global ou Stop Loss
   public onTick(
     bid: number,
     ask: number,
     onOpenOrder: (side: 'BUY' | 'SELL', marketPrice: number) => Promise<GridPosition | null>,
-    onCloseAll: (reason: string) => Promise<void>
-  ): { action: 'NONE' | 'EXPAND' | 'CLOSE_TRAILING'; details?: any } {
+    onCloseAll: (reason: string) => Promise<void>,
+    stopLossConfig?: { stopLossPct?: number; maxLossUsd?: number }
+  ): { action: 'NONE' | 'EXPAND' | 'CLOSE_TRAILING' | 'CLOSE_STOP_LOSS'; details?: any } {
     if (this.positions.length === 0 || this.isPendingOrder || this.isClosing) return { action: 'NONE' };
 
     const currentPrice = this.side === 'BUY' ? bid : ask;
+    const avgPrice = this.getWeightedAveragePrice();
     const stepDistance = this.stepPips * this.pipSize;
     const trailingDistance = this.trailingPips * this.pipSize;
+
+    // ── 0. Verificação de STOP LOSS (em % ou USD) ──
+    if (avgPrice > 0 && stopLossConfig) {
+      const diff = this.side === 'BUY' ? (currentPrice - avgPrice) : (avgPrice - currentPrice);
+      const currentPct = (diff / avgPrice) * 100;
+      const totalVolume = this.positions.reduce((acc, p) => acc + p.volume, 0);
+      const totalUnits = totalVolume * 100000;
+      let pnlUsd = diff * totalUnits;
+      if (this.symbol.includes('JPY') && currentPrice > 0) {
+        pnlUsd = (diff * totalUnits) / currentPrice;
+      }
+
+      const slPct = stopLossConfig.stopLossPct != null ? Math.abs(stopLossConfig.stopLossPct) : null;
+      const slUsd = stopLossConfig.maxLossUsd != null && stopLossConfig.maxLossUsd > 0 ? stopLossConfig.maxLossUsd : null;
+
+      const hitSlPct = slPct !== null && slPct > 0 && currentPct <= -slPct;
+      const hitSlUsd = slUsd !== null && pnlUsd <= -slUsd;
+
+      if (hitSlPct || hitSlUsd) {
+        this.isClosing = true;
+        const motivo = hitSlUsd
+          ? `Stop Loss USD Atingido ($${pnlUsd.toFixed(2)} <= -$${slUsd.toFixed(2)})`
+          : `Stop Loss % Atingido (${currentPct.toFixed(2)}% <= -${slPct?.toFixed(2)}%)`;
+        onCloseAll(motivo);
+        return { action: 'CLOSE_STOP_LOSS', details: { pnlUsd, currentPct, reason: motivo } };
+      }
+    }
 
     if (this.side === 'BUY') {
       const lastEntry = this.positions[this.positions.length - 1].entryPrice;
@@ -103,7 +132,6 @@ export class TrendGridEngine {
       // 2. Trailing Stop Global: marca d'água de preço mais alto
       if (currentPrice > this.highestPrice) {
         this.highestPrice = currentPrice;
-        const avgPrice = this.getWeightedAveragePrice();
         const candidateStop = this.highestPrice - trailingDistance;
 
         // Ativa ou eleva o Trailing Stop apenas se proteger acima do Break-Even (Preço Médio Ponderado)
@@ -144,7 +172,6 @@ export class TrendGridEngine {
       // 2. Trailing Stop Global para venda
       if (currentPrice < this.lowestPrice) {
         this.lowestPrice = currentPrice;
-        const avgPrice = this.getWeightedAveragePrice();
         const candidateStop = this.lowestPrice + trailingDistance;
 
         if (candidateStop < avgPrice) {
@@ -480,6 +507,10 @@ export async function runTrendGridLoop() {
             if (gridData) {
               const { engine, strategyId } = gridData;
 
+              const symProfile = (settings.symbolProfiles as any)?.get?.(sym) || (settings.symbolProfiles as any)?.[sym];
+              const effectiveSlPct = symProfile?.stopLossPct ?? settings.stopLossPct ?? 0.10;
+              const effectiveMaxLossUsd = symProfile?.maxLossUsd ?? settings.maxDailyLoss ?? 10;
+
               engine.onTick(
                 ticker.bid,
                 ticker.ask,
@@ -520,6 +551,9 @@ export async function runTrendGridLoop() {
                 async (reason) => {
                   if (!activeGridEngines.has(sym)) return;
                   activeGridEngines.delete(sym);
+
+                  const isStopLoss = reason.toLowerCase().includes('stop loss');
+                  const closeReasonType = isStopLoss ? 'stop_loss' : 'grid_trailing_stop';
 
                   log.info(`🔒 [GRID CLOSE ALL] Fechando todas as ordens da grade de ${sym}. Motivo: ${reason}`);
                   let totalRealizedPnl = 0;
@@ -562,8 +596,8 @@ export async function runTrendGridLoop() {
                     await ForexArbStrategy.findByIdAndUpdate(strategyId, {
                       positionOpen: false,
                       status: 'closed',
-                      closedReason: 'grid_trailing_stop',
-                      trailingStopTriggered: true,
+                      closedReason: closeReasonType,
+                      trailingStopTriggered: !isStopLoss,
                       active: false,
                       closedAt: new Date(),
                       pnl: realizedPnl,
@@ -581,7 +615,7 @@ export async function runTrendGridLoop() {
                       realizedPnl,
                       commission: totalCommission,
                       status: 'executed',
-                      closedReason: 'grid_trailing_stop',
+                      closedReason: closeReasonType,
                       reason,
                       legs: engine.positions.map((p) => ({
                         symbol: sym,
@@ -595,6 +629,10 @@ export async function runTrendGridLoop() {
                   } catch (closeErr: any) {
                     log.error(`❌ [GRID CLOSE ERROR] Erro ao fechar grade de ${sym}: ${closeErr.message}`);
                   }
+                },
+                {
+                  stopLossPct: effectiveSlPct,
+                  maxLossUsd: effectiveMaxLossUsd,
                 }
               );
 
