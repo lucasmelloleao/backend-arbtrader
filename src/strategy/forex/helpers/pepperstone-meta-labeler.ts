@@ -6,6 +6,7 @@ import path from 'path';
 // @ts-ignore
 import { RandomForestClassifier } from 'ml-random-forest';
 import ForexArbTrade from '../../../models/ForexArbTrade';
+import IcMarketsTrade from '../../../models/IcMarketsTrade';
 
 export interface PepperstoneDatasetSampleItem {
   id: string;
@@ -135,10 +136,21 @@ export class PepperstoneMetaLabeler {
         query.userId = userId;
       }
 
-      const closedTrades = await ForexArbTrade.find(query)
+      let closedTrades = await ForexArbTrade.find(query)
         .sort({ createdAt: -1 })
         .limit(2000)
         .lean();
+
+      if (!closedTrades || closedTrades.length < 5) {
+        // Fallback: consulta histórico do cTrader (IcMarketsTrade) se a coleção ForexArbTrade estiver sem trades
+        const icTrades = await IcMarketsTrade.find(query)
+          .sort({ createdAt: -1 })
+          .limit(2000)
+          .lean();
+        if (icTrades && icTrades.length >= 5) {
+          closedTrades = icTrades as any;
+        }
+      }
 
       if (!closedTrades || closedTrades.length < 5) {
         return {
