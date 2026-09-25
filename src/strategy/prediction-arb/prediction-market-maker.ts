@@ -228,6 +228,16 @@ export async function runMarketMaking(
         yesShares,
         noShares,
         spreadPct: strategy.spreadPct,
+        metrics: strategy.lastMetrics || {
+          er: 0,
+          varianceRatio: 1.0,
+          atrPct: 0,
+          spotDistancePct: 0,
+          expectedValue: 0,
+          edgePct: 0,
+          entryPrice: (yesAvg || strategy.yesPrice) > 0 ? (yesAvg || strategy.yesPrice) : (noAvg || strategy.noPrice),
+          segsRestantes: 0,
+        },
         reason: 'Par preenchido via market making',
       }).catch(() => {});
       log.info(`📝 [${strategy.slug}] Operação registrada: ${yesShares} YES + ${noShares} NO.`);
@@ -308,17 +318,32 @@ export async function runMarketMaking(
     const tokenAberto = sideAberto === 'YES' ? strategy.tokenIdYes : strategy.tokenIdNo;
     const bAtual = sideAberto === 'YES' ? bYes : bNo;
 
-    // ── REFINAMENTO 1: ENCERRAMENTO DE EMERGÊNCIA IMEDIATO (< STOP_OUT_THRESHOLD) ─────────
-    // Se a cotação no livro despencar abaixo do limiar configurado (padrão 0.82), encerra IMEDIATAMENTE.
+    // ── REFINAMENTO 1: ENCERRAMENTO DE EMERGÊNCIA / STOP LOSS NO TOKEN (< STOP_OUT_THRESHOLD ou -25%) ──
+    // Se a cotação no livro despencar abaixo do limiar (padrão 0.75 ou 0.70) ou perda atingir -25%,
+    // encerra IMEDIATAMENTE limitando a perda a 25-30% em vez de 100%.
     const STOP_OUT_THRESHOLD = Number(
-      strategy.emergencyStopThreshold ?? settingsGlobal?.emergencyStopThreshold ?? PREDICTION_ARB_CONFIG.risk.emergencyStopThreshold ?? 0.82
+      strategy.emergencyStopThreshold ?? settingsGlobal?.emergencyStopThreshold ?? PREDICTION_ARB_CONFIG.risk.emergencyStopThreshold ?? 0.75
     );
 
-    if (bAtual.bid < STOP_OUT_THRESHOLD) {
-      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP OUT ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}). Fechando ao preço de mercado (${bAtual.bid.toFixed(4)}).`);
+    // Preço de entrada original pago pela posição
+    const openTradePos = await PredictionArbTrade.findOne({
+      strategyId: strategy._id,
+      type: 'open_pair',
+      status: { $in: ['executed', 'simulated'] },
+    }).sort({ createdAt: -1 }).lean();
+
+    const entryPricePaid = Number(
+      (sideAberto === 'YES' ? (strategy.avgYesPrice || openTradePos?.yesPrice || strategy.yesPrice) : (strategy.avgNoPrice || openTradePos?.noPrice || strategy.noPrice)) || 0
+    );
+
+    const ganhoPctAtual = entryPricePaid > 0 && bAtual.bid > 0 ? ((bAtual.bid - entryPricePaid) / entryPricePaid) * 100 : 0;
+    const stopLossAtivado = (bAtual.bid > 0 && bAtual.bid < STOP_OUT_THRESHOLD) || (entryPricePaid > 0 && ganhoPctAtual <= -25);
+
+    if (stopLossAtivado) {
+      log.warn(`🚨 [${strategy.slug}] EMERGENCY STOP LOSS ATIVADO: Cotação de ${sideAberto} despencou para ${bAtual.bid.toFixed(4)} (< ${STOP_OUT_THRESHOLD}) ou Perda de ${ganhoPctAtual.toFixed(2)}% (Entrada: $${entryPricePaid.toFixed(3)}). Fechando ao bid do mercado.`);
       
       const stopPrice = Math.max(0.01, bAtual.bid);
-      log.info(`🎯 [${strategy.slug}] Enviando Ordem de Encerramento: Venda de ${sharesAbertas} ${sideAberto} @ $${stopPrice.toFixed(4)} (melhor bid do mercado).`);
+      log.info(`🎯 [${strategy.slug}] Enviando Ordem de Encerramento (Stop Loss): Venda de ${sharesAbertas} ${sideAberto} @ $${stopPrice.toFixed(4)}.`);
 
       try {
         let stopOrderId: string | null = null;
@@ -359,19 +384,6 @@ export async function runMarketMaking(
     const endMsPos = strategy.endDate ? new Date(strategy.endDate).getTime() : 0;
     const segsRestantesPos = endMsPos > 0 ? (endMsPos - Date.now()) / 1000 : Infinity;
 
-    // Preço de entrada original pago pela posição
-    const openTradePos = await PredictionArbTrade.findOne({
-      strategyId: strategy._id,
-      type: 'open_pair',
-      status: { $in: ['executed', 'simulated'] },
-    }).sort({ createdAt: -1 }).lean();
-
-    const entryPricePaid = Number(
-      (sideAberto === 'YES' ? (strategy.avgYesPrice || openTradePos?.yesPrice || strategy.yesPrice) : (strategy.avgNoPrice || openTradePos?.noPrice || strategy.noPrice)) || 0
-    );
-
-    // Ganho percentual líquido que o Bid atual pagaria sobre o preço de entrada
-    const ganhoPctAtual = entryPricePaid > 0 ? ((bAtual.bid - entryPricePaid) / entryPricePaid) * 100 : 0;
     const minLucroPctExigido = Number(
       settingsGlobal?.minTakeProfitPct ?? PREDICTION_ARB_CONFIG.exit.minTakeProfitPct ?? 2.0
     );
@@ -485,15 +497,17 @@ export async function runMarketMaking(
     const strikeEstimate = Number(strategy.strikePrice || strategy.openSpotPrice || 0);
 
     // Piso Fixo: Altcoins = 0.15%, Majors = 0.08%.
-    // Exigência Dinâmica: Math.max(piso, 0.5 × ATR(1m))
+    // Corte por Volatilidade (ATR): Mercados de 15m com ATR > 0.06% exigem distância >= 1.5 × ATR
+    // Demais casos exigem Math.max(piso, 0.5 × ATR)
     const pisoPct = isAltcoin ? 0.15 : 0.08;
-    const atrDinamicoPct = atrPct > 0 ? 0.5 * atrPct : 0;
+    const atrMultiplier = (is15m && atrPct >= 0.06) ? 1.5 : 0.5;
+    const atrDinamicoPct = atrPct > 0 ? atrMultiplier * atrPct : 0;
     const minDistPctRequired = Math.max(pisoPct, atrDinamicoPct);
 
     if (spotPrice > 0 && strikeEstimate > 0) {
       distPctVal = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
       if (distPctVal < minDistPctRequired) {
-        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPctVal.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
+        log.warn(`⚠️ [${strategy.slug}] BLOQUEIO DE PONTO DE CORTE (ATR Dinâmico ${atrMultiplier}x): Preço spot ${symbol} ($${spotPrice}) colado no strike ($${strikeEstimate}) - Distância ${distPctVal.toFixed(3)}% < Exigido ${minDistPctRequired.toFixed(3)}% (Piso ${pisoPct}% / ATR 1m: ${atrPct.toFixed(3)}%). Trade descartado.`);
         return { quoted: false, orderIds: [] };
       }
 
@@ -722,6 +736,17 @@ export async function runMarketMaking(
       const filledSize = Math.max(freshYes, freshNo);
       log.info(`📊 [${strategy.slug}] Posição real pós-ordem (Filled Size registrado): YES=${freshYes} NO=${freshNo} (Solicitado: ${tamanhoLadoLeve})`);
 
+      const currentSnapshotMetrics = {
+        er: quantGates?.er || 0,
+        varianceRatio: quantGates?.varianceRatio || 1.0,
+        atrPct: atrPctVal,
+        spotDistancePct: distPctVal,
+        expectedValue: evResult?.expectedValue || 0,
+        edgePct: evResult?.edgePct || 0,
+        entryPrice: yesPrice > 0 ? yesPrice : noPrice,
+        segsRestantes,
+      };
+
       await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
         openOrderIds: orderIds,
         mmQuoteAttempt: proximoAttempt,
@@ -730,13 +755,26 @@ export async function runMarketMaking(
         noShares: freshNo,
         positionSize: filledSize,
         positionOpen: freshYes >= 1 || freshNo >= 1,
+        lastMetrics: currentSnapshotMetrics,
         ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
       });
     } else {
+      const currentSnapshotMetrics = {
+        er: quantGates?.er || 0,
+        varianceRatio: quantGates?.varianceRatio || 1.0,
+        atrPct: atrPctVal,
+        spotDistancePct: distPctVal,
+        expectedValue: evResult?.expectedValue || 0,
+        edgePct: evResult?.edgePct || 0,
+        entryPrice: yesPrice > 0 ? yesPrice : noPrice,
+        segsRestantes,
+      };
+
       await (PredictionArbStrategy as any).findByIdAndUpdate(strategy._id, {
         openOrderIds: orderIds,
         mmQuoteAttempt: proximoAttempt,
         mmActive: true,
+        lastMetrics: currentSnapshotMetrics,
         ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
       });
     }

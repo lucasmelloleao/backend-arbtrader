@@ -27,7 +27,7 @@ export const PREDICTION_ARB_CONFIG = {
     maxDailyLossUsd: 10,          // Stop diário (USD) - para de ABRIR posições
     maxInventoryPairs: 10,        // Cap de inventário por mercado (lados)
     exposureCapMultiplier: 1.5,   // Teto de exposição = sharesPerQuote * multiplier
-    emergencyStopThreshold: 0.40, // Gatilho de Stop Out de Emergência afrouxado (< 0.40) para deixar posições vencerem naturalmente
+    emergencyStopThreshold: 0.75, // Stop Loss no Token: fecha se o bid cair abaixo de 0.75 para limitar a perda máxima a 25%
     hedgeCompletionThreshold: 0.998, // Não completa hedge se soma média >= 0.998
 
     minOrderUsd: 1,               // Mínimo por ordem (USD) - regra da Polymarket

@@ -105,7 +105,26 @@ export class PolymarketMetaLabeler {
 
     try {
       const probabilities = this.model.predictProbability([features], 1);
-      const probWin = Number(probabilities[0] !== undefined ? probabilities[0] : 0.5);
+      let probWin = Number(probabilities[0] !== undefined ? probabilities[0] : 0.5);
+
+      // Penalização de Overconfidence:
+      // Se spotDistancePct < 1.5 * atrPct ou segsRestantes > 180s (3 minutos), penaliza probabilidade
+      const [er, vr, atrPct, spotDistPct, ev, edge, entryPrice, segsRestantes] = features;
+      let penalty = 0;
+      if (spotDistPct < 1.5 * atrPct) {
+        // Spot muito próximo do strike para a volatilidade atual
+        penalty += 0.15;
+      }
+      if (segsRestantes > 180) {
+        // Mais de 3 minutos restantes adiciona incerteza estocástica
+        penalty += 0.10;
+      }
+      if (er < 0.20 && vr < 0.95) {
+        // Tendência fraca / random walk
+        penalty += 0.10;
+      }
+
+      probWin = Math.max(0.01, Math.min(0.99, probWin - penalty));
       const isVetoed = probWin < minProbThreshold;
 
       return {
@@ -113,8 +132,8 @@ export class PolymarketMetaLabeler {
         isVetoed,
         minWinProbRequired: minProbThreshold,
         reason: isVetoed
-          ? `IA Gate 4 Veto (Polymarket): Probabilidade calculada de vitória (${(probWin * 100).toFixed(1)}%) abaixo do limiar de ${(minProbThreshold * 100).toFixed(0)}%.`
-          : `IA Gate 4 Aprovado (Polymarket): Probabilidade estimada de ${(probWin * 100).toFixed(1)}%.`,
+          ? `IA Gate 4 Veto (Polymarket): Probabilidade ajustada de vitória (${(probWin * 100).toFixed(1)}% | Penalidade: -${(penalty * 100).toFixed(0)}%) abaixo do limiar de ${(minProbThreshold * 100).toFixed(0)}%.`
+          : `IA Gate 4 Aprovado (Polymarket): Probabilidade estimada de ${(probWin * 100).toFixed(1)}% (Penalidade: -${(penalty * 100).toFixed(0)}%).`,
       };
     } catch (e: any) {
       return {

@@ -209,6 +209,14 @@ export async function createStrategiesFromMarkets(
     const m = opp.market;
     const existing = await PredictionArbStrategy.findOne({ userId, marketId: m.id }).lean();
 
+    const extractStrike = (q: string): number => {
+      if (!q) return 0;
+      const m = q.match(/\$([0-9,]+(\.[0-9]+)?)/);
+      if (m) return parseFloat(m[1].replace(/,/g, ''));
+      return 0;
+    };
+    const parsedStrike = extractStrike(m.question || '');
+
     if (existing) {
       await PredictionArbStrategy.findByIdAndUpdate(existing._id, {
         yesPrice: opp.yes,
@@ -218,6 +226,7 @@ export async function createStrategiesFromMarkets(
         certaintyProb: opp.certaintyProb || 0,
         endDate: m.endDate ? new Date(m.endDate) : null,
         lastCheckAt: new Date(),
+        ...(parsedStrike > 0 ? { strikePrice: parsedStrike } : {}),
         // No modo colheita, garante que estratégias existentes também executem
         ...(autoExecute ? { autoExecute: true, mmActive: true } : {}),
       });
@@ -238,6 +247,7 @@ export async function createStrategiesFromMarkets(
       spreadPct: opp.spreadPct,
       highCertaintySide: opp.highCertaintySide || null,
       certaintyProb: opp.certaintyProb || 0,
+      strikePrice: parsedStrike,
       endDate: m.endDate ? new Date(m.endDate) : null,
       tradeSize: config.tradeSize,
       active: true,

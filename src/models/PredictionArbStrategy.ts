@@ -51,6 +51,17 @@ const PredictionArbStrategySchema = new mongoose.Schema({
   maxEntrySecondsBeforeExpiry5mMaj: { type: Number, default: 120 },
   maxEntrySecondsBeforeExpiry15mAlt: { type: Number, default: 120 },
   maxEntrySecondsBeforeExpiry15mMaj: { type: Number, default: 300 },
+  strikePrice: { type: Number, default: 0 },
+  lastMetrics: {
+    er: { type: Number, default: 0 },
+    varianceRatio: { type: Number, default: 1.0 },
+    atrPct: { type: Number, default: 0 },
+    spotDistancePct: { type: Number, default: 0 },
+    expectedValue: { type: Number, default: 0 },
+    edgePct: { type: Number, default: 0 },
+    entryPrice: { type: Number, default: 0 },
+    segsRestantes: { type: Number, default: 0 },
+  },
 }, { timestamps: true });
 
 PredictionArbStrategySchema.index({ userId: 1, marketId: 1 }, { unique: true });
