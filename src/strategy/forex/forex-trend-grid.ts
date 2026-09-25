@@ -361,7 +361,9 @@ export async function runTrendGridLoop() {
               ]
             });
 
-            if (!activeGridEngines.has(sym) && !jaPossuiPosicaoAberta && !isCoolingDown && settings.gridEnabled !== false) {
+            const botHabilitado = settings.gridEnabled !== false && settings.isScanningEnabled !== false && settings.autoExecute !== false;
+
+            if (!activeGridEngines.has(sym) && !jaPossuiPosicaoAberta && !isCoolingDown && botHabilitado) {
               const priceHistory = priceHistories.get(sym) || [];
               const midPrice = (ticker.bid + ticker.ask) / 2;
               priceHistory.push(midPrice);
