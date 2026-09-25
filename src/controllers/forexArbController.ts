@@ -178,9 +178,10 @@ export async function deleteForexTrades(req: AuthenticatedRequest, res: Response
       });
       await ForexArbStrategy.deleteMany({
         userId,
+        positionOpen: { $ne: true },
         $or: [{ type: 'trend_grid' }, { isGrid: true }, { name: /TrendGrid/i }]
       });
-      return res.json({ success: true, message: 'Histórico e dados do Trend Grid zerados com sucesso!' });
+      return res.json({ success: true, message: 'Histórico do Trend Grid zerado com sucesso! (Posições abertas preservadas)' });
     } else if (botType === 'scalping') {
       await ForexArbTrade.deleteMany({
         userId,
@@ -189,15 +190,16 @@ export async function deleteForexTrades(req: AuthenticatedRequest, res: Response
       });
       await ForexArbStrategy.deleteMany({
         userId,
+        positionOpen: { $ne: true },
         type: { $ne: 'trend_grid' },
         isGrid: { $ne: true },
         name: { $not: /TrendGrid/i }
       });
-      return res.json({ success: true, message: 'Histórico e dados do Scalping Forex zerados com sucesso!' });
+      return res.json({ success: true, message: 'Histórico do Scalping Forex zerado com sucesso! (Posições abertas preservadas)' });
     } else {
       await ForexArbTrade.deleteMany({ userId });
-      await ForexArbStrategy.deleteMany({ userId });
-      return res.json({ success: true, message: 'Todas as operações e estratégias foram apagadas do banco de dados.' });
+      await ForexArbStrategy.deleteMany({ userId, positionOpen: { $ne: true } });
+      return res.json({ success: true, message: 'Histórico de operações encerradas foi apagado. Posições abertas foram preservadas.' });
     }
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e.message });
@@ -928,7 +930,9 @@ export async function getPepperstoneMetaModelStatus(req: AuthenticatedRequest, r
     const { PepperstoneMetaLabeler } = require('../strategy/forex/helpers/pepperstone-meta-labeler');
     const metadata = PepperstoneMetaLabeler.getMetadata();
     const userId = req.userId;
-    const totalTrades = await ForexArbTrade.countDocuments(userId ? { userId } : {});
+    const totalTrades = await ForexArbTrade.countDocuments(
+      userId ? { userId, type: { $ne: 'opportunity_found' } } : { type: { $ne: 'opportunity_found' } }
+    );
 
     res.json({
       ok: true,
