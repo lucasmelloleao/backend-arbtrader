@@ -504,6 +504,11 @@ export async function runMarketMaking(
     const atrDinamicoPct = atrPct > 0 ? atrMultiplier * atrPct : 0;
     const minDistPctRequired = Math.max(pisoPct, atrDinamicoPct);
 
+    const refStrike = strikeEstimate > 0 ? strikeEstimate : (spotPrice > 0 ? spotPrice : 0);
+
+    // ── GATES QUANTITATIVOS SPOT: KAUFMAN ER & VARIANCE RATIO (RANDOM WALK FILTER) ──
+    quantGates = await calculateSpotQuantGates(symbol, highCertaintySide, refStrike);
+
     if (spotPrice > 0 && strikeEstimate > 0) {
       distPctVal = (Math.abs(spotPrice - strikeEstimate) / strikeEstimate) * 100;
       if (distPctVal < minDistPctRequired) {
@@ -511,13 +516,14 @@ export async function runMarketMaking(
         return { quoted: false, orderIds: [] };
       }
 
-      // ── GATES QUANTITATIVOS SPOT: KAUFMAN ER & VARIANCE RATIO (RANDOM WALK FILTER) ──
-      quantGates = await calculateSpotQuantGates(symbol, highCertaintySide, strikeEstimate);
       if (!quantGates.gatesPassed) {
         log.warn(`🎲 [${strategy.slug}] QUANT GATES REJEITADOS: ${quantGates.reason} (ER: ${quantGates.er} | VR: ${quantGates.varianceRatio}). Entrada bloqueada.`);
         return { quoted: false, orderIds: [] };
       }
       log.info(`🎯 [${strategy.slug}] GATES QUANTITATIVOS APROVADOS: ${quantGates.reason}`);
+    } else if (quantGates && quantGates.er > 0) {
+      // Se não havia strike cadastrado, usa o spotPrice e o ER calculado
+      distPctVal = Math.max(0.10, atrPctVal * 1.2);
     }
   }
 
@@ -758,6 +764,33 @@ export async function runMarketMaking(
         lastMetrics: currentSnapshotMetrics,
         ...(enviouHedge ? { ultimoHedgeAt: new Date() } : {}),
       });
+
+      // Se a ordem preencheu (fill direcional ou par), garante registro de open_pair com métricas reais
+      if (filledSize >= 1) {
+        const jaTemOpen = await PredictionArbTrade.findOne({
+          strategyId: strategy._id,
+          type: 'open_pair',
+        }).lean();
+        if (!jaTemOpen) {
+          await PredictionArbTrade.create({
+            userId: strategy.userId,
+            strategyId: strategy._id,
+            marketId: strategy.marketId,
+            slug: strategy.slug,
+            question: strategy.question,
+            type: 'open_pair',
+            status: 'executed',
+            yesPrice: yesPrice || strategy.yesPrice,
+            noPrice: noPrice || strategy.noPrice,
+            amount: filledSize * (yesPrice > 0 ? yesPrice : noPrice),
+            yesShares: freshYes,
+            noShares: freshNo,
+            spreadPct: strategy.spreadPct,
+            metrics: currentSnapshotMetrics,
+            reason: `Entrada direcional executada via MM (${highCertaintySide || 'DIRECIONAL'})`,
+          }).catch(() => {});
+        }
+      }
     } else {
       const currentSnapshotMetrics = {
         er: quantGates?.er || 0,
